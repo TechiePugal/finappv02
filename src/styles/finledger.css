@@ -1,0 +1,200 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* === Backgrounds === */
+  --bg:              #f2f2f7;
+  --bg-card:         #ffffff;
+  --bg-secondary:    #f9f9fb;
+  --bg-sidebar:      rgba(255,255,255,0.82);
+  --bg-input:        rgba(118,118,128,0.08);
+  --bg-hover:        rgba(0,0,0,0.035);
+
+  /* === Text === */
+  --text-primary:    #1c1c1e;
+  --text-secondary:  #636366;
+  --text-tertiary:   #aeaeb2;
+  --text-on-color:   #ffffff;
+
+  /* === Brand / Accent === */
+  --accent:          #0a84ff;
+  --accent-dark:     #0071e3;
+  --accent-light:    rgba(10,132,255,0.10);
+  --accent-light2:   rgba(10,132,255,0.06);
+
+  /* === Semantic === */
+  --green:           #30d158;
+  --green-dark:      #25a244;
+  --green-light:     rgba(48,209,88,0.10);
+  --red:             #ff453a;
+  --red-dark:        #d93025;
+  --red-light:       rgba(255,69,58,0.10);
+  --orange:          #ff9f0a;
+  --orange-light:    rgba(255,159,10,0.10);
+  --purple:          #bf5af2;
+  --purple-light:    rgba(191,90,242,0.10);
+  --indigo:          #5e5ce6;
+  --indigo-light:    rgba(94,92,230,0.10);
+  --teal:            #32ade6;
+  --teal-light:      rgba(50,173,230,0.10);
+
+  /* === Borders === */
+  --border:          rgba(0,0,0,0.07);
+  --border-strong:   rgba(0,0,0,0.13);
+  --divider:         rgba(0,0,0,0.05);
+
+  /* === Shadows === */
+  --shadow-xs:  0 1px 2px rgba(0,0,0,0.05);
+  --shadow-sm:  0 1px 6px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-md:  0 4px 16px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04);
+  --shadow-lg:  0 8px 30px rgba(0,0,0,0.10), 0 2px 8px rgba(0,0,0,0.05);
+  --shadow-xl:  0 20px 60px rgba(0,0,0,0.13), 0 8px 20px rgba(0,0,0,0.06);
+  --shadow-colored: 0 4px 14px rgba(10,132,255,0.25);
+
+  /* === Radii === */
+  --r-xs:  6px;
+  --r-sm:  10px;
+  --r-md:  14px;
+  --r-lg:  18px;
+  --r-xl:  24px;
+  --r-2xl: 32px;
+  --r-full:999px;
+
+  /* === Typography === */
+  --font:       -apple-system, BlinkMacSystemFont, 'Plus Jakarta Sans', 'Helvetica Neue', sans-serif;
+  --font-mono:  'SF Mono', ui-monospace, 'Cascadia Code', monospace;
+  --font-num:   -apple-system, BlinkMacSystemFont, 'Plus Jakarta Sans', sans-serif;
+
+  /* === Layout === */
+  --sidebar-w:  248px;
+  --topbar-h:   56px;
+
+  /* === Motion === */
+  --ease:       cubic-bezier(0.4,0,0.2,1);
+  --spring:     cubic-bezier(0.34,1.56,0.64,1);
+  --duration:   0.18s;
+}
+
+/* ────────── Base ────────── */
+html, body, #root { height: 100%; }
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+a { text-decoration: none; color: inherit; }
+button, input, select, textarea { font-family: var(--font); }
+::selection { background: rgba(10,132,255,0.18); }
+
+/* ────────── Scrollbars ────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius:99px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.22); }
+
+/* ────────── Animations ────────── */
+@keyframes fadeUp   { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
+@keyframes fadeIn   { from{opacity:0} to{opacity:1} }
+@keyframes scaleIn  { from{opacity:0;transform:scale(0.95)} to{opacity:1;transform:scale(1)} }
+@keyframes slideRight { from{opacity:0;transform:translateX(-10px)} to{opacity:1;transform:translateX(0)} }
+@keyframes spin     { to{transform:rotate(360deg)} }
+@keyframes shimmer  { 0%{background-position:-800px 0} 100%{background-position:800px 0} }
+@keyframes pulse    { 0%,100%{opacity:1} 50%{opacity:0.5} }
+@keyframes bounceIn { 0%{opacity:0;transform:scale(0.85)} 60%{transform:scale(1.04)} 100%{opacity:1;transform:scale(1)} }
+
+.page-enter { animation: fadeUp 0.35s var(--ease) both; }
+.slide-right { animation: slideRight 0.25s var(--ease) both; }
+
+/* ────────── Skeleton ────────── */
+.skeleton {
+  background: linear-gradient(90deg,#f0f0f2 25%,#e8e8ec 50%,#f0f0f2 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s infinite linear;
+  border-radius: var(--r-sm);
+}
+
+/* ────────── Number styling ────────── */
+.num {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  font-family: var(--font-num);
+}
+
+/* ────────── Responsive grid helpers ────────── */
+.grid-4 { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; }
+.grid-3 { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
+.grid-2 { display:grid; grid-template-columns:repeat(2,1fr); gap:14px; }
+
+@media (max-width:1200px) {
+  .grid-4 { grid-template-columns:repeat(2,1fr); }
+}
+@media (max-width:900px) {
+  .grid-4 { grid-template-columns:repeat(2,1fr); }
+  .grid-3 { grid-template-columns:repeat(2,1fr); }
+  .grid-2 { grid-template-columns:1fr; }
+}
+@media (max-width:640px) {
+  .grid-4, .grid-3, .grid-2 { grid-template-columns:1fr; }
+  body { font-size: 14px; }
+}
+
+/* ────────── Focus ring ────────── */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+/* ────────── Input placeholder ────────── */
+input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
+
+/* ─── Responsive page padding ─── */
+@media (max-width:768px) {
+  /* Main content area */
+  .page-enter { animation-duration: 0.25s; }
+}
+
+@media (max-width:640px) {
+  /* Page content padding reduction */
+  body { font-size: 13px; }
+  /* Tables: horizontal scroll with indicator */
+  table { min-width: 480px; }
+}
+
+/* ─── Utility classes ─── */
+.text-green  { color: var(--green); }
+.text-red    { color: var(--red); }
+.text-orange { color: var(--orange); }
+.text-accent { color: var(--accent); }
+.text-muted  { color: var(--text-secondary); }
+.text-xs     { font-size: 11px; }
+.text-sm     { font-size: 13px; }
+.text-base   { font-size: 14px; }
+.fw-600      { font-weight: 600; }
+.fw-700      { font-weight: 700; }
+.fw-800      { font-weight: 800; }
+
+/* ─── Card hover variants ─── */
+.card-hover:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+/* ─── Table row hover ─── */
+tr:hover td { background: rgba(10,132,255,0.02); }
+
+/* ─── Input focus ring global override ─── */
+input:focus, select:focus, textarea:focus {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px rgba(10,132,255,0.12) !important;
+}
+
+/* ─── Badge animations ─── */
+.badge-pulse {
+  animation: pulse 2s cubic-bezier(0.4,0,0.6,1) infinite;
+}
