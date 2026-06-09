@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, Gavel, ArrowRight, X, Calendar as CalIcon, U
 import { useAuth } from '../../contexts/AuthContext';
 import { getDashboardData } from '../../utils/cf_firestore';
 import { formatCurrency } from '../../utils/cf_format';
+import { getExpectedPayable, getCommBreakdown, calcPhases, getPhaseIndex } from '../../utils/cf_engine';
 import { Card, PageHeader, Badge, StatCard, SectionHeader, tokens } from '../../components/chitfund/UI';
 import { PageLoader } from '../../components/Skeleton';
 
@@ -113,6 +114,7 @@ export default function CalendarPage() {
   const nav = useNavigate();
   const [eventsByDate, setEventsByDate] = useState({});
   const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState('');
   const [viewDate, setViewDate] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState(null);
 
@@ -131,6 +133,15 @@ export default function CalendarPage() {
             branch: c.branch || 'Head Office',
             perHeadValue: c.perHeadValue,
             totalMembers: c.totalMembers,
+            // Include chit data needed for estimates
+            totalChitValue: c.totalChitValue,
+            managerCommissionPct: c.managerCommissionPct,
+            commissionType: c.commissionType,
+            range_phase1: c.range_phase1 || c.range1 || 0,
+            range_phase2: c.range_phase2 || c.range2 || 0,
+            range_phase3: c.range_phase3 || c.range3 || 0,
+            range_phase4: c.range_phase4 || c.range4 || 0,
+            chitObj: c, // full chit for getExpectedPayable
           });
         });
       });
@@ -161,13 +172,14 @@ export default function CalendarPage() {
     .slice(0, 8);
 
   if (loading) return <PageLoader stats={3} />;
+  if (loadErr) return <div style={{padding:'40px',textAlign:'center',color:'#f87171',fontSize:14}}>⚠ {loadErr}</div>;
 
   return (
     <div>
       <PageHeader title="Auction Calendar" subtitle="Visual auction schedule — click any date to see full details" />
 
       {/* Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 13, marginBottom: 20 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 13, marginBottom: 20 }}>
         <StatCard label="This Month" value={moEvents.length} sub="total auctions" icon={CalIcon} accent={tokens.blue} />
         <StatCard label="Pending" value={pending.length} sub="not conducted yet" icon={Gavel} accent={tokens.amber} />
         <StatCard label="Completed" value={done.length} sub="this month" icon={Gavel} accent={tokens.green} />

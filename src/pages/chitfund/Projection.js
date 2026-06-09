@@ -4,7 +4,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import { ChevronDown, ChevronRight, AlertCircle, TrendingUp, Wallet, Calendar } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { getDashboardData } from '../../utils/cf_firestore';
-import { buildMonthProjection, calcTakeSuggestion } from '../../utils/cf_engine';
+import { buildMonthProjection, calcTakeSuggestion, getExpectedPayable, getCommBreakdown, getPhaseIndex } from '../../utils/cf_engine';
 import { formatCurrency, formatMonthYear } from '../../utils/cf_format';
 import { Card, StatCard, SectionHeader, tokens, Badge } from '../../components/chitfund/UI';
 import { PageLoader } from '../../components/Skeleton';
@@ -69,7 +69,7 @@ export default function Projection() {
       </div>
 
       {/* KPIs */}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:13 }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))', gap:13 }}>
         <StatCard label="This Month"    value={fmt(next1)}  sub="immediate need"     icon={Wallet}    accent={tokens.red}/>
         <StatCard label="Next 3 Months" value={fmt(next3)}  sub="quarterly outlook"  icon={Calendar}  accent='#B45309'/>
         <StatCard label="Next 6 Months" value={fmt(next6)}  sub="half-year plan"     icon={TrendingUp} accent={tokens.blue}/>

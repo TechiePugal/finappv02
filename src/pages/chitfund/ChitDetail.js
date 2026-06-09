@@ -13,8 +13,8 @@ import {
   updateChit,
 } from '../../utils/cf_firestore';
 import {
-  calcCommissionForward, calcCommissionReverse, calcExposure, calcFutureLiability,
-  calcPhases, getPhaseIndex, getExpectedPayable
+  calcCommission, calcCommissionForward, calcCommissionReverse, calcExposure, calcFutureLiability,
+  calcPhases, getPhaseIndex, getExpectedPayable, getCommBreakdown
 } from '../../utils/cf_engine';
 import { formatCurrency, formatDate, roundTo } from '../../utils/cf_format';
 import {
@@ -92,7 +92,7 @@ export default function ChitDetail() {
 
   // Process auction modal
   const [auctionModal, setAuctionModal] = useState(null); // auction slot
-  const [aForm, setAForm] = useState({ winnerId: '', bidAmount: '', takenByCompany: false, notes: '' });
+  const [aForm, setAForm] = useState({ winnerId: '', bidAmount: '', notes: '' });
   const [auctionSaving, setAuctionSaving] = useState(false);
 
   // Delete auction modal
@@ -137,8 +137,10 @@ export default function ChitDetail() {
   const phases = calcPhases(chit.totalMembers);
 
   // Commission preview for process-auction modal
+  // Commission preview using spec-correct forward calculator
+  const isCompanyWinnerSelected = aForm.winnerId === 'company';
   let commPreview = null;
-  if (aForm.bidAmount && +aForm.bidAmount > 0) {
+  if (aForm.bidAmount && +aForm.bidAmount > 0 && aForm.winnerId) {
     try {
       commPreview = calcCommissionForward({
         chitValue: chit.totalChitValue,
@@ -177,20 +179,27 @@ export default function ChitDetail() {
   // ── Auction processing ──────────────────────────────────────────────────────
   async function handleProcessAuction() {
     setError('');
-    const winner = aForm.takenByCompany
+    // companyIncluded: company is a member in the dropdown, selected like anyone else
+    // No separate "takenByCompany" toggle needed - company won = winner.id === 'company'
+    if (!aForm.winnerId) return setError('Select a winner from the list.');
+    if (!aForm.bidAmount || +aForm.bidAmount <= 0) return setError('Bid amount is required.');
+
+    // Find winner — could be a member or the company slot
+    const isCompanyWinner = aForm.winnerId === 'company';
+    const winner = isCompanyWinner
       ? { id: 'company', name: 'Company' }
       : members.find(m => m.id === aForm.winnerId);
-    if (!winner && !aForm.takenByCompany) return setError('Select a winner or mark as taken by company.');
-    if (!aForm.bidAmount || +aForm.bidAmount <= 0) return setError('Bid amount is required.');
+    if (!winner) return setError('Selected winner not found.');
+
     setAuctionSaving(true);
     try {
       await processAuction(id, auctionModal.id, {
         auctionNumber: auctionModal.auctionNumber,
         auctionDate: auctionModal.auctionDate,
-        winnerId: winner?.id,
-        winnerName: winner?.name || 'Company',
+        winnerId: winner.id,
+        winnerName: winner.name,
         bidAmount: +aForm.bidAmount,
-        takenByCompany: aForm.takenByCompany,
+        takenByCompany: isCompanyWinner,  // derived from selection, not a manual toggle
         notes: aForm.notes,
       }, user.uid);
       setAuctionModal(null); setError(''); load();
@@ -299,7 +308,7 @@ export default function ChitDetail() {
           <div style={{ display: 'flex', gap: 8 }}>
             <IBtn icon={Edit2} onClick={openEditChit} title="Edit chit fund settings" />
             {nextAuction && (
-              <button onClick={() => { setAuctionModal(nextAuction); setAForm({ winnerId: '', bidAmount: '', takenByCompany: false, notes: '' }); setError(''); }}
+              <button onClick={() => { setAuctionModal(nextAuction); setAForm({ winnerId: '', bidAmount: '', notes: '' }); setError(''); }}
                 style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', borderRadius: 10, border: 'none', background: tokens.blue, color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
                 <Gavel size={14} /> Process Auction #{nextAuction.auctionNumber}
               </button>
@@ -412,7 +421,7 @@ export default function ChitDetail() {
               </p>
             </div>
             {nextAuction && (
-              <button onClick={() => { setAuctionModal(nextAuction); setAForm({ winnerId: '', bidAmount: '', takenByCompany: false, notes: '' }); setError(''); }}
+              <button onClick={() => { setAuctionModal(nextAuction); setAForm({ winnerId: '', bidAmount: '', notes: '' }); setError(''); }}
                 style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 9, border: 'none', background: tokens.blue, color: '#fff', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
                 <Gavel size={13} /> Process #{nextAuction.auctionNumber}
               </button>
@@ -468,7 +477,7 @@ export default function ChitDetail() {
                 <div style={{ flexShrink: 0, display: 'flex', gap: 6, alignItems: 'center' }}>
                   {isPending ? (
                     <button
-                      onClick={e => { e.stopPropagation(); setAuctionModal(a); setAForm({ winnerId: '', bidAmount: '', takenByCompany: false, notes: '' }); setError(''); }}
+                      onClick={e => { e.stopPropagation(); setAuctionModal(a); setAForm({ winnerId: '', bidAmount: '', notes: '' }); setError(''); }}
                       style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', borderRadius: 8, border: 'none', background: isUrgent ? tokens.red : tokens.amber, color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
                       <Gavel size={12} /> Process
                     </button>
@@ -618,24 +627,18 @@ export default function ChitDetail() {
             <div style={{ padding: '18px 22px' }}>
               {error && <div style={{ marginBottom: 12, padding: '10px 13px', background: '#FEE2E2', borderRadius: 8, fontSize: 13, color: tokens.red }}>{error}</div>}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
-                {/* Company toggle */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '11px 14px', background: aForm.takenByCompany ? '#EDE9FE' : tokens.slateLight, borderRadius: 10, border: `1px solid ${aForm.takenByCompany ? '#7C3AED30' : tokens.border}` }}>
-                  <div>
-                    <div style={{ fontSize: 13.5, fontWeight: 600, color: tokens.text }}>Taken by Company</div>
-                    <div style={{ fontSize: 11.5, color: tokens.textSub, marginTop: 1 }}>Company wins this auction — pays per head from next round</div>
-                  </div>
-                  <Toggle checked={aForm.takenByCompany} onChange={v => setAForm(f => ({ ...f, takenByCompany: v, winnerId: '' }))} label="" />
-                </div>
-
-                {/* Winner select */}
-                {!aForm.takenByCompany && (
-                  <FormField label="Select Winner" required>
-                    <Select value={aForm.winnerId} onChange={e => setAForm(f => ({ ...f, winnerId: e.target.value }))}>
-                      <option value="">— Select winning member —</option>
-                      {activeMembers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                    </Select>
-                  </FormField>
-                )}
+                {/* Winner select — company appears here if companyIncluded */}
+                <FormField label="Select Winner" required
+                  hint={chit.companyIncluded ? 'Company is a member — select company if it wins this auction' : 'Select the winning member'}>
+                  <Select value={aForm.winnerId} onChange={e => setAForm(f => ({ ...f, winnerId: e.target.value }))}>
+                    <option value="">— Select winner —</option>
+                    {/* Company slot — only shown if company is included as a member */}
+                    {chit.companyIncluded && (
+                      <option value="company">🏢 Company (Organiser)</option>
+                    )}
+                    {activeMembers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </Select>
+                </FormField>
 
                 {/* Bid amount */}
                 <FormField label="Bid Amount (₹)" required hint={`What the winner foregoes — must be between ₹1 and ${fmt(chit.perHeadValue - 1)}`}>
@@ -656,14 +659,14 @@ export default function ChitDetail() {
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 12.5 }}>
                       {[
-                        ['Organiser Amount',          fmt(commPreview.orgAmount)],
-                        ['Pool (Bid − Org)',           fmt(commPreview.pool)],
-                        ['Eligible Members',           commPreview.eligible],
-                        ['Commission per Member',      fmt(commPreview.commissionPerMember)],
+                        ['Organiser Amount',          fmt(commPreview.managerCommission)],
+                        ['Pool (Bid − Org)',           fmt(commPreview.commissionPool)],
+                        ['Eligible Members',           commPreview.eligibleMembers],
+                        ['Commission per Member',      fmt(commPreview.memberCommission)],
                         chit.commissionType === 'Single'
-                          ? ['Non-cashed Net Payable', fmt(commPreview.netPayableNonCashedNonWinner)]
-                          : ['Every Member Pays',      fmt(commPreview.netPayableDouble)],
-                        ['Winner In-Hand Prize',       fmt(commPreview.winnerInHand)],
+                          ? ['Non-cashed Net Payable', fmt(String(Math.round((chit.perHeadValue||0) - (commPreview.memberCommission||0))))]
+                          : ['Every Member Pays',      fmt(String(Math.round((chit.perHeadValue||0) - (commPreview.memberCommission||0))))],
+                        ['Winner In-Hand Prize',       fmt(String(Math.round((chit.perHeadValue||0) * (chit.totalMembers||0) - (aForm.bidAmount||0))))],
                       ].map(([lbl, val], i) => (
                         <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                           <span style={{ color: tokens.textSub }}>{lbl}:</span>

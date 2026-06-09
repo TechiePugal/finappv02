@@ -308,6 +308,7 @@ export async function processAuction(chitId, auctionScheduleId, auctionData, use
     throw new Error('This financial year is locked. No further processing allowed.');
   }
 
+  // takenCount = already-cashed members (won in previous rounds)
   const takenCount = members.filter(m => m.status === 'Taken').length;
   const commInfo = calcCommission(chit, auctionData, takenCount);
   const investment = calcInvestment(chit, auctionData.takenByCompany, chit.companyTakenAuction !== null);
@@ -337,11 +338,40 @@ export async function processAuction(chitId, auctionScheduleId, auctionData, use
   });
 
   // 3. Member payment records (one per member)
+  // SINGLE: non-cashed non-winner → earn commission; cashed → pay FULL sub, earn NOTHING
+  // DOUBLE: everyone (incl. cashed) → earn commission; winner pays sub-commission too
   for (const member of members) {
-    const isWinner = member.id === auctionData.winnerId;
-    const eligibleForComm = chit.commissionType === 'Single'
-      ? (member.status === 'Active' && !isWinner)
-      : !isWinner;
+    const isWinner = member.id === auctionData.winnerId || (auctionData.takenByCompany && member.id === 'company');
+    const isCashed = member.status === 'Taken';
+
+    let eligibleForComm = false;
+    let netPayable = perHead; // default: full subscription
+
+    if (chit.commissionType === 'Double') {
+      // Double: ALL members get commission EXCEPT the winner of this round
+      eligibleForComm = !isWinner;
+      netPayable = eligibleForComm
+        ? roundTo(perHead - commInfo.memberCommission, 2)
+        : perHead; // winner pays sub-commission in double too
+      if (isWinner) netPayable = roundTo(perHead - commInfo.memberCommission, 2); // winner also gets commission in double
+      eligibleForComm = true; // in double, everyone gets it
+      netPayable = roundTo(perHead - commInfo.memberCommission, 2);
+    } else {
+      // Single: only non-cashed non-winners get commission
+      if (isWinner) {
+        // Winner on their own round: pays FULL sub (no commission on own auction - single)
+        eligibleForComm = false;
+        netPayable = perHead;
+      } else if (isCashed) {
+        // Already-cashed member: pays FULL sub, earns NOTHING (spec §6.1)
+        eligibleForComm = false;
+        netPayable = perHead;
+      } else {
+        // Non-cashed, non-winner: earns commission
+        eligibleForComm = true;
+        netPayable = roundTo(perHead - commInfo.memberCommission, 2);
+      }
+    }
 
     const payRef = doc(collection(db, 'chit_member_payments'));
     batch.set(payRef, {
@@ -353,10 +383,11 @@ export async function processAuction(chitId, auctionScheduleId, auctionData, use
       auctionResultId: resultRef.id,
       contributionAmount: perHead,
       commissionReceived: eligibleForComm ? commInfo.memberCommission : 0,
-      netPayable: eligibleForComm ? roundTo(perHead - commInfo.memberCommission, 2) : perHead,
+      netPayable,
       isWinner,
-      winnerPayout: isWinner ? auctionData.bidAmount : 0,
-      paymentStatus: 'Pending',   // Pending | Paid
+      isCashed,
+      winnerPayout: isWinner ? roundTo(chit.totalChitValue - auctionData.bidAmount, 2) : 0,
+      paymentStatus: 'Pending',
       createdAt: serverTimestamp(),
     });
   }
@@ -556,138 +587,103 @@ export function calcRiskScore(chit) {
   } catch { return 0; }
 }
 
-// ─── OTHER CHITS (Put chit on others tracking) ────────────────────────────
-
-export async function getOtherChits(userId) {
-  const q = query(collection(db, 'chit_others'), where('createdBy', '==', userId));
-  const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }))
-    .sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0));
-}
-
-export async function addOtherChit(data, userId) {
-  const ref = await addDoc(collection(db, 'chit_others'), {
-    ...data, createdBy: userId, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
-  });
-  return ref.id;
-}
-
-export async function updateOtherChit(id, data, userId) {
-  await updateDoc(doc(db, 'chit_others', id), { ...data, updatedAt: serverTimestamp() });
-}
-
-export async function deleteOtherChit(id, userId) {
-  await deleteDoc(doc(db, 'chit_others', id));
-}
-
-export async function addOtherChitPayment(otherId, data, userId) {
-  const ref = await addDoc(collection(db, 'chit_others_payments'), {
-    otherId, ...data, createdBy: userId, createdAt: serverTimestamp(),
-  });
-  return ref.id;
-}
-
-export async function getOtherChitPayments(otherId) {
-  const q = query(collection(db, 'chit_others_payments'), where('otherId', '==', otherId));
-  const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }))
-    .sort((a, b) => (a.month || '').localeCompare(b.month || ''));
-}
-
-export async function updateOtherChitPayment(paymentId, data) {
-  await updateDoc(doc(db, 'chit_others_payments', paymentId), { ...data, updatedAt: serverTimestamp() });
-}
-
-// ─── DELETE AUCTION (reverse processAuction) ────────────────────────────────
+// ─── DELETE AUCTION (reverses all effects) ────────────────────────────────
 export async function deleteAuction(chitId, auctionScheduleId, auctionNumber, userId) {
-  const [chit, schedule] = await Promise.all([getChit(chitId), getAuctionSchedule(chitId)]);
-  
-  const auctionSlot = schedule.find(s => s.id === auctionScheduleId || s.auctionNumber === auctionNumber);
-  if (!auctionSlot || auctionSlot.status !== 'Completed') {
-    throw new Error('Only completed auctions can be deleted.');
-  }
+  const chit = await getChit(chitId);
+  if (!chit) throw new Error('Chit not found.');
 
-  // Get the result record to reverse financials
+  // Find result
   const resSnap = await getDocs(query(
     collection(db, 'chit_auction_results'),
     where('chitId', '==', chitId), where('auctionNumber', '==', auctionNumber)
   ));
-  const result = resSnap.docs[0];
-  if (!result) throw new Error('Auction result record not found.');
-  const resData = result.data();
+  if (resSnap.empty) throw new Error('Auction result not found.');
+  const resDoc = resSnap.docs[0];
+  const resData = resDoc.data();
 
   const batch = writeBatch(db);
 
-  // 1. Reset auction schedule slot → Pending
+  // Reset schedule slot
   batch.update(doc(db, 'chit_auction_schedule', auctionScheduleId), {
     status: 'Pending', winnerId: null, winnerName: null,
     bidAmount: null, takenByCompany: false, notes: '',
     updatedAt: serverTimestamp(),
   });
 
-  // 2. Delete auction result
-  batch.delete(doc(db, 'chit_auction_results', result.id));
+  // Delete result
+  batch.delete(resDoc.ref);
 
-  // 3. Delete all member payments for this auction
-  const paySnap = await getDocs(query(
-    collection(db, 'chit_member_payments'),
-    where('chitId', '==', chitId), where('auctionNumber', '==', auctionNumber)
-  ));
-  paySnap.docs.forEach(d => batch.delete(doc(db, 'chit_member_payments', d.id)));
+  // Delete member payments
+  const paySnap = await getDocs(query(collection(db,'chit_member_payments'), where('chitId','==',chitId), where('auctionNumber','==',auctionNumber)));
+  paySnap.docs.forEach(d => batch.delete(d.ref));
 
-  // 4. Delete commission distribution entries
-  const commSnap = await getDocs(query(
-    collection(db, 'chit_commission_distribution'),
-    where('chitId', '==', chitId), where('auctionNumber', '==', auctionNumber)
-  ));
-  commSnap.docs.forEach(d => batch.delete(doc(db, 'chit_commission_distribution', d.id)));
+  // Delete commission distribution
+  const commSnap = await getDocs(query(collection(db,'chit_commission_distribution'), where('chitId','==',chitId), where('auctionNumber','==',auctionNumber)));
+  commSnap.docs.forEach(d => batch.delete(d.ref));
 
-  // 5. Delete company investment entry
-  const invSnap = await getDocs(query(
-    collection(db, 'chit_company_investment'),
-    where('chitId', '==', chitId), where('auctionNumber', '==', auctionNumber)
-  ));
-  invSnap.docs.forEach(d => batch.delete(doc(db, 'chit_company_investment', d.id)));
+  // Delete company investment entry
+  const invSnap = await getDocs(query(collection(db,'chit_company_investment'), where('chitId','==',chitId), where('auctionNumber','==',auctionNumber)));
+  invSnap.docs.forEach(d => batch.delete(d.ref));
 
-  // 6. Delete ledger entries
-  const ledSnap = await getDocs(query(
-    collection(db, 'chit_ledger_entries'),
-    where('chitId', '==', chitId), where('auctionNumber', '==', auctionNumber)
-  ));
-  ledSnap.docs.forEach(d => batch.delete(doc(db, 'chit_ledger_entries', d.id)));
+  // Delete ledger entries
+  const ledSnap = await getDocs(query(collection(db,'chit_ledger_entries'), where('chitId','==',chitId), where('auctionNumber','==',auctionNumber)));
+  ledSnap.docs.forEach(d => batch.delete(d.ref));
 
-  // 7. Reset winner member status
+  // Restore winner status
   if (resData.winnerId && resData.winnerId !== 'company') {
-    batch.update(doc(db, 'chit_members', resData.winnerId), {
-      status: 'Active', auctionTakenNumber: null, updatedAt: serverTimestamp(),
+    batch.update(doc(db,'chit_members',resData.winnerId), {
+      status:'Active', auctionTakenNumber:null, updatedAt:serverTimestamp(),
     });
   }
 
-  // 8. Reverse chit master financials
-  const newCompleted = Math.max(0, (chit.auctionsCompleted || 0) - 1);
+  // Reverse chit master totals
+  const newCompleted = Math.max(0, (chit.auctionsCompleted||0)-1);
   const chitUpdate = {
     auctionsCompleted: newCompleted,
-    totalInvested:         roundTo(Math.max(0, (chit.totalInvested || 0)        - (resData.investment || 0)), 2),
-    totalCommissionEarned: roundTo(Math.max(0, (chit.totalCommissionEarned || 0) - (resData.commissionPool || 0)), 2),
-    totalManagerCommission:roundTo(Math.max(0, (chit.totalManagerCommission || 0)- (resData.managerCommission || 0)), 2),
-    totalReceived:         roundTo(Math.max(0, (chit.totalReceived || 0)         - (resData.bidAmount || 0)), 2),
+    totalInvested: roundTo(Math.max(0,(chit.totalInvested||0)-(resData.investment||0)),2),
+    totalCommissionEarned: roundTo(Math.max(0,(chit.totalCommissionEarned||0)-(resData.commissionPool||0)),2),
+    totalManagerCommission: roundTo(Math.max(0,(chit.totalManagerCommission||0)-(resData.managerCommission||0)),2),
+    totalReceived: roundTo(Math.max(0,(chit.totalReceived||0)-(resData.bidAmount||0)),2),
     status: 'Active',
     updatedAt: serverTimestamp(),
   };
-  // Reverse companyTakenAuction if this was the company auction
   if (resData.takenByCompany && chit.companyTakenAuction === auctionNumber) {
     chitUpdate.companyTakenAuction = null;
   }
-  batch.update(doc(db, 'chit_master', chitId), chitUpdate);
-
-  // 9. Audit log
-  batch.set(doc(collection(db, 'chit_audit_log')), {
-    action: 'DELETE_AUCTION', entityType: 'auction', entityId: auctionScheduleId,
-    details: { auctionNumber, winner: resData.winnerName, bidAmount: resData.bidAmount },
-    userId, chitId, timestamp: serverTimestamp(), createdAt: serverTimestamp(),
-  });
+  batch.update(doc(db,'chit_master',chitId), chitUpdate);
 
   await batch.commit();
-  ['chit', 'schedule', 'members', 'all-payments', 'payments', 'chits', 'dashboard']
-    .forEach(prefix => cacheDeletePattern(prefix));
+  ['chit','schedule','members','all-payments','payments','chits','dashboard'].forEach(p => cacheDeletePattern(p));
+
+  await writeAuditLog('DELETE','auction',auctionScheduleId,{auctionNumber,winner:resData.winnerName},userId);
 }
+
+// ─── OTHER CHITS ──────────────────────────────────────────────────────────
+export async function getOtherChits(userId) {
+  const q = query(collection(db,'chit_others'), where('createdBy','==',userId));
+  const snap = await getDocs(q);
+  return snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds??0)-(a.createdAt?.seconds??0));
+}
+export async function addOtherChit(data, userId) {
+  const ref = await addDoc(collection(db,'chit_others'),{...data,createdBy:userId,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+  return ref.id;
+}
+export async function updateOtherChit(id, data) {
+  await updateDoc(doc(db,'chit_others',id),{...data,updatedAt:serverTimestamp()});
+}
+export async function deleteOtherChit(id) {
+  await deleteDoc(doc(db,'chit_others',id));
+}
+export async function addOtherChitPayment(otherId, data, userId) {
+  const ref = await addDoc(collection(db,'chit_others_payments'),{otherId,...data,createdBy:userId,createdAt:serverTimestamp()});
+  return ref.id;
+}
+export async function getOtherChitPayments(otherId) {
+  const q = query(collection(db,'chit_others_payments'), where('otherId','==',otherId));
+  const snap = await getDocs(q);
+  return snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.month||'').localeCompare(b.month||''));
+}
+export async function updateOtherChitPayment(paymentId, data) {
+  await updateDoc(doc(db,'chit_others_payments',paymentId),{...data,updatedAt:serverTimestamp()});
+}
+

@@ -4,8 +4,8 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import { FileText, Gavel, TrendingUp, Wallet, AlertTriangle, Clock, CheckCircle, ArrowRight, Plus, BarChart3 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { getDashboardData } from '../../utils/cf_firestore';
-import { buildMonthProjection } from '../../utils/cf_engine';
-import { formatCurrency, formatMonthYear } from '../../utils/cf_format';
+import { buildMonthProjection, getExpectedPayable, getCommBreakdown, getChitsForMonth, getChitRoundForMonth } from '../../utils/cf_engine';
+import { formatCurrency, formatMonthYear, roundTo } from '../../utils/cf_format';
 import { Card, StatCard, tokens, SectionHeader } from '../../components/chitfund/UI';
 import { PageLoader } from '../../components/Skeleton';
 
@@ -16,13 +16,20 @@ export default function Dashboard() {
   const nav = useNavigate();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState('');
 
   useEffect(() => {
     if (!user) return;
-    getDashboardData(user.uid).then(d => { setData(d); setLoading(false); });
+    getDashboardData(user.uid).then(d => { setData(d); setLoading(false); }).catch(e => { setLoadErr('Failed to load data — check connection'); setLoading(false); });
   }, [user]);
 
   if (loading) return <PageLoader stats={4} />;
+  if (loadErr) return (
+    <div style={{ padding:'40px', textAlign:'center' }}>
+      <div style={{ color:'#f87171', fontSize:14, marginBottom:12 }}>⚠ {loadErr}</div>
+      <button onClick={() => { setLoading(true); getDashboardData(user.uid).then(d=>{setData(d);setLoadErr('');}).catch(()=>setLoadErr('Failed to load data — check connection')).finally(()=>setLoading(false)); }} style={{ padding:'8px 16px', borderRadius:8, border:'1px solid rgba(248,113,113,0.3)', background:'rgba(248,113,113,0.1)', color:'#f87171', cursor:'pointer', fontSize:13, fontFamily:'inherit' }}>Retry</button>
+    </div>
+  );
 
   const chits   = data?.chits    || [];
   const scheds  = data?.schedules || {};
@@ -34,10 +41,10 @@ export default function Dashboard() {
   const totalExposure = chits.reduce((s,c)=>s+Math.max(0,(c.totalInvested||0)-(c.totalCommissionEarned||0)-(c.totalReceived||0)),0);
 
   // This month need per chit (investment model)
-  const thisMonthNeed = active.reduce((s,c) => {
+  const thisMonthNeed = active.reduce((s, c) => {
     const taken = c.companyTakenAuction !== null && c.companyTakenAuction !== undefined;
-    const slab  = c.slabType==='Fixed' ? (c.slabValue||0) : Math.round((c.totalChitValue||0)*(c.slabValue||0)/100);
-    return s + (taken ? (c.perHeadValue||0) : slab);
+    const nextRound = (c.auctionsCompleted || 0) + 1;
+    return s + (taken ? (c.perHeadValue||0) : getExpectedPayable(c, nextRound));
   }, 0);
 
   // Upcoming auctions (next 7 days)
@@ -113,7 +120,7 @@ export default function Dashboard() {
         <StatCard label="Net Exposure"        value={fmt(totalExposure)} sub="invested − received"  icon={TrendingUp} accent={totalExposure>0?tokens.red:tokens.green}/>
       </div>
 
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 300px', gap:18 }}>
+      <div className="cf-dash-main-aside">
         {/* Chart */}
         <Card>
           <SectionHeader title="Monthly Fund Requirement — 8-Month Forecast"
@@ -206,7 +213,8 @@ export default function Dashboard() {
             {active.map(c => {
               const taken = c.companyTakenAuction !== null && c.companyTakenAuction !== undefined;
               const slab  = c.slabType==='Fixed' ? (c.slabValue||0) : Math.round((c.totalChitValue||0)*(c.slabValue||0)/100);
-              const need  = taken ? (c.perHeadValue||0) : slab;
+              const nextRound_ = (c.auctionsCompleted||0)+1;
+              const need  = taken ? (c.perHeadValue||0) : getExpectedPayable(c, nextRound_);
               const pct   = c.totalMembers>0 ? Math.round(((c.auctionsCompleted||0)/c.totalMembers)*100) : 0;
               const expComm = (c.totalChitValue||0)*(c.managerCommissionPct||5)/100;
               const sched   = scheds[c.id]||[];

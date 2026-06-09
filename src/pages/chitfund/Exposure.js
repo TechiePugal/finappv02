@@ -74,7 +74,7 @@ export default function Exposure() {
     <div>
       <PageHeader title="Exposure & Risk" subtitle="Monitor current exposure, future liability and total risk across all chit funds" />
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 13, marginBottom: 20 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 13, marginBottom: 20 }}>
         <StatCard label="Current Exposure" value={formatCurrency(totalExposure)} sub="Invested minus received" icon={Zap} accent={tokens.red} />
         <StatCard label="Future Liability" value={formatCurrency(totalFuture)} sub="Remaining auctions" icon={TrendingDown} accent={tokens.amber} />
         <StatCard label="Total Risk" value={formatCurrency(totalRisk)} sub="Exposure + Future" icon={AlertCircle} accent="#5521B5" />

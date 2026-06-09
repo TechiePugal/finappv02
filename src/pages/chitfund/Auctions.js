@@ -504,7 +504,7 @@ export default function Auctions() {
       )}
 
       {/* Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14, marginBottom: 20 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 14, marginBottom: 20 }}>
         <StatCard label="Total Auctions" value={totalAuctions} sub={`${monthGroups.length} months`} icon={Gavel} accent={tokens.blue} />
         <StatCard label="Completed" value={completedCount} sub="processed & recorded" icon={CheckCircle} accent={tokens.green} />
         <StatCard label="Pending" value={pendingCount} sub={urgentCount > 0 ? `${urgentCount} urgent!` : 'to be conducted'} icon={Clock} accent={urgentCount > 0 ? tokens.red : tokens.amber} />
