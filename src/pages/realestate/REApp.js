@@ -44,7 +44,7 @@ export default function REApp() {
       height: '100%',
       minHeight: 'calc(100vh - 50px)',
       overflow: 'hidden',
-      background: '#F4F6FB',
+      background: '#F2F2F7',
       fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', 'Helvetica Neue', sans-serif",
       WebkitFontSmoothing: 'antialiased',
     }}>
@@ -87,16 +87,16 @@ export default function REApp() {
       {/* Main content */}
       <main style={{ flex: 1, overflowY: 'auto', height: '100%' }}>
         {/* Mobile topbar */}
-        <div style={{ display: 'none', alignItems: 'center', gap: 12, padding: '13px 18px', background: '#1E2640', position: 'sticky', top: 0, zIndex: 99 }} className="re-mobile-topbar">
+        <div style={{ display: 'none', alignItems: 'center', gap: 12, padding: '13px 18px', background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px) saturate(180%)', WebkitBackdropFilter: 'blur(20px) saturate(180%)', borderBottom: '1px solid rgba(0,0,0,0.07)', position: 'sticky', top: 0, zIndex: 99 }} className="re-mobile-topbar">
           <button
             onClick={() => setMobileSidebarOpen(true)}
-            style={{ background: 'rgba(255,255,255,0.1)', border: 'none', borderRadius: 7, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#fff', flexShrink: 0 }}
+            style={{ background: 'rgba(255,255,255,0.1)', border: 'none', borderRadius: 7, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#3C3C43CC', flexShrink: 0 }}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
             </svg>
           </button>
-          <span style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>Layout ERP</span>
+          <span style={{ fontSize: 16, fontWeight: 700, color: '#000', letterSpacing: '-0.02em' }}>Layout ERP</span>
         </div>
 
         <div style={{ padding: '28px 32px 48px' }} className="re-main-pad">

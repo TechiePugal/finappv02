@@ -10,6 +10,10 @@ const NAV_GROUPS = [
       icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill={a?'#0a84ff':'none'} stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg> },
     { to:'/fl/monthly-receivable', label:'Monthly Report',
       icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> },
+    { to:'/fl/alerts', label:'Alerts',
+      icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg> },
+    { to:'/fl/emi-alerts', label:'EMI Alerts',
+      icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> },
   ]},
   { label:'Deposits', items:[
     { to:'/fl/depositors', label:'Depositors',
@@ -25,13 +29,9 @@ const NAV_GROUPS = [
     { to:'/fl/loan-repayment', label:'Loan Repayment',
       icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> },
   ]},
-  { label:'Alerts & EMI', items:[
-    { to:'/fl/alerts', label:'Alerts',
-      icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg> },
+  { label:'EMI & Expenses', items:[
     { to:'/fl/emi-loans', label:'EMI Loans',
       icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M12 10v4M10 12h4"/></svg> },
-    { to:'/fl/emi-alerts', label:'EMI Alerts',
-      icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> },
     { to:'/fl/expenses', label:'Finance Expenses',
       icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg> },
   ]},

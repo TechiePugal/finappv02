@@ -7,12 +7,14 @@ import {PageLoader} from '../../components/Skeleton';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+function _toD(x){ if(!x) return null; if(x&&x.seconds) return new Date(x.seconds*1000); const d=new Date(x); return isNaN(d)?null:d; }
 function daysBetween(dateA,dateB){
-  return Math.floor((new Date(dateB)-new Date(dateA))/(1000*60*60*24));
+  const A=_toD(dateA),B=_toD(dateB); if(!A||!B) return 0;
+  return Math.floor((B-A)/(1000*60*60*24));
 }
 
 function monthsBetween(dateA,dateB){
-  const a=new Date(dateA),b=new Date(dateB);
+  const a=_toD(dateA),b=_toD(dateB); if(!a||!b) return 0;
   return(b.getFullYear()-a.getFullYear())*12+(b.getMonth()-a.getMonth());
 }
 
@@ -107,7 +109,8 @@ export default function Alerts(){
   }
 
   const today=new Date().toISOString().split('T')[0];
-  const active=borrowers.filter(b=>b.status==='Active'||b.status==='Non-Active');
+  const _closed=['Closed','Completed','Settled','Paid Off','Repaid','Inactive'];
+  const active=borrowers.filter(b=>!_closed.includes(b.status));
 
   // 1. PRINCIPAL OVERDUE — no repayment for 2+ months AND has balance
   const principalOverdue=active.filter(b=>{
@@ -153,7 +156,7 @@ export default function Alerts(){
     const loan=b.loanAmount||0;
     if(loan<=0)return false;
     const months=monthsBetween(b.loanStartDate||today,today);
-    return months>=3&&(bal/loan)>=0.9; // 3+ months old, 90%+ still owed
+    return months>=2&&(bal/loan)>=0.8; // 2+ months old, 80%+ still owed
   });
 
   const tabOpts=[
@@ -174,7 +177,7 @@ export default function Alerts(){
   const filtered=list.filter(b=>{
     if(!search)return true;
     const s=search.toLowerCase();
-    return b.borrowerName?.toLowerCase().includes(s)||b.phone?.includes(s)||b.loanId?.toLowerCase().includes(s);
+    return [b.borrowerName,b.phone,b.loanId,b.guardianName,b.guardianPhone].some(v=>String(v||'').toLowerCase().includes(s));
   });
 
   if(loading)return<PageLoader stats={4}/>;

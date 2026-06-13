@@ -109,6 +109,54 @@ function DayPopup({ date, events, onClose, nav }) {
   );
 }
 
+function NextAuctionPopup({ ev, onClose, nav }) {
+  const chit = ev.chitObj || {};
+  const round = ev.auctionNumber || 1;
+  const sub = ev.perHeadValue || 0;
+  let br = null; try { br = getCommBreakdown(chit, round); } catch (e) {}
+  let expectedPayable = sub; try { expectedPayable = getExpectedPayable(chit, round); } catch (e) {}
+  const bid = br ? br.bid : 0;
+  const payout = br ? br.winnerInHand : (chit.totalChitValue || 0);
+  const commPerHead = br ? br.commission : 0;
+  const orgAmt = br ? br.orgAmt : 0;
+  const dt = ev.dateKey ? new Date(ev.dateKey + "T00:00:00") : null;
+  const rows = [
+    { label:"Each member pays", val: formatCurrency(expectedPayable), color: tokens.blue, hint:"Contribution this round" },
+    { label:"Expected winning bid", val: formatCurrency(bid), color: tokens.amber, hint:"From current slab" },
+    { label:"Winner receives", val: formatCurrency(payout), color: tokens.green, hint:"Chit value minus bid" },
+    { label:"Commission / member", val: formatCurrency(commPerHead), color: tokens.purple, hint:"Saved by each member" },
+    { label:"Organiser fee", val: formatCurrency(orgAmt), color: tokens.text, hint:"Your cut this round" },
+  ];
+  return (
+    <div onClick={onClose} style={{ position:"fixed", inset:0, zIndex:1100, background:"rgba(17,24,39,0.6)", backdropFilter:"blur(5px)", overflowY:"auto", padding:"24px 16px" }}>
+      <div onClick={e=>e.stopPropagation()} style={{ background:"#fff", borderRadius:20, width:"100%", maxWidth:480, margin:"0 auto", boxShadow:"0 24px 64px rgba(0,0,0,0.2)", overflow:"hidden", animation:"popIn 0.2s ease" }}>
+        <div style={{ background:`linear-gradient(135deg,${tokens.blue},#5521B5)`, padding:"18px 22px", position:"relative" }}>
+          <button onClick={onClose} style={{ position:"absolute", top:14, right:16, width:30, height:30, borderRadius:9, background:"rgba(255,255,255,0.15)", border:"none", cursor:"pointer", color:"#fff", fontSize:17 }}>×</button>
+          <div style={{ fontSize:11, color:"rgba(255,255,255,0.7)", fontWeight:700, textTransform:"uppercase", letterSpacing:".06em" }}>Next Auction · Money Projection</div>
+          <div style={{ fontSize:20, fontWeight:900, color:"#fff", marginTop:4 }}>{ev.chitName}</div>
+          <div style={{ fontSize:13, color:"rgba(255,255,255,0.78)", marginTop:3 }}>Auction #{round}{dt?` · ${dt.toLocaleDateString("en-IN",{day:"numeric",month:"long",year:"numeric"})}`:""}</div>
+        </div>
+        <div style={{ padding:"16px 20px" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+            {rows.map((r,i)=>(
+              <div key={i} style={{ background: tokens.slateLight, borderRadius:11, padding:"11px 13px", border:`1px solid ${tokens.border}` }}>
+                <div style={{ fontSize:10, color:tokens.textMuted, fontWeight:700, textTransform:"uppercase", letterSpacing:".04em" }}>{r.label}</div>
+                <div style={{ fontSize:17, fontWeight:800, color:r.color, marginTop:3 }}>{r.val}</div>
+                <div style={{ fontSize:10.5, color:tokens.textSub, marginTop:2 }}>{r.hint}</div>
+              </div>
+            ))}
+          </div>
+          {!br && <div style={{ marginTop:12, fontSize:12, color:tokens.textSub, background:tokens.amberLight, borderRadius:9, padding:"9px 12px" }}>⚠ Projection uses the chit’s commission slabs. Add bid ranges in chit settings for a sharper estimate.</div>}
+          <button onClick={()=>{ onClose(); nav(`/cf/chits/${ev.chitId}`); }} style={{ width:"100%", marginTop:14, padding:"11px", borderRadius:11, border:"none", background:tokens.blue, color:"#fff", fontSize:13.5, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:6, fontFamily:"inherit" }}>
+            Open {ev.chitName} <ArrowRight size={14}/>
+          </button>
+        </div>
+      </div>
+      <style>{`@keyframes popIn{from{opacity:0;transform:scale(0.92) translateY(10px)}to{opacity:1;transform:none}}`}</style>
+    </div>
+  );
+}
+
 export default function CalendarPage() {
   const { user } = useAuth();
   const nav = useNavigate();
@@ -117,6 +165,7 @@ export default function CalendarPage() {
   const [loadErr, setLoadErr] = useState('');
   const [viewDate, setViewDate] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState(null);
+  const [nextPopup, setNextPopup] = useState(null);
 
   useEffect(() => {
     if (!user) return;
@@ -177,6 +226,25 @@ export default function CalendarPage() {
   return (
     <div>
       <PageHeader title="Auction Calendar" subtitle="Visual auction schedule — click any date to see full details" />
+
+      {upcoming.length > 0 && (() => {
+        const nx = upcoming[0];
+        const dtn = new Date(nx.dateKey + "T00:00:00");
+        const ddays = Math.ceil((dtn - new Date(todayKey + "T00:00:00")) / 86400000);
+        const when = ddays <= 0 ? "Today" : ddays === 1 ? "Tomorrow" : `in ${ddays} days`;
+        return (
+          <div onClick={()=>setNextPopup(nx)} style={{ cursor:"pointer", display:"flex", alignItems:"center", gap:14, padding:"14px 18px", borderRadius:14, marginBottom:20, background:`linear-gradient(135deg,${tokens.blue},#5521B5)`, boxShadow:"0 8px 24px rgba(0,122,255,0.25)", flexWrap:"wrap" }}>
+            <div style={{ width:46, height:46, borderRadius:13, background:"rgba(255,255,255,0.18)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}><Gavel size={22} color="#fff"/></div>
+            <div style={{ flex:1, minWidth:160 }}>
+              <div style={{ fontSize:11, color:"rgba(255,255,255,0.7)", fontWeight:700, textTransform:"uppercase", letterSpacing:".05em" }}>Next Upcoming Auction · {when}</div>
+              <div style={{ fontSize:16, fontWeight:800, color:"#fff", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{nx.chitName} — Auction #{nx.auctionNumber}</div>
+              <div style={{ fontSize:12.5, color:"rgba(255,255,255,0.82)", marginTop:1 }}>{dtn.toLocaleDateString("en-IN",{weekday:"short",day:"numeric",month:"short"})} · Each member pays ~{formatCurrency(nx.perHeadValue||0)}</div>
+            </div>
+            <div style={{ flexShrink:0, padding:"8px 14px", borderRadius:10, background:"rgba(255,255,255,0.2)", color:"#fff", fontSize:12.5, fontWeight:700, display:"flex", alignItems:"center", gap:6 }}>View details <ArrowRight size={14}/></div>
+          </div>
+        );
+      })()}
+      {nextPopup && <NextAuctionPopup ev={nextPopup} onClose={()=>setNextPopup(null)} nav={nav} />}
 
       {/* Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 13, marginBottom: 20 }}>

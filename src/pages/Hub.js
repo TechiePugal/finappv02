@@ -111,6 +111,8 @@ export default function Hub({ onLaunch }) {
 
   const activeProjects  = (projects||[]).filter(p=>p.status==='Active').length;
   const totalRevenue    = (projects||[]).reduce((s,p)=>s+(p.totalRevenue||0),0);
+  const bizMax = Math.max(totalRevenue, totalChitValue, totalDeposited, 1);
+  const moneyInMotion = totalChitValue + totalDeposited + outstanding + totalRevenue;
 
   const now   = new Date();
   const hour  = now.getHours();
@@ -214,6 +216,34 @@ export default function Hub({ onLaunch }) {
               </div>
             ))}
           </div>
+        </div>
+
+        {/* BUSINESS COMPARISON */}
+        <div style={{ background:'rgba(255,255,255,.06)', border:'1px solid rgba(255,255,255,.12)', borderRadius:20, padding:'24px 26px', marginBottom:28 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:6, flexWrap:'wrap', gap:8 }}>
+            <h2 style={{ margin:0, fontSize:18, fontWeight:800, color:'#fff', letterSpacing:'-.3px' }}>Business Overview</h2>
+            <span style={{ fontSize:13, color:'rgba(255,255,255,.55)' }}>Money in motion: <strong style={{ color:'#fff', fontWeight:800 }}>{ready?fmtCr(moneyInMotion):'—'}</strong></span>
+          </div>
+          <p style={{ margin:'0 0 18px', fontSize:12.5, color:'rgba(255,255,255,.4)' }}>Side-by-side scale of your three businesses.</p>
+          {[
+            { name:'Real Estate', icon:'🏢', color:'#2dd4bf', head:totalRevenue, headLabel:'Revenue', sub:`${activeProjects} active projects`, key:'re' },
+            { name:'Chit Fund', icon:'💰', color:'#818cf8', head:totalChitValue, headLabel:'Managed value', sub:`Commission ${fmtCr(chitComm)} · ${activeChits} active`, key:'cf' },
+            { name:'Finance Ledger', icon:'📊', color:'#34d399', head:totalDeposited, headLabel:'Deposits', sub:`Loans out ${fmtCr(outstanding)} · ${activeDeposits} deposits`, key:'fl' },
+          ].map((b,i)=>(
+            <div key={i} onClick={()=>onLaunch(b.key)} style={{ display:'flex', alignItems:'center', gap:14, padding:'12px 0', borderBottom: i<2?'1px solid rgba(255,255,255,.07)':'none', cursor:'pointer' }}>
+              <div style={{ width:40, height:40, borderRadius:11, background:b.color+'22', display:'flex', alignItems:'center', justifyContent:'center', fontSize:19, flexShrink:0 }}>{b.icon}</div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline', gap:10, marginBottom:6 }}>
+                  <span style={{ fontSize:14.5, fontWeight:700, color:'#fff' }}>{b.name}</span>
+                  <span style={{ fontSize:15, fontWeight:900, color:'#fff', flexShrink:0 }}>{ready?fmtCr(b.head):'—'} <span style={{ fontSize:10.5, fontWeight:500, color:'rgba(255,255,255,.45)' }}>{b.headLabel}</span></span>
+                </div>
+                <div style={{ height:7, background:'rgba(255,255,255,.08)', borderRadius:4, overflow:'hidden', marginBottom:4 }}>
+                  <div style={{ width: ready?`${Math.round(b.head/bizMax*100)}%`:'0%', height:'100%', background:b.color, borderRadius:4, transition:'width .6s' }}/>
+                </div>
+                <div style={{ fontSize:11.5, color:'rgba(255,255,255,.45)' }}>{b.sub}</div>
+              </div>
+            </div>
+          ))}
         </div>
 
         {/* ── APP CARDS ─────────────────────────────────────────── */}

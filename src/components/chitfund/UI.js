@@ -22,7 +22,6 @@ export {
 
 // ─── Design Tokens ────────────────────────────────────────────────────────
 export const tokens = {
-  // Apple iOS system colors — matches Finance Ledger exactly
   blue:       '#007AFF',
   blueLight:  'rgba(0,122,255,0.09)',
   blueMid:    '#0A84FF',
@@ -309,22 +308,7 @@ export function FilterTabs({ tabs, active, onChange }) {
 // ─── Modal ────────────────────────────────────────────────────────────────
 export function Modal({ open, onClose, title, children, width = 560, footer }) {
   if (!open) return null;
-  return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(17,25,40,0.5)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div style={{ background: '#fff', borderRadius: 14, width: '100%', maxWidth: width, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 64px rgba(0,0,0,0.18)', border: `1px solid ${tokens.border}`, animation: 'mIn 0.2s cubic-bezier(0.34,1.4,0.64,1)' }}>
-        <div style={{ padding: '16px 20px', borderBottom: `1px solid ${tokens.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: tokens.text }}>{title}</h3>
-          <button onClick={onClose} style={{ background: tokens.slateLight, border: `1px solid ${tokens.border}`, borderRadius: 7, width: 28, height: 28, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <X size={13} color={tokens.textSub} />
-          </button>
-        </div>
-        <div style={{ padding: '18px 20px', flex: 1, overflowY: 'auto' }}>{children}</div>
-        {footer && <div style={{ padding: '12px 20px', borderTop: `1px solid ${tokens.border}`, flexShrink: 0, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>{footer}</div>}
-      </div>
-      <style>{`@keyframes mIn{from{opacity:0;transform:scale(0.94) translateY(10px)}to{opacity:1;transform:scale(1) translateY(0)}}`}</style>
-    </div>
-  );
+  return (<div onClick={e => { if (e.target === e.currentTarget) onClose(); }} style={{ position:'fixed', inset:0, zIndex:1000, background:'rgba(0,0,0,0.4)', backdropFilter:'blur(6px)', WebkitBackdropFilter:'blur(6px)', overflowY:'auto', WebkitOverflowScrolling:'touch', padding:'24px 16px' }}><div onClick={e => e.stopPropagation()} style={{ background:'#fff', borderRadius:16, width:'100%', maxWidth:width, margin:'0 auto', boxShadow:'0 24px 64px rgba(0,0,0,0.22)', border:`1px solid ${tokens.border}`, animation:'mIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}><div style={{ padding:'15px 20px', borderBottom:`1px solid ${tokens.border}`, display:'flex', alignItems:'center', justifyContent:'space-between', position:'sticky', top:0, background:'#fff', borderRadius:'16px 16px 0 0', zIndex:2 }}><h3 style={{ margin:0, fontSize:16, fontWeight:700, color:tokens.text, letterSpacing:'-0.01em' }}>{title}</h3><button onClick={onClose} style={{ background:tokens.slateLight, border:`1px solid ${tokens.border}`, borderRadius:8, width:30, height:30, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}><X size={14} color={tokens.textSub} /></button></div><div style={{ padding:'18px 20px' }}>{children}</div>{footer && <div style={{ padding:'12px 20px', borderTop:`1px solid ${tokens.border}`, display:'flex', justifyContent:'flex-end', gap:8, position:'sticky', bottom:0, background:'#fff', borderRadius:'0 0 16px 16px', zIndex:2 }}>{footer}</div>}</div><style>{`@keyframes mIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}`}</style></div>);
 }
 
 // ─── Misc ─────────────────────────────────────────────────────────────────

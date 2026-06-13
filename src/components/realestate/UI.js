@@ -2,15 +2,15 @@ import React,{useState,useEffect}from'react';
 import{Search,Eye,EyeOff,X,ChevronDown,ChevronLeft,AlertCircle,CheckCircle,Info,AlertTriangle,Upload,MoreHorizontal,FileText,ChevronRight,Plus}from'lucide-react';
 
 export const T={
-  blue:'#1A56DB',blueLight:'#EBF2FF',blueMid:'#3B76EF',
-  green:'#057A55',greenLight:'#DEF7EC',
-  red:'#C81E1E',redLight:'#FDE8E8',
-  amber:'#B45309',amberLight:'#FEF3C7',
-  purple:'#5521B5',purpleLight:'#EDEBFF',
-  slate:'#1E2640',slateLight:'#F8FAFC',
+  blue:'#007AFF',blueLight:'rgba(0,122,255,0.09)',blueMid:'#0A84FF',
+  green:'#34C759',greenLight:'rgba(52,199,89,0.10)',
+  red:'#FF3B30',redLight:'rgba(255,59,48,0.10)',
+  amber:'#FF9500',amberLight:'rgba(255,149,0,0.10)',
+  purple:'#AF52DE',purpleLight:'rgba(175,82,222,0.10)',
+  slate:'#1C1C1E',slateLight:'#F9F9FB',
   border:'#E5E9F2',borderDark:'#C8D0E2',
-  surface:'#FFFFFF',bg:'#F4F6FB',
-  text:'#111928',textMid:'#374151',textSub:'#6B7280',textMuted:'#9CA3AF',
+  surface:'#FFFFFF',bg:'#F2F2F7',
+  text:'#000000',textMid:'#3C3C43',textSub:'#3C3C43CC',textMuted:'#8E8E93',
 };
 
 export const fmt=v=>new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(v||0);
@@ -57,7 +57,7 @@ export function Select({style={},children,...props}){const[f,setF]=useState(fals
 
 export function Textarea({style={},...props}){const[f,setF]=useState(false);return<textarea{...props}onFocus={()=>setF(true)}onBlur={()=>setF(false)}style={{width:'100%',padding:'9px 12px',borderRadius:8,fontSize:13,fontFamily:'inherit',border:`1.5px solid ${f?T.blue:T.border}`,boxShadow:f?`0 0 0 3px ${T.blueLight}`:'none',outline:'none',background:'#fff',color:T.text,resize:'vertical',minHeight:72,...style}}/>;}
 
-export function Grid({cols=2,gap=14,children,style={}}){return<div style={{display:'grid',gridTemplateColumns:`repeat(${cols},1fr)`,gap,...style}}>{children}</div>;}
+export function Grid({cols=2,gap=14,children,style={}}){const minW=cols>=3?150:cols===2?190:240;return<div style={{display:'grid',gridTemplateColumns:`repeat(auto-fit,minmax(min(100%, ${minW}px),1fr))`,gap,...style}}>{children}</div>;}
 
 // ── Table
 export function Table({columns,data=[],onRowClick,emptyText='No records',loading}){
@@ -70,7 +70,7 @@ export function Table({columns,data=[],onRowClick,emptyText='No records',loading
 export function Modal({open,onClose,title,children,width=600,footer}){
   useEffect(()=>{if(open)document.body.style.overflow='hidden';else document.body.style.overflow='';return()=>{document.body.style.overflow='';};},[open]);
   if(!open)return null;
-  return<div style={{position:'fixed',inset:0,zIndex:1000,background:'rgba(17,25,40,0.55)',backdropFilter:'blur(4px)',display:'flex',alignItems:'center',justifyContent:'center',padding:20}}onClick={e=>{if(e.target===e.currentTarget)onClose();}}><div style={{background:'#fff',borderRadius:14,width:'100%',maxWidth:width,maxHeight:'90vh',display:'flex',flexDirection:'column',boxShadow:'0 24px 64px rgba(0,0,0,0.18)',border:`1px solid ${T.border}`,animation:'reModalIn 0.2s ease'}}><div style={{padding:'16px 20px',borderBottom:`1px solid ${T.border}`,display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}><h3 style={{margin:0,fontSize:15,fontWeight:700,color:T.text}}>{title}</h3><button onClick={onClose}style={{background:T.slateLight,border:`1px solid ${T.border}`,borderRadius:7,width:28,height:28,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}><X size={13}color={T.textSub}/></button></div><div style={{padding:'18px 20px',flex:1,overflowY:'auto'}}>{children}</div>{footer&&<div style={{padding:'12px 20px',borderTop:`1px solid ${T.border}`,display:'flex',justifyContent:'flex-end',gap:8,flexShrink:0}}>{footer}</div>}</div><style>{`@keyframes reModalIn{from{opacity:0;transform:scale(0.94) translateY(8px)}to{opacity:1;transform:none}} @keyframes reSpin{to{transform:rotate(360deg)}}`}</style></div>;
+  return(<div onClick={e=>{if(e.target===e.currentTarget)onClose();}} style={{position:'fixed',inset:0,zIndex:1000,background:'rgba(0,0,0,0.4)',backdropFilter:'blur(6px)',WebkitBackdropFilter:'blur(6px)',overflowY:'auto',WebkitOverflowScrolling:'touch',padding:'24px 16px'}}><div onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:16,width:'100%',maxWidth:width,margin:'0 auto',boxShadow:'0 24px 64px rgba(0,0,0,0.22)',border:`1px solid ${T.border}`,animation:'reModalIn 0.22s cubic-bezier(0.16,1,0.3,1)'}}><div style={{padding:'15px 20px',borderBottom:`1px solid ${T.border}`,display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,background:'#fff',borderRadius:'16px 16px 0 0',zIndex:2}}><h3 style={{margin:0,fontSize:16,fontWeight:700,color:T.text,letterSpacing:'-0.01em'}}>{title}</h3><button onClick={onClose} style={{background:T.slateLight,border:`1px solid ${T.border}`,borderRadius:8,width:30,height:30,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><X size={14} color={T.textSub}/></button></div><div style={{padding:'18px 20px'}}>{children}</div>{footer&&<div style={{padding:'12px 20px',borderTop:`1px solid ${T.border}`,display:'flex',justifyContent:'flex-end',gap:8,position:'sticky',bottom:0,background:'#fff',borderRadius:'0 0 16px 16px',zIndex:2}}>{footer}</div>}</div><style>{`@keyframes reModalIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}} @keyframes reSpin{to{transform:rotate(360deg)}}`}</style></div>);
 }
 
 // ── Confirm
@@ -87,7 +87,7 @@ export function Alert({type='info',children,onClose}){
 }
 
 // ── PageHeader
-export function PageHeader({title,subtitle,action,onBack,backLabel}){return<div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:22}}><div>{onBack&&<button onClick={onBack}style={{display:'inline-flex',alignItems:'center',gap:4,background:'none',border:'none',color:T.textSub,fontSize:12,cursor:'pointer',padding:0,marginBottom:7,fontFamily:'inherit',fontWeight:500}}><ChevronLeft size={14}/>{backLabel||'Back'}</button>}<h1 style={{margin:0,fontSize:21,fontWeight:700,color:T.text,letterSpacing:'-0.3px'}}>{title}</h1>{subtitle&&<p style={{margin:'4px 0 0',color:T.textSub,fontSize:13}}>{subtitle}</p>}</div>{action&&<div style={{flexShrink:0,marginLeft:16}}>{action}</div>}</div>;}
+export function PageHeader({title,subtitle,action,onBack,backLabel}){return<div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:22,flexWrap:'wrap',gap:12}}><div>{onBack&&<button onClick={onBack}style={{display:'inline-flex',alignItems:'center',gap:4,background:'none',border:'none',color:T.textSub,fontSize:12,cursor:'pointer',padding:0,marginBottom:7,fontFamily:'inherit',fontWeight:500}}><ChevronLeft size={14}/>{backLabel||'Back'}</button>}<h1 style={{margin:0,fontSize:21,fontWeight:700,color:T.text,letterSpacing:'-0.3px'}}>{title}</h1>{subtitle&&<p style={{margin:'4px 0 0',color:T.textSub,fontSize:13}}>{subtitle}</p>}</div>{action&&<div style={{flexShrink:0,marginLeft:16}}>{action}</div>}</div>;}
 
 // ── SectionHeader
 export function SectionHeader({title,action,sub}){return<div style={{display:'flex',justifyContent:'space-between',alignItems:sub?'flex-start':'center',marginBottom:14}}><div><h2 style={{margin:0,fontSize:14,fontWeight:700,color:T.text}}>{title}</h2>{sub&&<p style={{margin:'2px 0 0',fontSize:12,color:T.textSub}}>{sub}</p>}</div>{action}</div>;}

@@ -627,7 +627,7 @@ export default function OtherChits() {
           <div style={{ fontSize:12, color:tokens.textSub, lineHeight:1.6 }}>You are a <strong>member</strong>. You only track your payments, commission received, and whether you won. No auction management.</div>
         </div>
         <div style={{ flex:1, minWidth:200 }}>
-          <div style={{ fontSize:12, fontWeight:700, color:'#1A56DB', marginBottom:3 }}>🏢 Formed Chits (Manage Chit Funds)</div>
+          <div style={{ fontSize:12, fontWeight:700, color:'#007AFF', marginBottom:3 }}>🏢 Formed Chits (Manage Chit Funds)</div>
           <div style={{ fontSize:12, color:tokens.textSub, lineHeight:1.6 }}>You are the <strong>manager</strong>. Full ERP: process auctions, manage members, track commission, ledger entries.</div>
         </div>
       </div>
@@ -705,7 +705,13 @@ export default function OtherChits() {
                 <FG label="My Member Number"><FInp type="number" value={form.myMemberNumber} onChange={e=>sf('myMemberNumber',e.target.value)} placeholder="5"/></FG>
                 <FG label="Start Month" required hint="First auction month"><FInp type="month" value={form.startMonth} onChange={e=>sf('startMonth',e.target.value)}/></FG>
                 <FG label="Auction Every (months)"><FInp type="number" value={form.auctionInterval} onChange={e=>sf('auctionInterval',e.target.value)} placeholder="1"/></FG>
-                <FG label="Organiser Fee %" hint="0% for interest-free chit"><FInp type="number" step="0.1" value={form.organiserFeePct} onChange={e=>sf('organiserFeePct',e.target.value)} placeholder="5"/></FG>
+                <FG label="Organiser Fee" hint={parseFloat(form.organiserFeePct) > 0 ? 'Agent/organiser takes a commission' : 'Interest-free chit — no fee'}>
+                  <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                    <div onClick={()=>sf('organiserFeePct', parseFloat(form.organiserFeePct) > 0 ? '0' : '5')} style={{ width:51, height:31, borderRadius:999, background: parseFloat(form.organiserFeePct) > 0 ? tokens.blue : '#E5E5EA', padding:2, display:'flex', alignItems:'center', justifyContent: parseFloat(form.organiserFeePct) > 0 ? 'flex-end':'flex-start', transition:'all .22s', flexShrink:0, cursor:'pointer' }}><div style={{ width:27, height:27, borderRadius:'50%', background:'#fff', boxShadow:'0 2px 6px rgba(0,0,0,0.2)' }}/></div>
+                    <span style={{ fontSize:13.5, fontWeight:700, color: parseFloat(form.organiserFeePct) > 0 ? tokens.blue : tokens.textMuted, minWidth:28 }}>{parseFloat(form.organiserFeePct) > 0 ? 'Yes' : 'No'}</span>
+                    {parseFloat(form.organiserFeePct) > 0 && (<div style={{ flex:1, display:'flex', alignItems:'center', gap:6, maxWidth:130 }}><FInp type="number" step="0.1" min="0" max="5" value={form.organiserFeePct} onChange={e=>sf('organiserFeePct',e.target.value)} placeholder="5"/><span style={{ fontSize:14, fontWeight:600, color:tokens.textMuted }}>%</span></div>)}
+                  </div>
+                </FG>
                 <FG label="Commission Type">
                   <FSel value={form.commissionType} onChange={e=>sf('commissionType',e.target.value)}>
                     <option value="Single">Single commission</option>

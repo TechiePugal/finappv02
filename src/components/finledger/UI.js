@@ -336,13 +336,8 @@ export function FilterTabs({ options=[], value, onChange }) {
 export function Modal({ open, onClose, title, children, width=500 }) {
   if(!open) return null;
   return (
-    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.32)', backdropFilter:'blur(6px)',
-      display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000, padding:16,
-      animation:'fadeIn 0.18s var(--ease)' }} onClick={onClose}>
-      <div style={{ background:'var(--bg-card)', borderRadius:'var(--r-xl)', padding:'24px 26px',
-        width:'100%', maxWidth:width, boxShadow:'var(--shadow-xl)',
-        animation:'bounceIn 0.28s var(--spring)', maxHeight:'90vh', overflowY:'auto' }}
-        onClick={e=>e.stopPropagation()}>
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.32)', backdropFilter:'blur(6px)', WebkitBackdropFilter:'blur(6px)', overflowY:'auto', WebkitOverflowScrolling:'touch', zIndex:1000, padding:'24px 16px', animation:'fadeIn 0.18s var(--ease)' }} onClick={onClose}>
+      <div style={{ background:'var(--bg-card)', borderRadius:'var(--r-xl)', padding:'24px 26px', width:'100%', maxWidth:width, margin:'0 auto', boxShadow:'var(--shadow-xl)', animation:'bounceIn 0.28s var(--spring)' }} onClick={e=>e.stopPropagation()}>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20 }}>
           <h3 style={{ fontSize:17, fontWeight:700, color:'var(--text-primary)', letterSpacing:'-0.02em' }}>{title}</h3>
           <button onClick={onClose} style={{ background:'rgba(118,118,128,0.10)', border:'none', borderRadius:8,

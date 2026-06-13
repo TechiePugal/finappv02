@@ -524,8 +524,12 @@ export default function ChitList() {
                     <Field label="Auction Every (months)">
                       <Inp type="number" value={form.auctionInterval} onChange={e=>sf('auctionInterval',e.target.value)} placeholder="1"/>
                     </Field>
-                    <Field label="Organiser Fee %" hint="0% valid for interest-free chit">
-                      <Inp type="number" step="0.1" min="0" value={form.managerCommissionPct} onChange={e=>sf('managerCommissionPct',e.target.value)} placeholder="5"/>
+                    <Field label="Organiser Fee" hint={parseFloat(form.managerCommissionPct) > 0 ? 'Manager earns a commission each round' : 'Interest-free chit — no organiser fee'}>
+                      <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                        <div onClick={()=>sf('managerCommissionPct', parseFloat(form.managerCommissionPct) > 0 ? '0' : '5')} style={{ width:51, height:31, borderRadius:999, background: parseFloat(form.managerCommissionPct) > 0 ? T.accent : '#E5E5EA', padding:2, display:'flex', alignItems:'center', justifyContent: parseFloat(form.managerCommissionPct) > 0 ? 'flex-end':'flex-start', transition:'all .22s', flexShrink:0, cursor:'pointer' }}><div style={{ width:27, height:27, borderRadius:'50%', background:'#fff', boxShadow:'0 2px 6px rgba(0,0,0,0.2)' }}/></div>
+                        <span style={{ fontSize:13.5, fontWeight:700, color: parseFloat(form.managerCommissionPct) > 0 ? T.accent : T.text4, minWidth:28 }}>{parseFloat(form.managerCommissionPct) > 0 ? 'Yes' : 'No'}</span>
+                        {parseFloat(form.managerCommissionPct) > 0 && (<div style={{ flex:1, display:'flex', alignItems:'center', gap:6, maxWidth:130 }}><Inp type="number" step="0.1" min="0" max="5" value={form.managerCommissionPct} onChange={e=>sf('managerCommissionPct',e.target.value)} placeholder="5"/><span style={{ fontSize:14, fontWeight:600, color:T.text4 }}>%</span></div>)}
+                      </div>
                     </Field>
                     <Field label="Commission Type">
                       <Sel value={form.commissionType} onChange={e=>sf('commissionType',e.target.value)}>

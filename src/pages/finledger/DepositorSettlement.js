@@ -43,6 +43,7 @@ export default function DepositorSettlement(){
   const[pf,setPf]=useState({date:'',mode:'Cash',amount:'',addToDeposit:false,fine:'0',collectFine:false,remarks:''});
   const[saving,setSaving]=useState(false);
   const[search,setSearch]=useState('');
+  const[amtRange,setAmtRange]=useState('all');
   const[month,setMonth]=useState(()=>{const n=new Date();return`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;});
   const DAILY_FINE=50;
 
@@ -74,7 +75,7 @@ export default function DepositorSettlement(){
       date:new Date().toISOString().split('T')[0],
       mode:existing?.paymentMode||'Cash',
       amount:String(Math.round(calcPeriodInt(depositor))),
-      addToDeposit:false,
+      addToDeposit:existing?.addedToDeposit||false,
       fine:String(fine),
       collectFine:false,
       remarks:existing?.remarks||''
@@ -88,6 +89,13 @@ export default function DepositorSettlement(){
       const key=`${depositor.id}_${slot.month}`;
       const existing=payments[key];
       const interest=calcPeriodInt(depositor);
+      const addAmt=Math.round(interest);
+      const wasAdded=existing?.addedToDeposit===true;
+      const wantAdd=pf.addToDeposit&&!paid;
+      let principalDelta=0;
+      if(wantAdd&&!wasAdded)principalDelta=addAmt;
+      else if(!wantAdd&&wasAdded)principalDelta=-(existing.addedAmount||addAmt);
+      const finalAddedAmount=wantAdd?(wasAdded?(existing.addedAmount||addAmt):addAmt):0;
       const fine=pf.collectFine?parseFloat(pf.fine)||0:0;
       const totalPayout=paid?(parseFloat(pf.amount)||0)+fine:0;
 
@@ -97,7 +105,7 @@ export default function DepositorSettlement(){
         amountDue:Math.round(interest),
         amountPaid:paid?(parseFloat(pf.amount)||0):0,
         fine:paid?fine:0,totalPayout,
-        status:paid?'Paid':'Unpaid',addedToDeposit:pf.addToDeposit&&!paid,
+        status:paid?'Paid':'Unpaid',addedToDeposit:wantAdd,addedAmount:finalAddedAmount,
         paymentDate:paid?pf.date:null,paymentMode:paid?pf.mode:null,
         remarks:pf.remarks,month:slot.month,updatedAt:serverTimestamp()
       };
@@ -118,17 +126,17 @@ export default function DepositorSettlement(){
         else{await addDoc(collection(db,'finance_ledger_entries'),lData);}
       }
 
-      // Compound: add interest to deposit principal
-      if(pf.addToDeposit&&!paid){
-        const newAmt=(depositor.depositAmount||0)+Math.round(interest);
+      // Compound: apply principal delta ONCE, reverse when marked unpaid
+      if(principalDelta!==0){
+        const newAmt=Math.max(0,(depositor.depositAmount||0)+principalDelta);
         await updateDoc(doc(db,'deposit_master',depositor.id),{
           depositAmount:newAmt,
           periodInterest:calcPeriodInt({...depositor,depositAmount:newAmt}),
           updatedAt:serverTimestamp()
         });
-        toast.success(`Interest ${formatCurrency(Math.round(interest))} added to deposit. New principal: ${formatCurrency(newAmt)}`);
+        toast.success(principalDelta>0?`Interest ${formatCurrency(addAmt)} added once → principal ${formatCurrency(newAmt)}`:`Reversed ${formatCurrency(-principalDelta)} → principal ${formatCurrency(newAmt)}`);
       } else {
-        toast.success(paid?'Settlement recorded!':'Marked as unpaid');
+        toast.success(paid?'Settlement recorded!':(wantAdd&&wasAdded?'Already added once — no double credit':'Marked as unpaid'));
       }
       setModal(null);
     }catch(e){toast.error('Failed: '+e.message);}finally{setSaving(false);}
@@ -145,7 +153,17 @@ export default function DepositorSettlement(){
     if(!moSlot)return s;
     return s+(payments[`${d.id}_${moSlot.month}`]?.status==='Paid'?(payments[`${d.id}_${moSlot.month}`]?.totalPayout||payments[`${d.id}_${moSlot.month}`]?.amountPaid||0):0);
   },0);
-  const filtered=depositors.filter(d=>!search||d.name?.toLowerCase().includes(search.toLowerCase())||d.depositId?.toLowerCase().includes(search.toLowerCase()));
+  const filtered=depositors.filter(d=>{
+    const s=search.trim().toLowerCase();
+    const matchS=!s||[d.name,d.phone,d.depositId,d.guardianName,d.guardianPhone,d.nomineeName,d.nomineePhone].some(v=>String(v||'').toLowerCase().includes(s));
+    const amt=d.depositAmount||0;
+    let matchA=true;
+    if(amtRange==='0-10000')matchA=amt<=10000;
+    else if(amtRange==='10000-50000')matchA=amt>10000&&amt<=50000;
+    else if(amtRange==='50000-100000')matchA=amt>50000&&amt<=100000;
+    else if(amtRange==='100000+')matchA=amt>100000;
+    return matchS&&matchA;
+  });
 
   if(loading)return<PageLoader stats={4}/>;
 
@@ -154,8 +172,11 @@ export default function DepositorSettlement(){
       <PageHeader title="Settle Interest" subtitle="Pay out interest to depositors or reinvest via compound"
         action={
           <div style={{display:'flex',gap:10,alignItems:'center'}}>
-            <input type="text" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search depositor…"
-              style={{padding:'8px 14px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:10,fontSize:13,color:'var(--text-primary)',outline:'none',fontFamily:'inherit',width:180}}/>
+            <input type="text" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name, phone, ID, guardian…"
+              style={{padding:'8px 14px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:10,fontSize:13,color:'var(--text-primary)',outline:'none',fontFamily:'inherit',width:200}}/>
+            <select value={amtRange} onChange={e=>setAmtRange(e.target.value)} style={{padding:'8px 12px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:10,fontSize:13,color:'var(--text-primary)',outline:'none',fontFamily:'inherit'}}>
+              <option value="all">All Amounts</option><option value="0-10000">₹0 – ₹10K</option><option value="10000-50000">₹10K – ₹50K</option><option value="50000-100000">₹50K – ₹1L</option><option value="100000+">₹1L+</option>
+            </select>
             <input type="month" value={month} onChange={e=>setMonth(e.target.value)}
               style={{padding:'8px 14px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:10,fontSize:14,color:'var(--text-primary)',outline:'none',fontFamily:'inherit'}}/>
           </div>

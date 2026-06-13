@@ -9,7 +9,8 @@ import {
 } from '../../components/realestate/UI';
 import { Building2, Plus, Edit2, Trash2, Eye, TrendingUp, MapPin, Wallet, DollarSign, History, ChevronRight } from 'lucide-react';
 
-const BLANK = { projectName:'',location:'',taluk:'',district:'',state:'Tamil Nadu',surveyNumbers:'',totalAcres:'',lotPrefix:'',landCost:'',purchaseDate:'',sellerName:'',notes:'' };
+const BLANK = { projectName:'',location:'',taluk:'',district:'',state:'Tamil Nadu',surveyNumbers:'',totalAcres:'',lotPrefix:'',landCost:'',purchaseDate:'',sellerName:'',notes:'',amountRequired:'',initialInvestment:'',investorName:'' };
+const ACRE_TO_SQFT = 43560;
 const STATES = ['Tamil Nadu','Karnataka','Kerala','Andhra Pradesh','Telangana','Maharashtra','Goa','Other'];
 
 export default function ProjectsPage({ onView }) {
@@ -45,10 +46,12 @@ export default function ProjectsPage({ onView }) {
 
   async function doAdd() {
     if (!form.projectName || !form.location || !form.landCost || !form.purchaseDate) { setErr('Project name, location, land cost and date are required.'); return; }
+    if (!form.initialInvestment || parseFloat(form.initialInvestment) <= 0) { setErr('Initial investment is required — a project is only created once money is invested into it.'); return; }
     setSaving(true); setErr('');
     try {
       const prefix = form.lotPrefix || form.projectName.slice(0, 4).toUpperCase().replace(/[^A-Z]/g, '').padEnd(3, 'X');
-      await createProject(user.uid, { ...form, lotPrefix: prefix, landCost: parseFloat(form.landCost) || 0 });
+      const totalSqft = form.totalAcres ? Math.round(parseFloat(form.totalAcres) * ACRE_TO_SQFT) : 0;
+      await createProject(user.uid, { ...form, lotPrefix: prefix, landCost: parseFloat(form.landCost) || 0, amountRequired: parseFloat(form.amountRequired) || 0, initialInvestment: parseFloat(form.initialInvestment) || 0, investorName: form.investorName || '', totalSqft });
       setAddOpen(false); setForm(BLANK); await load();
     } catch (e) { setErr(e.message); } finally { setSaving(false); }
   }
@@ -136,7 +139,7 @@ export default function ProjectsPage({ onView }) {
         action={<Button icon={Plus} onClick={() => { setForm(BLANK); setErr(''); setAddOpen(true); }}>New Project</Button>} />
 
       {/* Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14, marginBottom: 22 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 14, marginBottom: 22 }}>
         <StatCard label="Total Projects" value={projects.length} icon={Building2} accent={T.blue} />
         <StatCard label="Total Sites" value={totSites} icon={MapPin} accent={T.blue} />
         <StatCard label="Total Invested" value={totInv} isCurrency icon={Wallet} accent={T.amber} />
@@ -166,11 +169,13 @@ export default function ProjectsPage({ onView }) {
         <Grid cols={3}><FormField label="District"><Input value={form.district} onChange={e => set('district', e.target.value)} /></FormField>
         <FormField label="State"><Select value={form.state} onChange={e => set('state', e.target.value)}>{STATES.map(s => <option key={s}>{s}</option>)}</Select></FormField>
         <FormField label="Survey Numbers"><Input value={form.surveyNumbers} onChange={e => set('surveyNumbers', e.target.value)} placeholder="123/1A, 124/2" /></FormField></Grid>
-        <Grid cols={3}><FormField label="Total Acres"><Input type="number" value={form.totalAcres} onChange={e => set('totalAcres', e.target.value)} /></FormField>
+        <Grid cols={3}><FormField label="Total Acres" hint={form.totalAcres ? `= ${Math.round((parseFloat(form.totalAcres)||0)*43560).toLocaleString('en-IN')} sqft` : '1 acre = 43,560 sqft'}><Input type="number" value={form.totalAcres} onChange={e => set('totalAcres', e.target.value)} placeholder="e.g. 3" /></FormField>
         <FormField label="Land Cost (₹)" required><Input type="number" value={form.landCost} onChange={e => set('landCost', e.target.value)} /></FormField>
         <FormField label="Purchase Date" required><Input type="date" value={form.purchaseDate} onChange={e => set('purchaseDate', e.target.value)} /></FormField></Grid>
+        {form.totalAcres && parseFloat(form.totalAcres) > 0 && (<div style={{ marginTop: 4, padding: '11px 14px', background: T.blueLight, borderRadius: 10, fontSize: 13, color: T.blue, display:'flex', justifyContent:'space-between', flexWrap:'wrap', gap:8 }}><span><strong>{form.totalAcres} acres</strong> = <strong>{Math.round((parseFloat(form.totalAcres)||0)*43560).toLocaleString('en-IN')} sqft</strong> of saleable land</span></div>)}
         <Grid cols={2} style={{ marginTop: 4 }}><FormField label="Seller Name"><Input value={form.sellerName} onChange={e => set('sellerName', e.target.value)} /></FormField></Grid>
-        <div style={{ marginTop: 4 }}><FormField label="Notes"><Textarea value={form.notes} onChange={e => set('notes', e.target.value)} /></FormField></div>
+        <div style={{ marginTop: 16, padding: '14px 16px', background: T.slateLight, borderRadius: 12, border: '1px solid ' + T.border }}><div style={{ fontSize: 13, fontWeight: 700, color: T.text, marginBottom: 4 }}>💰 Investment & Capital</div><p style={{ fontSize: 12, color: T.textSub, margin: '0 0 12px', lineHeight: 1.5 }}>A project is only created once money is invested into it. Enter the capital required and how much is being invested now.</p><Grid cols={3}><FormField label="Capital Required (₹)" hint="Total funding needed"><Input type="number" value={form.amountRequired} onChange={e => set('amountRequired', e.target.value)} placeholder="e.g. 5000000" /></FormField><FormField label="Investment Now (₹)" required hint="Money invested to start"><Input type="number" value={form.initialInvestment} onChange={e => set('initialInvestment', e.target.value)} placeholder="e.g. 2000000" /></FormField><FormField label="Investor Name" hint="Defaults to Owner / Self"><Input value={form.investorName} onChange={e => set('investorName', e.target.value)} placeholder="Owner / Self" /></FormField></Grid></div>
+        <div style={{ marginTop: 12 }}><FormField label="Notes"><Textarea value={form.notes} onChange={e => set('notes', e.target.value)} /></FormField></div>
       </Modal>
 
       {/* ── EDIT PROJECT MODAL ── */}

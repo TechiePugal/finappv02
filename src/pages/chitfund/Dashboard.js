@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell } from 'recharts';
 import { FileText, Gavel, TrendingUp, Wallet, AlertTriangle, Clock, CheckCircle, ArrowRight, Plus, BarChart3 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import { getDashboardData } from '../../utils/cf_firestore';
-import { buildMonthProjection, getExpectedPayable, getCommBreakdown, getChitsForMonth, getChitRoundForMonth } from '../../utils/cf_engine';
+import { getDashboardData, getOtherChits } from '../../utils/cf_firestore';
+import { buildMonthProjection, getExpectedPayable, getCommBreakdown, getChitsForMonth, getChitRoundForMonth, calcTakeSuggestion } from '../../utils/cf_engine';
 import { formatCurrency, formatMonthYear, roundTo } from '../../utils/cf_format';
 import { Card, StatCard, tokens, SectionHeader } from '../../components/chitfund/UI';
 import { PageLoader } from '../../components/Skeleton';
@@ -17,10 +17,12 @@ export default function Dashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState('');
+  const [joined, setJoined] = useState([]);
 
   useEffect(() => {
     if (!user) return;
     getDashboardData(user.uid).then(d => { setData(d); setLoading(false); }).catch(e => { setLoadErr('Failed to load data — check connection'); setLoading(false); });
+    getOtherChits(user.uid).then(setJoined).catch(() => {});
   }, [user]);
 
   if (loading) return <PageLoader stats={4} />;
@@ -66,6 +68,24 @@ export default function Dashboard() {
     required: m.total,
     isNow: i===0,
   }));
+
+  const formedValue   = chits.reduce((s,c)=>s+(c.totalChitValue||0),0);
+  const formedComm    = chits.reduce((s,c)=>s+(c.totalCommissionEarned||0),0);
+  const joinedActive  = joined.filter(j => j.status !== 'Completed' && j.status !== 'Closed');
+  const joinedValue   = joined.reduce((s,j)=>s+(j.totalChitValue||0),0);
+  const notTaken      = active.filter(c => c.companyTakenAuction === null || c.companyTakenAuction === undefined);
+  const compareData = [
+    { name:'Formed', amount: formedValue, fill: tokens.blue },
+    { name:'Joined', amount: joinedValue, fill: tokens.green },
+    { name:'Commission', amount: formedComm, fill: tokens.purple },
+  ];
+  const takeAdvice = notTaken.map(c => {
+    const sug = calcTakeSuggestion(c, scheds[c.id]);
+    const nextRound = (c.auctionsCompleted||0)+1;
+    const br = getCommBreakdown(c, nextRound);
+    const pct = c.totalMembers>0 ? Math.round(((c.auctionsCompleted||0)/c.totalMembers)*100) : 0;
+    return { c, sug, br, pct };
+  });
 
   const now_ = new Date();
   const hour = now_.getHours();
@@ -119,6 +139,61 @@ export default function Dashboard() {
         <StatCard label="Next Month"          value={fmt(next1)} sub="projected outflow"            icon={BarChart3} accent={tokens.blue}/>
         <StatCard label="Net Exposure"        value={fmt(totalExposure)} sub="invested − received"  icon={TrendingUp} accent={totalExposure>0?tokens.red:tokens.green}/>
       </div>
+
+      <Card>
+        <SectionHeader title="Your Chit Money — Formed vs Joined" />
+        <div className="cf-two-col">
+          <div style={{ height:230 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={compareData} margin={{ left:-4, right:8, top:8, bottom:0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={tokens.border} vertical={false}/>
+                <XAxis dataKey="name" tick={{ fontSize:12, fill:tokens.textSub }}/>
+                <YAxis tick={{ fontSize:10, fill:tokens.textSub }} tickFormatter={v=>v>=100000?`₹${(v/100000).toFixed(1)}L`:`₹${(v/1000).toFixed(0)}K`}/>
+                <Tooltip cursor={{ fill:'rgba(0,0,0,0.03)' }} content={({ active, payload, label }) => active && payload?.length ? (<div style={{ background:'#fff', border:`1px solid ${tokens.border}`, borderRadius:9, padding:'8px 13px', boxShadow:'0 4px 16px rgba(0,0,0,.09)' }}><div style={{ fontSize:11, color:tokens.textSub, marginBottom:3 }}>{label}</div><div style={{ fontSize:15, fontWeight:800, color:tokens.text }}>{formatCurrency(payload[0].value)}</div></div>) : null}/>
+                <Bar dataKey="amount" radius={[6,6,0,0]} maxBarSize={70}>{compareData.map((d,i)=><Cell key={i} fill={d.fill}/>)}</Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          <div style={{ display:'flex', flexDirection:'column', gap:12, justifyContent:'center' }}>
+            <div onClick={()=>nav('/cf/chits')} style={{ cursor:'pointer', padding:'14px 16px', borderRadius:12, background:'rgba(0,122,255,0.06)', border:`1.5px solid ${tokens.blue}30` }}>
+              <span style={{ fontSize:11, fontWeight:800, color:tokens.blue, textTransform:'uppercase', letterSpacing:'.05em' }}>🏢 Formed — You Manage</span>
+              <div style={{ fontSize:22, fontWeight:900, color:tokens.text, letterSpacing:'-.5px', marginTop:6 }}>{fmt(formedValue)}</div>
+              <div style={{ fontSize:12, color:tokens.textSub, marginTop:3 }}>{chits.length} chit{chits.length!==1?'s':''} · commission <strong style={{color:tokens.green}}>{fmt(formedComm)}</strong></div>
+            </div>
+            <div onClick={()=>nav('/cf/other-chits')} style={{ cursor:'pointer', padding:'14px 16px', borderRadius:12, background:'rgba(52,199,89,0.06)', border:`1.5px solid ${tokens.green}30` }}>
+              <span style={{ fontSize:11, fontWeight:800, color:tokens.green, textTransform:'uppercase', letterSpacing:'.05em' }}>👥 Joined — You Joined</span>
+              <div style={{ fontSize:22, fontWeight:900, color:tokens.text, letterSpacing:'-.5px', marginTop:6 }}>{fmt(joinedValue)}</div>
+              <div style={{ fontSize:12, color:tokens.textSub, marginTop:3 }}>{joined.length} chit{joined.length!==1?'s':''} · {joinedActive.length} still running</div>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      {notTaken.length > 0 && (
+        <Card>
+          <SectionHeader title="Should I Take My Chit This Month?" />
+          <p style={{ margin:'-4px 0 14px', fontSize:12.5, color:tokens.textSub }}>For each chit you manage but haven't taken yet — whether this is a good month to take the prize, or better to wait.</p>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(300px,1fr))', gap:12 }}>
+            {takeAdvice.map(({ c, sug, br, pct }) => {
+              const good = !!sug;
+              const prize = sug ? sug.estPrize : (br ? br.winnerInHand : 0);
+              return (
+                <div key={c.id} onClick={()=>nav(`/cf/chits/${c.id}`)} style={{ cursor:'pointer', padding:'14px 16px', borderRadius:12, border:`1.5px solid ${good?tokens.green+'55':tokens.border}`, background: good?'rgba(52,199,89,0.05)':tokens.surface }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8, gap:8 }}>
+                    <span style={{ fontSize:14, fontWeight:700, color:tokens.text, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{c.companyName}</span>
+                    <span style={{ fontSize:11, fontWeight:800, padding:'3px 10px', borderRadius:99, flexShrink:0, background: good?'#D1FAE5':'#F3F4F6', color: good?'#065F46':tokens.textSub }}>{good ? '✓ Good month to take' : '⏳ Better to wait'}</span>
+                  </div>
+                  <div style={{ fontSize:12.5, color:tokens.textSub, marginBottom:10, lineHeight:1.5 }}>{good ? sug.reason : `Cycle is ${pct}% done — taking now isn't optimal yet. Holding keeps your slab low.`}</div>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                    <div style={{ background:tokens.slateLight, borderRadius:8, padding:'8px 10px' }}><div style={{ fontSize:9.5, color:tokens.textMuted, fontWeight:700, textTransform:'uppercase' }}>You'd Receive Now</div><div style={{ fontSize:15, fontWeight:800, color:tokens.green }}>{fmt(prize)}</div></div>
+                    <div style={{ background:tokens.slateLight, borderRadius:8, padding:'8px 10px' }}><div style={{ fontSize:9.5, color:tokens.textMuted, fontWeight:700, textTransform:'uppercase' }}>Cycle Progress</div><div style={{ fontSize:15, fontWeight:800, color: pct>=75?tokens.green:pct>=40?'#B45309':tokens.blue }}>{pct}%</div></div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
 
       <div className="cf-dash-main-aside">
         {/* Chart */}

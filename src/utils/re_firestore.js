@@ -39,24 +39,24 @@ export async function getProject(id) {
 
 export async function createProject(uid, data) {
   const landCost = parseFloat(data.landCost) || 0;
-  const ref_ = await addDoc(collection(db, 're_projects'), {
-    ...data, uid, landCost,
-    totalSites: 0, availableSites: 0, bookedSites: 0, registeredSites: 0,
-    soldSites: 0, reservedSites: 0, onHoldSites: 0,
-    totalExpenses: 0, totalInvestment: landCost, totalRevenue: 0,
-    projectedRevenue: 0, totalFunded: 0,
-    landCostHistory: [{ amount: landCost, date: data.purchaseDate, note: 'Initial purchase', ts: new Date().toISOString() }],
-    status: 'Active', createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
-  });
-  // Ledger entry (fire-and-forget — don't block UI)
-  addDoc(collection(db, 're_ledger'), {
-    uid, projectId: ref_.id, type: 'Land Purchase',
-    description: `Land purchased: ${data.projectName}`,
-    debit: landCost, credit: 0, date: data.purchaseDate, createdAt: serverTimestamp(),
-  });
+  const amountRequired = parseFloat(data.amountRequired) || 0;
+  const initInvestAmt = parseFloat(data.initialInvestment) || 0;
+  const totalAcres = parseFloat(data.totalAcres) || 0;
+  const totalSqft = totalAcres > 0 ? Math.round(totalAcres * 43560) : (parseFloat(data.totalSqft) || 0);
+  const initialStatus = initInvestAmt > 0 ? 'Active' : 'Planning';
+  const { initialInvestment, investorName, ...projData } = data;
+  const ref_ = await addDoc(collection(db, 're_projects'), { ...projData, uid, landCost, amountRequired, totalSqft, totalAcres, totalSites: 0, availableSites: 0, bookedSites: 0, registeredSites: 0, soldSites: 0, reservedSites: 0, onHoldSites: 0, totalExpenses: 0, totalInvestment: landCost, totalRevenue: 0, projectedRevenue: 0, totalFunded: initInvestAmt, siteMapUrl: data.siteMapUrl || null, siteMapName: data.siteMapName || null, landCostHistory: [{ amount: landCost, date: data.purchaseDate, note: 'Initial purchase', ts: new Date().toISOString() }], status: initialStatus, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+  addDoc(collection(db, 're_ledger'), { uid, projectId: ref_.id, type: 'Land Purchase', description: `Land purchased: ${data.projectName}`, debit: landCost, credit: 0, date: data.purchaseDate, createdAt: serverTimestamp() });
+  if (initInvestAmt > 0) {
+    const invName = (investorName && investorName.trim()) || 'Owner / Self';
+    await Promise.all([ addDoc(collection(db, 're_investors'), { uid, projectId: ref_.id, name: invName, amount: initInvestAmt, investType: 'Full Project', phone: '', date: data.purchaseDate, amountReturned: 0, profitShare: 0, sharePercent: 0, status: 'Active', investorId: `INV-${Date.now().toString(36).toUpperCase()}`, note: 'Initial project investment', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }), addDoc(collection(db, 're_ledger'), { uid, projectId: ref_.id, type: 'Investment', description: `Initial investment by ${invName}`, debit: 0, credit: initInvestAmt, date: data.purchaseDate, createdAt: serverTimestamp() }) ]);
+    cacheClear(`invs_${ref_.id}`); cacheClear(`allinvs_${uid}`);
+  }
   cacheClear(`projs_${uid}`);
   return ref_.id;
 }
+export async function uploadSiteMap(uid, projectId, file) { const r = await processFile(file); await updateDoc(doc(db, 're_projects', projectId), { siteMapUrl: r.dataUrl, siteMapName: file.name, siteMapType: r.fileType, updatedAt: serverTimestamp() }); cacheClear(`proj_${projectId}`); cacheClear(`projs_${uid}`); return r.dataUrl; }
+export async function removeSiteMap(uid, projectId) { await updateDoc(doc(db, 're_projects', projectId), { siteMapUrl: null, siteMapName: null, siteMapType: null, updatedAt: serverTimestamp() }); cacheClear(`proj_${projectId}`); cacheClear(`projs_${uid}`); }
 
 export async function updateProject(uid, id, data) {
   const upd = { ...data, updatedAt: serverTimestamp() };
@@ -675,6 +675,15 @@ export async function deleteDocument(uid, projectId, docId) {
   cacheClear(`docs_${projectId}`);
 }
 
+
+// RENT
+export async function getRentAgreements(projectId){const k=`rentagr_${projectId}`;const ch=cacheGet(k);if(ch)return ch;const s=await getDocs(query(collection(db,'re_rent_agreements'),where('projectId','==',projectId)));const d=sort(s.docs.map(x=>({id:x.id,...x.data()})));cacheSet(k,d);return d;}
+export async function getRentPayments(projectId){const k=`rentpay_${projectId}`;const ch=cacheGet(k);if(ch)return ch;const s=await getDocs(query(collection(db,'re_rent_payments'),where('projectId','==',projectId)));const d=sort(s.docs.map(x=>({id:x.id,...x.data()})));cacheSet(k,d);return d;}
+export async function addRentAgreement(uid,projectId,data){const ref_=await addDoc(collection(db,'re_rent_agreements'),{uid,projectId,tenantName:data.tenantName||'',tenantPhone:data.tenantPhone||'',siteId:data.siteId||null,siteLabel:data.siteLabel||'Whole project / unspecified',purpose:data.purpose||'Agriculture',monthlyRent:parseFloat(data.monthlyRent)||0,deposit:parseFloat(data.deposit)||0,startDate:data.startDate||null,endDate:data.endDate||null,notes:data.notes||'',totalCollected:0,status:'Active',createdAt:serverTimestamp(),updatedAt:serverTimestamp()});cacheClear(`rentagr_${projectId}`);return ref_.id;}
+export async function updateRentAgreement(uid,projectId,agrId,data){const u={...data,updatedAt:serverTimestamp()};if(data.monthlyRent!=null)u.monthlyRent=parseFloat(data.monthlyRent)||0;if(data.deposit!=null)u.deposit=parseFloat(data.deposit)||0;await updateDoc(doc(db,'re_rent_agreements',agrId),u);cacheClear(`rentagr_${projectId}`);}
+export async function deleteRentAgreement(uid,projectId,agrId){const pays=await getDocs(query(collection(db,'re_rent_payments'),where('agreementId','==',agrId)));const tot=pays.docs.reduce((s,d)=>s+(d.data().amount||0),0);const b=writeBatch(db);pays.docs.forEach(d=>b.delete(d.ref));b.delete(doc(db,'re_rent_agreements',agrId));await b.commit();if(tot>0){const p=await getProject(projectId);await updateDoc(doc(db,'re_projects',projectId),{totalRevenue:Math.max(0,(p?.totalRevenue||0)-tot),updatedAt:serverTimestamp()});}const led=await getDocs(query(collection(db,'re_ledger'),where('agreementId','==',agrId)));if(led.docs.length){const lb=writeBatch(db);led.docs.forEach(d=>lb.delete(d.ref));await lb.commit();}cacheClear(`rentagr_${projectId}`);cacheClear(`rentpay_${projectId}`);cacheClear(`proj_${projectId}`);cacheClear(`projs_${uid}`);}
+export async function recordRentPayment(uid,projectId,agrId,data){const amt=parseFloat(data.amount)||0;const agr=await getDoc(doc(db,'re_rent_agreements',agrId));const ad=agr.data()||{};await Promise.all([addDoc(collection(db,'re_rent_payments'),{uid,projectId,agreementId:agrId,tenantName:ad.tenantName||'',siteLabel:ad.siteLabel||'',amount:amt,forMonth:data.forMonth||'',mode:data.mode||'Cash',date:data.date||new Date().toISOString().split('T')[0],note:data.note||'',createdAt:serverTimestamp()}),addDoc(collection(db,'re_ledger'),{uid,projectId,agreementId:agrId,type:'Rent Income',description:`Rent from ${ad.tenantName||'tenant'}`,debit:0,credit:amt,date:data.date||new Date().toISOString().split('T')[0],createdAt:serverTimestamp()}),updateDoc(doc(db,'re_rent_agreements',agrId),{totalCollected:(ad.totalCollected||0)+amt,updatedAt:serverTimestamp()})]);const p=await getProject(projectId);await updateDoc(doc(db,'re_projects',projectId),{totalRevenue:(p?.totalRevenue||0)+amt,updatedAt:serverTimestamp()});cacheClear(`rentpay_${projectId}`);cacheClear(`rentagr_${projectId}`);cacheClear(`proj_${projectId}`);cacheClear(`projs_${uid}`);}
+export async function deleteRentPayment(uid,projectId,payId,agrId,amount){const amt=parseFloat(amount)||0;await deleteDoc(doc(db,'re_rent_payments',payId));const ag=await getDoc(doc(db,'re_rent_agreements',agrId));const p=await getProject(projectId);await Promise.all([updateDoc(doc(db,'re_rent_agreements',agrId),{totalCollected:Math.max(0,(ag.data()?.totalCollected||0)-amt),updatedAt:serverTimestamp()}),updateDoc(doc(db,'re_projects',projectId),{totalRevenue:Math.max(0,(p?.totalRevenue||0)-amt),updatedAt:serverTimestamp()})]);cacheClear(`rentpay_${projectId}`);cacheClear(`rentagr_${projectId}`);cacheClear(`proj_${projectId}`);cacheClear(`projs_${uid}`);}
 // ── LEDGER ───────────────────────────────────────────────────────────────────
 
 export async function getLedger(uid, projectId) {

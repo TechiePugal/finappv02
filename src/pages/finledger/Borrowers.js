@@ -12,6 +12,9 @@ export default function Borrowers(){
   const[reps,setReps]=useState({});
   const[loading,setLoading]=useState(true);
   const[search,setSearch]=useState('');
+  const[amtRange,setAmtRange]=useState('all');
+  const[sortBy,setSortBy]=useState('overdue');
+  const[dueFilter,setDueFilter]=useState('all');
   const[filter,setFilter]=useState('All');
   const[photoPopup,setPhotoPopup]=useState(null);
   const[intPays,setIntPays]=useState({});
@@ -58,12 +61,22 @@ export default function Borrowers(){
     return getOutstanding(b)*(b.interestRate||0)/100;
   }
 
+  const _today=new Date();_today.setHours(0,0,0,0);
+  const _dueOf=b=>{const d=b.agreementExpiryDate||b.agreementDate;if(!d)return{due:null,od:null};const dd=new Date(d);if(isNaN(dd))return{due:null,od:null};dd.setHours(0,0,0,0);return{due:dd,od:Math.floor((_today-dd)/86400000)};};
   const filtered=data.filter(b=>{
-    const q=search.toLowerCase();
-    return(
-      (!q||b.borrowerName?.toLowerCase().includes(q)||b.phone?.includes(q)||b.loanId?.toLowerCase().includes(q))
-      &&(filter==='All'||b.status===filter)
-    );
+    const q=search.toLowerCase().trim();
+    const mq=!q||[b.borrowerName,b.phone,b.loanId,b.guardianName,b.guardianPhone].some(v=>String(v||'').toLowerCase().includes(q));
+    const mf=filter==='All'||b.status===filter;
+    const amt=b.loanAmount||0;let ma=true;
+    if(amtRange==='0-10000')ma=amt<=10000;else if(amtRange==='10000-50000')ma=amt>10000&&amt<=50000;else if(amtRange==='50000-100000')ma=amt>50000&&amt<=100000;else if(amtRange==='100000+')ma=amt>100000;
+    const od=_dueOf(b).od;let md=true;
+    if(dueFilter==='overdue')md=od!==null&&od>0;else if(dueFilter==='today')md=od===0;else if(dueFilter==='3days')md=od!==null&&od>=-3&&od<=0;else if(dueFilter==='7')md=od!==null&&od>7;else if(dueFilter==='30')md=od!==null&&od>30;
+    return mq&&mf&&ma&&md;
+  }).sort((a,b)=>{
+    if(sortBy==='loan')return(b.loanAmount||0)-(a.loanAmount||0);
+    if(sortBy==='name')return String(a.borrowerName||'').localeCompare(String(b.borrowerName||''));
+    if(sortBy==='due'){const x=_dueOf(a).due,y=_dueOf(b).due;if(!x)return 1;if(!y)return -1;return x-y;}
+    const oa=_dueOf(a).od,ob=_dueOf(b).od;return (ob===null?-1e9:ob)-(oa===null?-1e9:oa);
   });
 
   const active=data.filter(b=>b.status==='Active');
@@ -106,8 +119,11 @@ export default function Borrowers(){
 
       <Card noPad>
         <div style={{padding:'16px 18px 12px',display:'flex',gap:12,flexWrap:'wrap',alignItems:'center'}}>
-          <SearchBar value={search} onChange={setSearch} placeholder="Search by name, phone, loan ID…"/>
+          <SearchBar value={search} onChange={setSearch} placeholder="Search name, phone, loan ID, guardian…"/>
           <FilterTabs options={['All','Active','Closed','Non-Active']} value={filter} onChange={setFilter}/>
+          <select value={dueFilter} onChange={e=>setDueFilter(e.target.value)} style={{padding:'7px 10px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:9,fontSize:12.5,color:'var(--text-primary)',outline:'none',fontFamily:'inherit',cursor:'pointer'}}><option value="all">All Due</option><option value="overdue">All Overdue</option><option value="today">Due Today</option><option value="3days">Due in 3 Days</option><option value="7">&gt;7 Days Overdue</option><option value="30">&gt;30 Days Overdue</option></select>
+          <select value={amtRange} onChange={e=>setAmtRange(e.target.value)} style={{padding:'7px 10px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:9,fontSize:12.5,color:'var(--text-primary)',outline:'none',fontFamily:'inherit',cursor:'pointer'}}><option value="all">All Amounts</option><option value="0-10000">₹0 – ₹10K</option><option value="10000-50000">₹10K – ₹50K</option><option value="50000-100000">₹50K – ₹1L</option><option value="100000+">₹1L+</option></select>
+          <select value={sortBy} onChange={e=>setSortBy(e.target.value)} style={{padding:'7px 10px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:9,fontSize:12.5,color:'var(--text-primary)',outline:'none',fontFamily:'inherit',cursor:'pointer'}}><option value="overdue">Sort: Most Overdue First</option><option value="loan">Sort: Highest Loan First</option><option value="due">Sort: Next Due Date</option><option value="name">Sort: Name A–Z</option></select>
         </div>
         <div style={{overflowX:'auto'}}>
           <table style={{width:'100%',borderCollapse:'collapse',minWidth:820}}>
