@@ -96,19 +96,34 @@ export default function Reports() {
   const totalEMI      = filtEmi.reduce((s,e) => s + (e.totalCollected || e.amount || 0), 0);
   const totalExpense  = filtExps.reduce((s,e) => s + (e.amount || 0), 0);
   const totalIncome   = totalInterest + totalRepaid + totalEMI;
+  const netInterestIncome = totalInterest - totalExpense; // Monthly Net Int. Income net of expenses
   const netFlow       = totalIncome - totalExpense;
 
   // Portfolio totals
-  const activeB = borrowers.filter(b => b.status === 'Active');
+  // Period-scoped: borrower was active DURING the selected period
+  // A borrower counts if: loan started on or before toDate AND not closed before fromDate
+  const _closedStatuses = ['Closed','Paid Off','Repaid','Settled','Completed'];
+  const periodActiveB = borrowers.filter(b => {
+    const start = b.loanStartDate || b.agreementDate || '';
+    if (start && start > toDate) return false; // loan started after period
+    if (_closedStatuses.includes(b.status)) {
+      // Find when it was closed via repayments: last repayment date
+      const bReps = repayments.filter(r => r.borrowerId === b.id && !r.deleted);
+      const lastRep = bReps.reduce((mx,r) => r.date > mx ? r.date : mx, '');
+      if (lastRep && lastRep < fromDate) return false; // closed before period started
+    }
+    return true;
+  });
+  const activeB = periodActiveB; // keep activeB name for rest of render
   const totalOutstanding = activeB.reduce((s,b) => {
-    const paid = repayments.filter(r => r.borrowerId === b.id && !r.deleted).reduce((a,r) => a + (r.repaidAmount||r.amount||0), 0);
+    const paid = repayments.filter(r => r.borrowerId === b.id && !r.deleted && r.date <= toDate).reduce((a,r) => a + (r.repaidAmount||r.amount||0), 0);
     return s + Math.max(0, (b.loanAmount||0) - paid);
   }, 0);
   const totalDeposits = depositors.filter(d => d.status === 'Active').reduce((s,d) => s + (d.depositAmount||0), 0);
   const monthlyInterestIncome = activeB.reduce((s,b) => {
-    const paid = repayments.filter(r => r.borrowerId === b.id && !r.deleted).reduce((a,r) => a + (r.repaidAmount||r.amount||0), 0);
+    const paid = repayments.filter(r => r.borrowerId === b.id && !r.deleted && r.date <= toDate).reduce((a,r) => a + (r.repaidAmount||r.amount||0), 0);
     const out = Math.max(0, (b.loanAmount||0) - paid);
-    return s + out * (b.interestRate||0) / 100;
+    return s + out * (b.interestRate||0) / 100; // monthly rate
   }, 0);
 
   // Monthly breakdown
@@ -201,7 +216,7 @@ export default function Reports() {
         <StatCard label="Total Income" value={formatCurrency(Math.round(totalIncome))} sub="Interest + Principal + EMI" color="#34c759" />
         <StatCard label={`Net Cash Flow`} value={formatCurrency(Math.round(netFlow))} sub={netFlow>=0?'Surplus':'Deficit'} color={netFlow>=0?'#34c759':'#ff3b30'} />
         <StatCard label="Total Outstanding" value={formatCurrency(Math.round(totalOutstanding))} sub="All active loans" color="#ff9500" />
-        <StatCard label="Monthly Int. Income" value={formatCurrency(Math.round(monthlyInterestIncome))} sub="On outstanding balances" color="#007aff" />
+        <StatCard label="Monthly Net Int. Income" value={formatCurrency(Math.round(monthlyInterestIncome))} sub="On outstanding balances" color="#007aff" />
       </div>
 
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginBottom:16 }}>
@@ -239,7 +254,7 @@ export default function Reports() {
                   {/* Total row */}
                   <tr style={{ borderTop:'2px solid rgba(0,122,255,0.2)', background:'rgba(0,122,255,0.04)' }}>
                     <td style={{ padding:'9px 10px', fontWeight:800 }}>Total</td>
-                    <td style={{ padding:'9px 10px', textAlign:'right', color:'#007aff', fontWeight:800 }}>{INR(totalInterest)}</td>
+                    <td style={{ padding:'9px 10px', textAlign:'right', color:'#007aff', fontWeight:800 }}>  {INR(Math.max(0,netInterestIncome))} {totalExpense>0&&<span style={{fontSize:11,color:'#ff3b30',marginLeft:4}}>(after ₹{Math.round(totalExpense/1000)}k exp.)</span>}</td>
                     <td style={{ padding:'9px 10px', textAlign:'right', color:'#34c759', fontWeight:800 }}>{INR(totalRepaid)}</td>
                     <td style={{ padding:'9px 10px', textAlign:'right', color:'#5856d6', fontWeight:800 }}>{INR(totalEMI)}</td>
                     <td style={{ padding:'9px 10px', textAlign:'right', color:'#ff3b30', fontWeight:800 }}>{INR(totalExpense)}</td>
@@ -278,7 +293,7 @@ export default function Reports() {
         <SectionHeader title="Portfolio Snapshot (Current)" />
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
           <div>
-            <h3 style={{ fontSize:13, fontWeight:700, color:'var(--text-primary)', marginBottom:10 }}>Active Borrowers ({activeB.length})</h3>
+            <h3 style={{ fontSize:13, fontWeight:700, color:'var(--text-primary)', marginBottom:10 }}>Borrowers active in period ({activeB.length})</h3>
             <div style={{ overflowX:'auto' }}>
               <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
                 <thead><tr style={{ background:'rgba(118,118,128,0.06)', borderBottom:'1px solid rgba(0,0,0,0.07)' }}>

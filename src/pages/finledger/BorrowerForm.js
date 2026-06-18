@@ -15,7 +15,7 @@ export default function BorrowerForm(){
   const[form,setForm]=useState({photo:null,
     loanId:genId(), borrowerName:'', phone:'', email:'', address:'',
     loanAmount:'', interestRate:'', loanStartDate:'', agreementDate:'', agreementExpiryDate:'',
-    securityType:'Documents Collected', securityValue:'', status:'Active', notes:'',
+    securityType:'Documents Collected', securityTypeOther:'', securityValue:'', status:'Active', notes:'',
     // Guardian details
     guardianName:'', guardianPhone:'', guardianAddress:''
   });
@@ -35,7 +35,7 @@ export default function BorrowerForm(){
         interestRate:d.interestRate||'', loanStartDate:d.loanStartDate||'',
         agreementDate:d.agreementDate||'',
         agreementExpiryDate:d.agreementExpiryDate||'',
-        securityType:d.securityType||'Documents Collected',
+        securityType:d.securityType||'Documents Collected', securityTypeOther:d.securityTypeOther||'',
         securityValue:d.securityValue||'', status:d.status||'Active', notes:d.notes||'',
         guardianName:d.guardianName||'', guardianPhone:d.guardianPhone||'', guardianAddress:d.guardianAddress||''
       });
@@ -176,6 +176,13 @@ export default function BorrowerForm(){
               </FormField>
               <FormField label="Security Value (₹)"><Input value={form.securityValue} onChange={e=>set('securityValue',e.target.value)} placeholder="1000000" type="number" min="0"/></FormField>
             </div>
+            {form.securityType==='Other'&&(
+              <div style={{marginTop:12}}>
+                <FormField label="Specify Security Type" required>
+                  <Input value={form.securityTypeOther} onChange={e=>set('securityTypeOther',e.target.value)} placeholder="e.g. Fixed Deposit, Machinery, Jewellery…"/>
+                </FormField>
+              </div>
+            )}
             {coverage&&(
               <div style={{marginTop:12,padding:'12px 14px',borderRadius:10,background:adequate?'rgba(52,199,89,0.08)':'rgba(255,59,48,0.08)',border:`1px solid ${adequate?'rgba(52,199,89,0.2)':'rgba(255,59,48,0.2)'}`}}>
                 <p style={{fontSize:13,color:adequate?'#1a7a34':'#c0392b',fontWeight:600}}>

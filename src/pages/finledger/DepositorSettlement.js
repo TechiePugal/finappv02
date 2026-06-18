@@ -15,14 +15,18 @@ function genSlots(startDate,tenureMonths){
     (parseInt(tenureMonths)||1);
   let cur=new Date(startDate);
   const now=new Date();
+  const futureLimit=new Date(now);futureLimit.setMonth(futureLimit.getMonth()+3); // extend 3mo ahead
   let idx=0;
-  while(cur<=now){
+  while(cur<=futureLimit){
     const next=new Date(cur);next.setMonth(next.getMonth()+t);
+    const slotMo=`${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,'0')}`;
+    const curMoStr=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
     slots.push({
       idx:++idx,
-      month:`${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,'0')}`,
+      month:slotMo,
       label:cur.toLocaleDateString('en-IN',{month:'long',year:'numeric'}),
       dueDate:next.toISOString().split('T')[0],
+      isFuture:slotMo>curMoStr,
     });
     cur=next;
   }
@@ -61,8 +65,9 @@ export default function DepositorSettlement(){
   },[]);
 
   function calcPeriodInt(dep){
+    // monthlyRate: rate entered as % per month (not annual)
     const p=dep.depositAmount||0,r=dep.interestRate||0,t=parseInt(dep.interestTenure)||1;
-    return dep.compounding?p*(r/100/12)*t:(p*r/100/12)*t;
+    return dep.compounding?p*(r/100)*t:(p*r/100)*t; // monthlyRate
   }
 
   function openPay(depositor,slot){
@@ -210,7 +215,7 @@ export default function DepositorSettlement(){
                     :<div style={{width:44,height:44,borderRadius:'50%',background:'rgba(88,86,214,0.12)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,fontWeight:700,color:'#5856d6',flexShrink:0}}>{dep.name?.[0]?.toUpperCase()}</div>}
                   <div>
                     <div style={{fontWeight:700,fontSize:15,marginBottom:2}}>{dep.name}</div>
-                    <div style={{fontSize:12,color:'var(--text-secondary)'}}>{dep.depositId} · {formatCurrency(dep.depositAmount)} · {dep.interestRate}% p.a. · {tenureLabel} · {dep.compounding?'Compound':'Simple'}</div>
+                    <div style={{fontSize:12,color:'var(--text-secondary)'}}>{dep.depositId} · {formatCurrency(dep.depositAmount)} · {dep.interestRate}%/mo · {tenureLabel} · {dep.compounding?'Compound':'Simple'}</div>
                   </div>
                 </div>
                 <div style={{display:'flex',gap:20,alignItems:'center'}}>
@@ -231,7 +236,50 @@ export default function DepositorSettlement(){
 
               {isOpen&&(
                 <div style={{borderTop:'1px solid rgba(0,0,0,0.07)',padding:'14px 20px'}}>
-                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(175px,1fr))',gap:10}}>
+                  {/* ±3 month window header */}
+                  {(() => {
+                    const now=new Date();
+                    const curMo=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+                    const curIdx=slots.findIndex(s=>s.month===curMo);
+                    const wi=curIdx>=0?curIdx:Math.max(0,slots.findIndex(s=>s.month>curMo)-1);
+                    const windowSlots=slots.slice(Math.max(0,wi-3),Math.min(slots.length,wi+4));
+                    return(
+                      <>
+                      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,flexWrap:'wrap'}}>
+                        <span style={{fontSize:11,fontWeight:700,color:'var(--text-secondary)',textTransform:'uppercase',letterSpacing:'.05em'}}>Schedule Window</span>
+                        <span style={{fontSize:11,color:'var(--text-tertiary)'}}>prev 3 · current · next 3</span>
+                        {curIdx<0&&<span style={{fontSize:11,color:'#ff9500'}}>· outside active period</span>}
+                      </div>
+                      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(120px,1fr))',gap:8,marginBottom:14}}>
+                        {windowSlots.map(slot=>{
+                          const key=`${dep.id}_${slot.month}`;
+                          const p=payments[key];
+                          const isPaid=p?.status==='Paid';
+                          const isAdded=p?.addedToDeposit;
+                          const isCur=slot.month===curMo;
+                          const isFut=slot.isFuture;
+                          const dOD=isFut?0:getDaysOverdue(slot.dueDate);
+                          const bg=isPaid?'rgba(52,199,89,0.08)':isAdded?'rgba(88,86,214,0.08)':isFut?'rgba(0,0,0,0.02)':isCur?'rgba(0,122,255,0.08)':dOD>2?'rgba(255,59,48,0.06)':'rgba(0,0,0,0.02)';
+                          const border=isPaid?'1.5px solid rgba(52,199,89,0.3)':isAdded?'1.5px solid rgba(88,86,214,0.3)':isFut?'1px dashed rgba(0,0,0,0.12)':isCur?'2px solid rgba(0,122,255,0.4)':dOD>2?'1.5px solid rgba(255,59,48,0.25)':'1px solid rgba(0,0,0,0.08)';
+                          const col=isPaid?'#34c759':isAdded?'#5856d6':isFut?'var(--text-secondary)':isCur?'#007aff':dOD>2?'#ff3b30':'var(--text-primary)';
+                          return(
+                            <div key={slot.month} onClick={()=>openPay(dep,slot)} style={{padding:'10px 11px',borderRadius:10,border,background:bg,cursor:'pointer',position:'relative',opacity:isFut?0.7:1}}>
+                              {isCur&&<div style={{position:'absolute',top:-8,left:'50%',transform:'translateX(-50%)',background:'#007aff',color:'#fff',fontSize:8.5,fontWeight:800,padding:'2px 7px',borderRadius:99,whiteSpace:'nowrap'}}>CURRENT</div>}
+                              {isFut&&<div style={{position:'absolute',top:-8,left:'50%',transform:'translateX(-50%)',background:'rgba(0,0,0,0.3)',color:'#fff',fontSize:8.5,fontWeight:800,padding:'2px 7px',borderRadius:99,whiteSpace:'nowrap'}}>UPCOMING</div>}
+                              <div style={{fontSize:11,fontWeight:700,color:col,marginBottom:2}}>{slot.label}</div>
+                              <div style={{fontSize:13,fontWeight:800,color:col}}>{isPaid?formatCurrency(p.totalPayout||p.amountPaid):isAdded?'+ Principal':formatCurrency(Math.round(periodInt))}</div>
+                              {isPaid&&<div style={{fontSize:9.5,color:'#34c759',marginTop:2}}>✓ paid</div>}
+                              {isFut&&!isPaid&&<div style={{fontSize:9.5,color:'var(--text-secondary)',marginTop:2}}>advance allowed</div>}
+                              {!isFut&&!isPaid&&dOD>2&&!isAdded&&<div style={{fontSize:9.5,color:'#ff3b30',fontWeight:600,marginTop:2}}>{dOD}d late</div>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div style={{borderBottom:'1px solid rgba(0,0,0,0.07)',marginBottom:12}}><span style={{fontSize:11,color:'var(--text-secondary)',fontWeight:600}}>All {slots.length} periods</span></div>
+                      </>
+                    );
+                  })()}
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(155px,1fr))',gap:8}}>
                     {slots.map(slot=>{
                       const key=`${dep.id}_${slot.month}`;
                       const p=payments[key];
@@ -275,7 +323,7 @@ export default function DepositorSettlement(){
                   <span style={{fontSize:14,fontWeight:700,color:'var(--accent)'}}>{formatCurrency(Math.round(interest))}</span>
                 </div>
                 <div style={{fontSize:12,color:'var(--text-secondary)'}}>
-                  Deposit: {formatCurrency(depositor.depositAmount)} · {depositor.interestRate}% p.a. · {depositor.compounding?'Compound':'Simple'}
+                  Deposit: {formatCurrency(depositor.depositAmount)} · {depositor.interestRate}%/mo · {depositor.compounding?'Compound':'Simple'}
                 </div>
                 {daysOD>2&&<div style={{fontSize:12,color:'#ff3b30',fontWeight:600,marginTop:4}}>⚠ {daysOD} days overdue</div>}
               </div>

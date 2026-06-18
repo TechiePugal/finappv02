@@ -10,8 +10,9 @@ function genId(){return 'DEP-'+Date.now().toString(36).toUpperCase();}
 
 // tenure is now a NUMBER (months between payouts, e.g. 1=monthly, 3=quarterly)
 function calcPeriodInterest(amt,rate,tenureMonths,compound){
+  // per month deposit: rate is % per month directly
   const p=parseFloat(amt)||0, r=parseFloat(rate)||0, t=normTenure(tenureMonths);
-  return compound ? p*(r/100/12)*t : (p*r/100/12)*t;
+  return compound ? p*(r/100)*t : (p*r/100)*t;
 }
 
 // Generate full schedule from start date to maturity (or 36 months if no maturity)

@@ -15,6 +15,7 @@ export default function Borrowers(){
   const[amtRange,setAmtRange]=useState('all');
   const[sortBy,setSortBy]=useState('overdue');
   const[dueFilter,setDueFilter]=useState('all');
+  // monthsUnpaid = months since last interest payment
   const[filter,setFilter]=useState('All');
   const[photoPopup,setPhotoPopup]=useState(null);
   const[intPays,setIntPays]=useState({});
@@ -69,8 +70,16 @@ export default function Borrowers(){
     const mf=filter==='All'||b.status===filter;
     const amt=b.loanAmount||0;let ma=true;
     if(amtRange==='0-10000')ma=amt<=10000;else if(amtRange==='10000-50000')ma=amt>10000&&amt<=50000;else if(amtRange==='50000-100000')ma=amt>50000&&amt<=100000;else if(amtRange==='100000+')ma=amt>100000;
-    const od=_dueOf(b).od;let md=true;
-    if(dueFilter==='overdue')md=od!==null&&od>0;else if(dueFilter==='today')md=od===0;else if(dueFilter==='3days')md=od!==null&&od>=-3&&od<=0;else if(dueFilter==='7')md=od!==null&&od>7;else if(dueFilter==='30')md=od!==null&&od>30;
+    // monthsUnpaid_v2: months since last paid interest
+    const bIntPays=intPays[b.id]||{};
+    const paidMonths=Object.keys(bIntPays).filter(mo=>bIntPays[mo]?.status==='Paid').sort();
+    const lastPaidMo=paidMonths.length?paidMonths[paidMonths.length-1]:null;
+    const now2=new Date();
+    const monthsUnpaid=lastPaidMo
+      ?(now2.getFullYear()-parseInt(lastPaidMo.slice(0,4)))*12+(now2.getMonth()+1-parseInt(lastPaidMo.slice(5,7)))
+      :(b.loanStartDate?Math.max(0,(now2.getFullYear()-parseInt(b.loanStartDate.slice(0,4)))*12+(now2.getMonth()+1-parseInt(b.loanStartDate.slice(5,7)))):0);
+    let md=true;
+    if(dueFilter==='1mo')md=monthsUnpaid>=1;else if(dueFilter==='2mo')md=monthsUnpaid>=2;else if(dueFilter==='3mo')md=monthsUnpaid>=3;else if(dueFilter==='6mo')md=monthsUnpaid>=6;
     return mq&&mf&&ma&&md;
   }).sort((a,b)=>{
     if(sortBy==='loan')return(b.loanAmount||0)-(a.loanAmount||0);
@@ -121,7 +130,7 @@ export default function Borrowers(){
         <div style={{padding:'16px 18px 12px',display:'flex',gap:12,flexWrap:'wrap',alignItems:'center'}}>
           <SearchBar value={search} onChange={setSearch} placeholder="Search name, phone, loan ID, guardian…"/>
           <FilterTabs options={['All','Active','Closed','Non-Active']} value={filter} onChange={setFilter}/>
-          <select value={dueFilter} onChange={e=>setDueFilter(e.target.value)} style={{padding:'7px 10px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:9,fontSize:12.5,color:'var(--text-primary)',outline:'none',fontFamily:'inherit',cursor:'pointer'}}><option value="all">All Due</option><option value="overdue">All Overdue</option><option value="today">Due Today</option><option value="3days">Due in 3 Days</option><option value="7">&gt;7 Days Overdue</option><option value="30">&gt;30 Days Overdue</option></select>
+          <select value={dueFilter} onChange={e=>setDueFilter(e.target.value)} style={{padding:'7px 10px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:9,fontSize:12.5,color:'var(--text-primary)',outline:'none',fontFamily:'inherit',cursor:'pointer'}}><option value="all">All Borrowers</option><option value="1mo">1+ Month Unpaid</option><option value="2mo">2+ Months Unpaid</option><option value="3mo">3+ Months Unpaid</option><option value="6mo">6+ Months Unpaid</option></select>
           <select value={amtRange} onChange={e=>setAmtRange(e.target.value)} style={{padding:'7px 10px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:9,fontSize:12.5,color:'var(--text-primary)',outline:'none',fontFamily:'inherit',cursor:'pointer'}}><option value="all">All Amounts</option><option value="0-10000">₹0 – ₹10K</option><option value="10000-50000">₹10K – ₹50K</option><option value="50000-100000">₹50K – ₹1L</option><option value="100000+">₹1L+</option></select>
           <select value={sortBy} onChange={e=>setSortBy(e.target.value)} style={{padding:'7px 10px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:9,fontSize:12.5,color:'var(--text-primary)',outline:'none',fontFamily:'inherit',cursor:'pointer'}}><option value="overdue">Sort: Most Overdue First</option><option value="loan">Sort: Highest Loan First</option><option value="due">Sort: Next Due Date</option><option value="name">Sort: Name A–Z</option></select>
         </div>

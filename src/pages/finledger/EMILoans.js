@@ -21,14 +21,16 @@ const FREQ_LABEL = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' };
 const FREQ_FACTOR = { daily: 30, weekly: 4.33, monthly: 1 };
 
 function calcEMI(principal, rate, periods, freq) {
+  // Flat monthly model: each period repays equal principal + flat interest on the ORIGINAL principal.
+  // e.g. 10000 @ 2%/mo over 10 = 1000 principal + 200 interest = 1200/period.
   const p = parseFloat(principal) || 0;
   const r = parseFloat(rate) || 0;
   const n = parseInt(periods) || 1;
-  const ppY = { daily: 365, weekly: 52, monthly: 12 }[freq] || 12;
-  const rp = (r / 100) / ppY;
-  if (rp === 0 || p === 0) return p / n;
-  return p * rp * Math.pow(1 + rp, n) / (Math.pow(1 + rp, n) - 1);
+  const interestPerPeriod = p * (r / 100);
+  return (p / n) + interestPerPeriod;
 }
+function emiPrincipalPerPeriod(loan) { const n = parseInt(loan.totalPeriods) || 1; return (parseFloat(loan.loanAmount) || 0) / n; }
+function emiInterestPerPeriod(loan) { return (parseFloat(loan.loanAmount) || 0) * ((parseFloat(loan.interestRate) || 0) / 100); }
 
 function buildSchedule(loan) {
   const { frequency, emiStartDate, totalPeriods } = loan;
@@ -115,7 +117,8 @@ function EMIScheduleRow({ loan, sched, cols, outstanding, onSelectSlot }) {
                   )}
                   <div style={{ fontSize:11, fontWeight:800, color:col, marginBottom:3 }}>#{slot.periodNo}</div>
                   <div style={{ fontSize:10, color:'var(--text-secondary)', marginBottom:4 }}>{slot.dueDate}</div>
-                  <div style={{ fontSize:12.5, fontWeight:700, color:col }}>{formatCurrency(loan.emiAmount||0)}</div>
+                  <div style={{ fontSize:12.5, fontWeight:700, color:col }}>{formatCurrency(Math.round(emiPrincipalPerPeriod(loan)+emiInterestPerPeriod(loan)))}</div>
+                  <div style={{ fontSize:8.5, color:'var(--text-secondary)', marginTop:2, lineHeight:1.3 }}>P {formatCurrency(Math.round(emiPrincipalPerPeriod(loan)))} + I {formatCurrency(Math.round(emiInterestPerPeriod(loan)))}</div>
                   {isPaid && <div style={{ fontSize:9.5, color:'#34c759', marginTop:3 }}>✓ {fmtDate(colRec.date)}</div>}
                   {!isPaid && od>0 && <div style={{ fontSize:9.5, color:'#ff3b30', fontWeight:700, marginTop:3 }}>{od}d late{fine>0?` · Fine ₹${fine.toLocaleString('en-IN')}`:''}</div>}
                   {!isPaid && !isFuture && od===0 && <div style={{ fontSize:9.5, color:'var(--accent)', marginTop:3 }}>Tap to pay</div>}
@@ -267,8 +270,8 @@ function LoanForm({ form, setForm, photoPreview, onPhotoChange, onPhotoRemove })
         <FormField label="Loan Amount (₹)" required>
           <Input type="number" value={form.loanAmount} onChange={e => set('loanAmount', e.target.value)} placeholder="50000" min="1" />
         </FormField>
-        <FormField label="Interest Rate (% p.a.)" required>
-          <Input type="number" value={form.interestRate} onChange={e => set('interestRate', e.target.value)} placeholder="18" step="0.01" min="0" />
+        <FormField label="Interest Rate (% per month)" required>
+          <Input type="number" value={form.interestRate} onChange={e => set('interestRate', e.target.value)} placeholder="2" step="0.01" min="0" />
         </FormField>
         <FormField label="EMI Frequency" required>
           <Select value={form.frequency} onChange={e => set('frequency', e.target.value)}>
@@ -335,7 +338,7 @@ export default function EMILoans() {
   const [photoPreview, setPhotoPreview] = useState(null);
 
   // Collect form
-  const [cpf, setCpf] = useState({ amount: '', fine: '0', date: today(), mode: 'Cash', remarks: '', collectFine: false, dueDate: '', daysOverdue: 0, periodNo: 1 });
+  const [cpf, setCpf] = useState({ amount: '', fine: '0', date: today(), mode: 'Cash', remarks: '', collectFine: false, dueDate: '', daysOverdue: 0, periodNo: 1, earlyClose: false });
   const [saving, setSaving] = useState(false);
   const [expandedLoan, setExpandedLoan] = useState(null);
 
@@ -493,14 +496,14 @@ export default function EMILoans() {
         loanId: loan.id, borrowerName: loan.borrowerName, emiId: loan.emiId,
         amount: parseFloat(cpf.amount), fine, totalCollected,
         expectedEMI: loan.emiAmount, date: cpf.date, mode: cpf.mode,
-        remarks: cpf.remarks, periodNo: paidPeriods,
+        remarks: cpf.earlyClose ? ('Early closure settlement. '+cpf.remarks).trim() : cpf.remarks, periodNo: paidPeriods, earlyClosure: cpf.earlyClose || false,
         dueDate: cpf.dueDate, daysOverdue: cpf.daysOverdue,
         frequency: loan.frequency, createdAt: serverTimestamp(),
       });
 
-      const fullyPaid = paidPeriods >= loan.totalPeriods;
+      const fullyPaid = cpf.earlyClose || paidPeriods >= loan.totalPeriods;
       await updateDoc(doc(db, 'emi_loans', loan.id), {
-        paidPeriods, status: fullyPaid ? 'Closed' : 'Active', updatedAt: serverTimestamp(),
+        paidPeriods: cpf.earlyClose ? loan.totalPeriods : paidPeriods, status: fullyPaid ? 'Closed' : 'Active', closedEarly: cpf.earlyClose || false, updatedAt: serverTimestamp(),
       });
 
       await addDoc(collection(db, 'finance_ledger_entries'), {
@@ -511,7 +514,7 @@ export default function EMILoans() {
       });
 
       toast.success(fullyPaid
-        ? `🎉 All ${loan.totalPeriods} EMIs collected! Loan closed.`
+        ? (cpf.earlyClose ? '✓ Loan closed early — fully settled.' : `🎉 All ${loan.totalPeriods} EMIs collected! Loan closed.`)
         : `✓ EMI #${paidPeriods} collected. ${loan.totalPeriods - paidPeriods} remaining.`
       );
       setCollectLoan(null);
@@ -829,6 +832,28 @@ export default function EMILoans() {
                 )}
               </div>
             )}
+
+            {/* Early closure */}
+            {(() => {
+              const ppp = (parseFloat(collectLoan.loanAmount)||0)/(parseInt(collectLoan.totalPeriods)||1);
+              const paidSoFar = (cpf.periodNo||1)-1;
+              const remPrincipal = Math.max(0,(parseFloat(collectLoan.loanAmount)||0) - paidSoFar*ppp);
+              const intThis = (parseFloat(collectLoan.loanAmount)||0)*((parseFloat(collectLoan.interestRate)||0)/100);
+              const closeAmt = Math.round(remPrincipal + intThis);
+              return (
+                <div style={{ background:'rgba(175,82,222,0.06)', border:'1px solid rgba(175,82,222,0.2)', borderRadius:10, padding:'12px 14px', marginBottom:14 }}>
+                  <label style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer', fontSize:13 }}>
+                    <input type="checkbox" checked={!!cpf.earlyClose} onChange={e=>setCpf(p=>({ ...p, earlyClose:e.target.checked, amount: e.target.checked?String(closeAmt):String(collectLoan.emiAmount||'') }))} style={{ width:16, height:16, accentColor:'#af52de', cursor:'pointer' }}/>
+                    <span style={{ fontWeight:700, color:'#7d3cab' }}>Close loan early (settle now)</span>
+                  </label>
+                  {cpf.earlyClose && (
+                    <div style={{ marginTop:8, fontSize:12.5, color:'var(--text-secondary)', lineHeight:1.6 }}>
+                      Remaining principal <strong style={{color:'var(--text-primary)'}}>{formatCurrency(Math.round(remPrincipal))}</strong> + this month’s interest <strong style={{color:'#ff9500'}}>{formatCurrency(Math.round(intThis))}</strong> = <strong style={{color:'#af52de'}}>{formatCurrency(closeAmt)}</strong>. Loan will be marked <strong>closed</strong>.
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Payment fields */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>

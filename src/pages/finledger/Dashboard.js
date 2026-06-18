@@ -26,12 +26,13 @@ export default function Dashboard(){
       const now = new Date();
       const curMo = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
 
-      const [depSnap,borSnap,paySnap,repSnap,setSnap] = await Promise.all([
+      const [depSnap,borSnap,paySnap,repSnap,setSnap,emiSnap] = await Promise.all([
         getDocs(collection(db,'deposit_master')),
         getDocs(collection(db,'borrower_master')),
-        getDocs(query(collection(db,'borrower_interest_payments'),where('month','==',curMo))),
+        getDocs(collection(db,'borrower_interest_payments')), // fetch all for overdue calc
         getDocs(collection(db,'loan_repayments')),
         getDocs(query(collection(db,'deposit_payments'),where('month','==',curMo))),
+        getDocs(collection(db,'emi_loans')),
       ]);
 
       const deps = depSnap.docs.map(d=>({id:d.id,...d.data()}));
@@ -62,14 +63,18 @@ export default function Dashboard(){
 
       // FIXED: use outstanding-based interest calculation
       const monthlyRec = activeBors.reduce((s,b)=>s+correctInterest(b,repsByBorrower),0);
-      const monthlyPay = activeDeps.reduce((s,d)=>s+((d.depositAmount||0)*(d.interestRate||0)/100/12),0);
+      const monthlyPay = activeDeps.reduce((s,d)=>s+((d.depositAmount||0)*(d.interestRate||0)/100),0); // monthly rate
 
       // Current month actuals
-      const curMonthCollected = paySnap.docs.filter(d=>d.data().status==='Paid').reduce((s,d)=>s+(d.data().amountPaid||0),0);
+      const curMonthCollected = paySnap.docs.filter(d=>d.data().status==='Paid'&&d.data().month===curMo).reduce((s,d)=>s+(d.data().amountPaid||0),0);
       const curMonthSettled   = setSnap.docs.filter(d=>d.data().status==='Paid').reduce((s,d)=>s+(d.data().amountPaid||0),0);
 
       const secVal = bors.reduce((s,b)=>s+(b.securityValue||0),0);
-      const overdue = paySnap.docs.filter(d=>d.data().status==='Unpaid').reduce((s,d)=>s+(d.data().amountDue||0),0);
+      // Genuinely overdue = Unpaid records from PREVIOUS months (not current month)
+      const overdue = paySnap.docs.filter(d=>d.data().status==='Unpaid'&&d.data().month&&d.data().month<curMo).reduce((s,d)=>s+(d.data().amountDue||0),0);
+      // Current month: only records explicitly saved this month
+      const curMonthPays = paySnap.docs.filter(d=>d.data().month===curMo);
+      const uncollectedThisMonth = curMonthPays.filter(d=>d.data().status==='Unpaid').reduce((s,d)=>s+(d.data().amountDue||0),0);
 
       // 6-month chart data (use actual totals for current month)
       const chartData = Array.from({length:6},(_,i)=>{
@@ -83,6 +88,19 @@ export default function Dashboard(){
         };
       });
 
+      const emiLoans=emiSnap.docs.map(d=>({id:d.id,...d.data()}));
+      const activeEmi=emiLoans.filter(l=>l.status==='Active');
+      const emiMonthlyTotal=activeEmi.reduce((s,l)=>s+(l.emiAmount||0),0);
+      const emiProjData=Array.from({length:6},(_,i)=>{
+        const d=new Date(now.getFullYear(),now.getMonth()+i,1);
+        const label=MONTHS[d.getMonth()]+' '+(d.getFullYear()%100);
+        const expectedCol=activeEmi.reduce((s,l)=>{
+          const paidP=l.paidPeriods||0;
+          const remaining=Math.max(0,(l.totalPeriods||0)-paidP-i);
+          return s+(remaining>0?(l.emiAmount||0):0);
+        },0);
+        return {label, expected:Math.round(expectedCol)};
+      });
       const recent=[...bors].sort((a,b)=>(b.createdAt?.toMillis?.()??0)-(a.createdAt?.toMillis?.()??0)).slice(0,5);
 
       setData({
@@ -94,7 +112,7 @@ export default function Dashboard(){
         nonActive:nonActive.length, closedLoans:closed.length,
         totalDepositors:deps.length, totalBorrowers:bors.length,
         coverage:totalOutstanding>0?((secVal/totalOutstanding)*100).toFixed(0):100,
-        chartData, recent,
+        chartData, recent, emiProjData, emiMonthlyTotal, emiLoanCount:activeEmi.length,
       });
     }catch(e){console.error(e);}finally{setLoading(false);}
   }
@@ -124,6 +142,19 @@ export default function Dashboard(){
         <StatCard label="Monthly Payable" value={formatCurrency(Math.round(d.monthlyPay))} sub={`Settled: ${formatCurrency(Math.round(d.curMonthSettled||0))}`} color="#ff9f0a"
           icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/><polyline points="16 17 22 17 22 11"/></svg>}/>
       </div>
+
+      {/* EMI KPI row */}
+      {(d.emiLoanCount||0)>0&&(
+        <div className="grid-4" style={{marginBottom:12}}>
+          <StatCard label="EMI Monthly" value={formatCurrency(Math.round(d.emiMonthlyTotal||0))} sub={`${d.emiLoanCount||0} active EMI loan${(d.emiLoanCount||0)!==1?'s':''}`} color="#5e5ce6"
+            icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M12 10v4M10 12h4"/></svg>}/>
+          {(d.emiProjData||[]).slice(0,3).map((p,i)=>(
+            <StatCard key={i} label={`EMI ${p.label}`} value={formatCurrency(p.expected)}
+              sub={i===0?'this month':i===1?'next month':'2 months out'} color={i===0?'#007aff':i===1?'#34aadc':'#5ac8fa'}
+              icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/></svg>}/>
+          ))}
+        </div>
+      )}
 
       {/* KPI Row 2 */}
       <div className="grid-4" style={{marginBottom:20}}>
@@ -194,6 +225,29 @@ export default function Dashboard(){
         </Card>
       </div>
 
+      {/* EMI Fund Projection */}
+      {(d.emiLoanCount||0)>0&&(
+        <Card style={{marginBottom:14}}>
+          <SectionHeader title="EMI Fund Projection — Next 6 Months"
+            subtitle={`${d.emiLoanCount} active EMI loan${d.emiLoanCount>1?'s':''} · ₹${Math.round((d.emiMonthlyTotal||0)/1000)}k/mo expected`}/>
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={d.emiProjData||[]} margin={{top:4,right:4,bottom:0,left:-20}}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--divider)" vertical={false}/>
+              <XAxis dataKey="label" tick={{fill:'var(--text-tertiary)',fontSize:11}} axisLine={false} tickLine={false}/>
+              <YAxis tick={{fill:'var(--text-tertiary)',fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>'₹'+Math.round(v/1000)+'k'}/>
+              <Tooltip contentStyle={{background:'#fff',border:'1px solid var(--border)',borderRadius:10,fontSize:12}} formatter={v=>[formatCurrency(Math.round(v)),'Expected']}/>
+              <Bar dataKey="expected" fill="#007aff" radius={[5,5,0,0]} maxBarSize={50}>
+                {(d.emiProjData||[]).map((_,i)=><Cell key={i} fill={i===0?'#007aff':i===1?'#34aadc':i===2?'#5ac8fa':'rgba(0,122,255,0.35)'}/>)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+          <div style={{display:'flex',gap:16,marginTop:6,fontSize:11,color:'var(--text-secondary)',flexWrap:'wrap'}}>
+            <span>Darker = sooner · lighter = further out</span>
+            <span>· bars shrink as loans close</span>
+          </div>
+        </Card>
+      )}
+
       {/* Risk + Recent */}
       <div className="grid-2">
         <Card>
@@ -201,7 +255,7 @@ export default function Dashboard(){
           {[
             {label:'Security Coverage',     val:`${d.coverage||100}%`,              ok:parseFloat(d.coverage||100)>=100},
             {label:'Non-Active Borrowers',  val:String(d.nonActive||0),             ok:!d.nonActive},
-            {label:'Overdue Interest',       val:formatCurrency(d.overdue||0),       ok:!d.overdue},
+            {label:'Past-Month Uncollected', val:formatCurrency(d.overdue||0), ok:!d.overdue},
             {label:'Net Monthly Spread',     val:formatCurrency(Math.round(Math.abs(d.net||0))), ok:(d.net||0)>=0},
             {label:'Loans Fully Closed',     val:`${d.closedLoans||0} accounts`,    ok:true},
           ].map((r,i)=>(

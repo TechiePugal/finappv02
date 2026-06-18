@@ -33,6 +33,11 @@ export default function InterestCollection(){
   const[pf,setPf]=useState({date:'',mode:'Cash',amount:'',fine:'0',collectFine:false,addToLoan:false,remarks:''});
   const[saving,setSaving]=useState(false);
   const[viewMode,setViewMode]=useState('month');
+  const[search,setSearch]=useState('');
+  const[statusFilter,setStatusFilter]=useState('all');
+  const[amtRange,setAmtRange]=useState('all');
+  const[monthsFilter,setMonthsFilter]=useState('all');
+  const[sortBy,setSortBy]=useState('name'); // intFilterAdded
   const[month,setMonth]=useState(()=>{const n=new Date();return`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;});
   const[selected,setSelected]=useState(null);
   const DAILY_FINE=50;
@@ -144,6 +149,29 @@ export default function InterestCollection(){
   const pending=totalDue-totalColl;
   const rate=totalDue>0?Math.round((totalColl/totalDue)*100):0;
 
+  const _today2=new Date();
+  const _getMoUnpaid=b=>{
+    const bPays=payments[b.id]||{};
+    const paid=Object.keys(bPays).filter(mo=>bPays[mo]?.status==='Paid').sort();
+    const last=paid.length?paid[paid.length-1]:null;
+    return last?((_today2.getFullYear()-parseInt(last.slice(0,4)))*12+(_today2.getMonth()+1-parseInt(last.slice(5,7)))):(b.loanStartDate?Math.max(0,(_today2.getFullYear()-parseInt(b.loanStartDate.slice(0,4)))*12+(_today2.getMonth()+1-parseInt(b.loanStartDate.slice(5,7)))):0);
+  };
+  const filtBorrowers=borrowers.filter(b=>{
+    const q=search.trim().toLowerCase();
+    const ms=!q||[b.borrowerName,b.phone,b.loanId,b.guardianName,b.guardianPhone].some(v=>String(v||'').toLowerCase().includes(q));
+    const p=payments[b.id]?.[month];
+    const mst=statusFilter==='all'||(statusFilter==='paid'&&p?.status==='Paid')||(statusFilter==='pending'&&!p)||(statusFilter==='unpaid'&&p?.status==='Unpaid');
+    const amt=b.loanAmount||0;let ma=true;
+    if(amtRange==='0-10000')ma=amt<=10000;else if(amtRange==='10000-50000')ma=amt>10000&&amt<=50000;else if(amtRange==='50000-100000')ma=amt>50000&&amt<=100000;else if(amtRange==='100000+')ma=amt>100000;
+    const mu=_getMoUnpaid(b);let mm=true;
+    if(monthsFilter==='1mo')mm=mu>=1;else if(monthsFilter==='2mo')mm=mu>=2;else if(monthsFilter==='3mo')mm=mu>=3;else if(monthsFilter==='6mo')mm=mu>=6;
+    return ms&&mst&&ma&&mm;
+  }).sort((a,b2)=>{
+    if(sortBy==='loan')return(b2.loanAmount||0)-(a.loanAmount||0);
+    if(sortBy==='interest')return calcInterest(b2,getOutstanding(b2))-calcInterest(a,getOutstanding(a));
+    if(sortBy==='unpaid')return _getMoUnpaid(b2)-_getMoUnpaid(a);
+    return String(a.borrowerName||'').localeCompare(String(b2.borrowerName||''));
+  });
   if(loading)return<PageLoader stats={4}/>;
 
   return(
@@ -163,6 +191,22 @@ export default function InterestCollection(){
               style={{padding:'8px 14px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:10,fontSize:14,color:'var(--text-primary)',outline:'none',fontFamily:'inherit'}}/>
           </div>
         }/>
+      <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:14,alignItems:'center'}}>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name, phone, loan ID, guardian…"
+          style={{padding:'8px 14px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:10,fontSize:13,color:'var(--text-primary)',outline:'none',fontFamily:'inherit',flex:'1 1 200px',minWidth:180}}/>
+        <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} style={{padding:'7px 10px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:9,fontSize:12.5,color:'var(--text-primary)',outline:'none',fontFamily:'inherit',cursor:'pointer'}}>
+          <option value="all">All Status</option><option value="pending">Pending</option><option value="paid">Paid</option><option value="unpaid">Unpaid</option>
+        </select>
+        <select value={monthsFilter} onChange={e=>setMonthsFilter(e.target.value)} style={{padding:'7px 10px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:9,fontSize:12.5,color:'var(--text-primary)',outline:'none',fontFamily:'inherit',cursor:'pointer'}}>
+          <option value="all">All Borrowers</option><option value="1mo">1+ Month Unpaid</option><option value="2mo">2+ Months Unpaid</option><option value="3mo">3+ Months Unpaid</option><option value="6mo">6+ Months Unpaid</option>
+        </select>
+        <select value={amtRange} onChange={e=>setAmtRange(e.target.value)} style={{padding:'7px 10px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:9,fontSize:12.5,color:'var(--text-primary)',outline:'none',fontFamily:'inherit',cursor:'pointer'}}>
+          <option value="all">All Amounts</option><option value="0-10000">₹0–₹10K</option><option value="10000-50000">₹10K–₹50K</option><option value="50000-100000">₹50K–₹1L</option><option value="100000+">₹1L+</option>
+        </select>
+        <select value={sortBy} onChange={e=>setSortBy(e.target.value)} style={{padding:'7px 10px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:9,fontSize:12.5,color:'var(--text-primary)',outline:'none',fontFamily:'inherit',cursor:'pointer'}}>
+          <option value="name">Sort: Name A–Z</option><option value="loan">Sort: Highest Loan</option><option value="interest">Sort: Highest Interest</option><option value="unpaid">Sort: Most Months Unpaid</option>
+        </select>
+      </div>
 
       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>
         <StatCard label="Total Due" value={formatCurrency(Math.round(totalDue))} sub="Interest on outstanding" color="#ff9500"/>
@@ -193,8 +237,8 @@ export default function InterestCollection(){
                 ))}
               </tr></thead>
               <tbody>
-                {borrowers.length===0&&<tr><td colSpan={8} style={{padding:48,textAlign:'center',color:'var(--text-secondary)'}}>No active borrowers</td></tr>}
-                {borrowers.map(b=>{
+                {filtBorrowers.length===0&&<tr><td colSpan={8} style={{padding:48,textAlign:'center',color:'var(--text-secondary)'}}>No borrowers match filters</td></tr>}
+                {filtBorrowers.map(b=>{
                   const p=payments[b.id]?.[month];
                   const outstanding=getOutstanding(b);
                   const interest=calcInterest(b,outstanding);
