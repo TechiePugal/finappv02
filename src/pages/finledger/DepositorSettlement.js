@@ -317,15 +317,22 @@ export default function DepositorSettlement(){
           const fineAmt=parseFloat(pf.fine)||0;
           return(
             <>
-              <div style={{background:'rgba(0,122,255,0.06)',borderRadius:10,padding:'12px 14px',marginBottom:14}}>
-                <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
-                  <span style={{fontSize:13,color:'var(--text-secondary)'}}>{slot.label} — Period #{slot.idx}</span>
-                  <span style={{fontSize:14,fontWeight:700,color:'var(--accent)'}}>{formatCurrency(Math.round(interest))}</span>
+              {/* depSettleV3 — identity + stats strip */}
+              <div style={{display:'flex',alignItems:'center',gap:14,padding:'14px 16px',borderRadius:14,marginBottom:14,background:'rgba(88,86,214,0.06)',border:'1px solid rgba(88,86,214,0.18)'}}>
+                <div style={{width:52,height:52,borderRadius:'50%',background:'linear-gradient(135deg,#5856d6,#bf5af2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:20,fontWeight:800,color:'#fff',flexShrink:0}}>{(depositor.name||'?')[0].toUpperCase()}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:15,color:'var(--text-primary)'}}>{depositor.name}</div>
+                  <div style={{fontSize:12,color:'var(--text-secondary)',marginTop:2}}>{depositor.depositId} · {slot.label} · Period #{slot.idx}</div>
+                  {daysOD>2&&<div style={{marginTop:4,display:'inline-flex',alignItems:'center',gap:4,fontSize:11,fontWeight:700,color:'#fff',background:'#ff3b30',padding:'2px 8px',borderRadius:99}}>⚠ {daysOD} days overdue</div>}
                 </div>
-                <div style={{fontSize:12,color:'var(--text-secondary)'}}>
-                  Deposit: {formatCurrency(depositor.depositAmount)} · {depositor.interestRate}%/mo · {depositor.compounding?'Compound':'Simple'}
-                </div>
-                {daysOD>2&&<div style={{fontSize:12,color:'#ff3b30',fontWeight:600,marginTop:4}}>⚠ {daysOD} days overdue</div>}
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:14}}>
+                {[{l:'Principal',v:formatCurrency(depositor.depositAmount),c:'var(--text-primary)'},{l:'Interest Due',v:formatCurrency(Math.round(interest)),c:'#5856d6'},{l:'Rate',v:`${depositor.interestRate}%/mo`,c:'#ff9500'}].map((s,i)=>(
+                  <div key={i} style={{padding:'10px 12px',borderRadius:10,background:i===1?'rgba(88,86,214,0.06)':'rgba(0,0,0,0.03)',textAlign:'center'}}>
+                    <div style={{fontSize:10,color:'var(--text-secondary)',fontWeight:600,textTransform:'uppercase',marginBottom:3}}>{s.l}</div>
+                    <div style={{fontSize:14,fontWeight:800,color:s.c}}>{s.v}</div>
+                  </div>
+                ))}
               </div>
 
               {/* Fine */}

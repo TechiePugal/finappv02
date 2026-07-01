@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 
 /* ═══════════════════════════════
    CARD
@@ -333,24 +333,55 @@ export function FilterTabs({ options=[], value, onChange }) {
 /* ═══════════════════════════════
    MODAL
 ═══════════════════════════════ */
-export function Modal({ open, onClose, title, children, width=500 }) {
+export function Modal({ open, onClose, title, children, width=500, footer }) {
+  // modalRebuildV3
+  useEffect(()=>{if(open)document.body.style.overflow='hidden';else document.body.style.overflow='';return()=>{document.body.style.overflow='';};},[open]);
   if(!open) return null;
   return (
-    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.45)', backdropFilter:'blur(6px)', WebkitBackdropFilter:'blur(6px)', zIndex:1000, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px 16px', animation:'fadeIn 0.18s var(--ease)'/* popupFixed */ }} onClick={onClose}>
-      <div style={{ background:'var(--bg-card)', borderRadius:'var(--r-xl)', padding:'24px 26px', width:'100%', maxWidth:width, maxHeight:'88vh', overflowY:'auto', boxShadow:'var(--shadow-xl)', animation:'bounceIn 0.28s var(--spring)', position:'relative' }} onClick={e=>e.stopPropagation()}>
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20 }}>
-          <h3 style={{ fontSize:17, fontWeight:700, color:'var(--text-primary)', letterSpacing:'-0.02em' }}>{title}</h3>
-          <button onClick={onClose} style={{ background:'rgba(118,118,128,0.10)', border:'none', borderRadius:8,
-            width:30, height:30, display:'flex', alignItems:'center', justifyContent:'center',
-            color:'var(--text-secondary)', cursor:'pointer', transition:'background var(--duration)' }}
-            onMouseEnter={e=>e.currentTarget.style.background='rgba(118,118,128,0.18)'}
-            onMouseLeave={e=>e.currentTarget.style.background='rgba(118,118,128,0.10)'}>
+    <div onClick={e=>{if(e.target===e.currentTarget)onClose();}}
+      style={{position:'fixed',inset:0,zIndex:1050,
+        background:'rgba(10,10,20,0.55)',
+        backdropFilter:'blur(8px) saturate(160%)',
+        WebkitBackdropFilter:'blur(8px) saturate(160%)',
+        display:'flex',alignItems:'center',justifyContent:'center',
+        padding:'20px 16px',
+        animation:'flFadeIn 0.18s ease'}}>
+      <div onClick={e=>e.stopPropagation()}
+        style={{background:'var(--bg-card)',borderRadius:20,width:'100%',maxWidth:width,
+          maxHeight:'min(88vh,780px)',display:'flex',flexDirection:'column',
+          boxShadow:'0 32px 80px rgba(0,0,0,0.28), 0 0 0 1px rgba(255,255,255,0.06)',
+          animation:'flPopIn 0.22s cubic-bezier(0.16,1,0.3,1)'}}>
+        {/* Sticky header */}
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',
+          padding:'16px 20px',borderBottom:'1px solid var(--border)',
+          flexShrink:0,borderRadius:'20px 20px 0 0',background:'var(--bg-card)'}}>
+          <h3 style={{margin:0,fontSize:16,fontWeight:700,color:'var(--text-primary)',letterSpacing:'-0.02em'}}>{title}</h3>
+          <button onClick={onClose}
+            style={{width:30,height:30,borderRadius:8,border:'1px solid var(--border)',
+              background:'var(--bg-secondary)',display:'flex',alignItems:'center',
+              justifyContent:'center',cursor:'pointer',flexShrink:0,transition:'background 0.13s'}}
+            onMouseEnter={e=>e.currentTarget.style.background='var(--bg-hover)'}
+            onMouseLeave={e=>e.currentTarget.style.background='var(--bg-secondary)'}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
-        {children}
+        {/* Scrollable body */}
+        <div style={{overflowY:'auto',overflowX:'hidden',flex:1,padding:'20px 22px',WebkitOverflowScrolling:'touch'}}>
+          {children}
+        </div>
+        {/* Sticky footer */}
+        {footer&&(
+          <div style={{padding:'14px 20px',borderTop:'1px solid var(--border)',
+            display:'flex',justifyContent:'flex-end',gap:8,flexShrink:0,
+            borderRadius:'0 0 20px 20px',background:'var(--bg-card)'}}>
+            {footer}
+          </div>
+        )}
       </div>
-      <style>{'@keyframes fadeIn{from{opacity:0}to{opacity:1}} @keyframes bounceIn{0%{opacity:0;transform:scale(0.88)}60%{transform:scale(1.03)}100%{opacity:1;transform:scale(1)}}'}</style>
+      <style>{`
+        @keyframes flFadeIn{from{opacity:0}to{opacity:1}}
+        @keyframes flPopIn{from{opacity:0;transform:scale(0.93) translateY(10px)}to{opacity:1;transform:none}}
+      `}</style>
     </div>
   );
 }

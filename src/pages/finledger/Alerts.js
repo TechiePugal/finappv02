@@ -312,7 +312,7 @@ export default function Alerts(){
               {/* Photo */}
               {contactModal.photo&&(
                 <div style={{textAlign:'center',marginBottom:14}}>
-                  <img src={contactModal.photo} alt="" style={{width:72,height:72,borderRadius:'50%',objectFit:'cover',border:'3px solid rgba(0,122,255,0.2)'}}/>
+                  <img src={contactModal.photo} alt="" style={{width:56,height:56,borderRadius:'50%',objectFit:'cover',border:'3px solid rgba(0,122,255,0.2)'}}/>  /* alertsV3 */
                 </div>
               )}
 

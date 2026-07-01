@@ -105,7 +105,7 @@ export default function Projection() {
           </ResponsiveContainer>
         </div>
         <div style={{ display:'flex', gap:16, justifyContent:'center', marginTop:8 }}>
-          {[{ color:tokens.blue, label:'Ongoing (Slab value)' },{ color:'#5521B5', label:'Taken (Per head value)' }].map((l,i)=>(
+          {[{ color:tokens.blue, label:'Ongoing (company not taken — pays slab rate)' },{ color:'#5521B5', label:'Taken (company cashed — pays full per-head rate)' }].map((l,i)=>(
             <div key={i} style={{ display:'flex', alignItems:'center', gap:6, fontSize:12, color:tokens.textSub }}>
               <div style={{ width:12, height:12, borderRadius:3, background:l.color }}/>{l.label}
             </div>
@@ -117,7 +117,7 @@ export default function Projection() {
       <div style={{ padding:'12px 16px', background:'#EFF6FF', border:`1px solid ${tokens.blue}25`, borderRadius:11, display:'flex', gap:10 }}>
         <AlertCircle size={16} color={tokens.blue} style={{ flexShrink:0, marginTop:1 }}/>
         <div style={{ fontSize:12.5, color:tokens.blue, lineHeight:1.6 }}>
-          <strong>Investment Rule (Spec §7.1):</strong> If chit is <em>Not Taken</em> → invest Slab Value.
+          <strong>How this works:</strong> Before your company takes the chit, you invest at the Slab rate (your set amount per round). Once you take (cash out), you switch to paying the full Per-Head subscription like any other member.
           If chit is <em>Taken</em> → invest Per Head Value (switches automatically after company wins).
         </div>
       </div>
@@ -177,11 +177,11 @@ export default function Projection() {
                 {isOpen && (
                   <div style={{ borderTop:`1px solid ${tokens.border}` }}>
                     <div style={{ display:'grid', gridTemplateColumns:'1fr 100px 100px 100px 90px', gap:8, padding:'8px 18px', background:'#F8FAFC', fontSize:10.5, fontWeight:700, color:tokens.textMuted, textTransform:'uppercase', letterSpacing:'.06em' }}>
-                      <span>Chit Fund</span>
-                      <span style={{ textAlign:'right' }}>Per Head</span>
-                      <span style={{ textAlign:'right' }}>Slab</span>
-                      <span style={{ textAlign:'right' }}>INVESTMENT</span>
-                      <span style={{ textAlign:'right' }}>Type</span>
+                      <span>Chit Fund {/* cf_proj_v2 */}</span>
+                      <span style={{ textAlign:'right' }}>Subscription/Head</span>
+                      <span style={{ textAlign:'right' }}>Your Slab/Round</span>
+                      <span style={{ textAlign:'right' }}>Total Collection</span>
+                      <span style={{ textAlign:'right' }}>Status</span>
                     </div>
                     {m.chits.map((c,i) => (
                       <div key={i} style={{ display:'grid', gridTemplateColumns:'1fr 100px 100px 100px 90px', gap:8, padding:'11px 18px', borderBottom:i<m.chits.length-1?`1px solid ${tokens.border}`:'none', alignItems:'center' }}>
@@ -190,8 +190,14 @@ export default function Projection() {
                           <div style={{ fontSize:11, color:tokens.textMuted }}>Auction #{c.auctionNo}</div>
                         </div>
                         <div style={{ textAlign:'right', fontSize:12.5, color:tokens.textSub }}>{fmt(c.perHeadValue||0)}</div>
-                        <div style={{ textAlign:'right', fontSize:12.5, color:tokens.textSub }}>{fmt(c.slabValue||0)}</div>
-                        <div style={{ textAlign:'right', fontSize:14, fontWeight:800, color:c.isTaken?'#5521B5':tokens.blue }}>{fmt(c.investment)}</div>
+                        <div style={{ textAlign:'right', fontSize:12.5, color:tokens.textSub }}>
+                          {fmt(c.slabValue||0)}
+                          {c.slabValue>0&&<div style={{fontSize:9.5,color:tokens.textMuted}}>your share/round</div>}
+                        </div>
+                        <div style={{ textAlign:'right', fontSize:14, fontWeight:800, color:c.isTaken?'#5521B5':tokens.blue }}>
+                          {fmt(c.investment)}
+                          <div style={{fontSize:9.5,fontWeight:400,color:tokens.textMuted}}>{c.isTaken?'at per-head':'at slab rate'}</div>
+                        </div>
                         <div style={{ textAlign:'right' }}>
                           <span style={{ fontSize:10.5, fontWeight:700, padding:'2px 8px', borderRadius:99, background:c.isTaken?'#EDEBFF':'#EFF6FF', color:c.isTaken?'#5521B5':tokens.blue }}>
                             {c.isTaken?'Taken':'Ongoing'}

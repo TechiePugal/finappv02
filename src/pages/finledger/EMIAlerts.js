@@ -340,57 +340,36 @@ export default function EMIAlerts(){
         {contactModal&&(()=>{
           const cols=collections[contactModal.id]||[];
           const fine=contactModal.daysOverdue>2?(contactModal.daysOverdue-2)*(contactModal.dailyFineRate||50):0;
+          const R=({label,value,color})=>(<div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 0',borderBottom:'1px solid rgba(0,0,0,.05)'}}><span style={{fontSize:12,color:'var(--text-secondary)',flexShrink:0}}>{label}</span><span style={{fontSize:13,fontWeight:600,color:color||'var(--text-primary)',textAlign:'right',maxWidth:'65%'}}>{value??'—'}</span></div>); // emiAlertPopupV2
+          const Sec=({title})=>(<><div style={{height:1,background:'rgba(0,0,0,.07)',margin:'10px 0'}}/><div style={{fontSize:11,fontWeight:700,color:'var(--text-secondary)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6}}>{title}</div></>);
           return(
             <div>
-              {/* Alert summary */}
-              <div style={{background:'rgba(255,59,48,0.06)',borderRadius:10,padding:'12px 14px',marginBottom:14,border:'1px solid rgba(255,59,48,0.15)'}}>
-                <div style={{fontSize:14,fontWeight:700,color:'#c0392b',marginBottom:2}}>
-                  ⚠ EMI overdue by {contactModal.daysOverdue} days
+              {/* emiAlertV3 — photo + status strip */}
+              <div style={{display:'flex',alignItems:'center',gap:14,padding:'14px 16px',borderRadius:14,marginBottom:14,background:'linear-gradient(135deg,rgba(0,122,255,0.08),rgba(88,86,214,0.08))',border:'1px solid rgba(0,122,255,0.15)'}}>
+                <div style={{position:'relative',flexShrink:0}}>
+                  {contactModal.photo
+                    ?<img src={contactModal.photo} alt="" style={{width:56,height:56,borderRadius:'50%',objectFit:'cover',border:'3px solid rgba(0,122,255,0.25)'}}/>
+                    :<div style={{width:56,height:56,borderRadius:'50%',background:'linear-gradient(135deg,#007aff,#5856d6)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:22,fontWeight:800,color:'#fff'}}>{(contactModal.borrowerName||'?')[0].toUpperCase()}</div>}
                 </div>
-                {fine>0&&<div style={{fontSize:12,color:'#c0392b'}}>Fine applicable: {formatCurrency(fine)}</div>}
-              </div>
-
-              {/* Photo + name */}
-              <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:14}}>
-                {contactModal.photo
-                  ?<img src={contactModal.photo} alt="" style={{width:52,height:52,borderRadius:'50%',objectFit:'cover',border:'2px solid rgba(0,122,255,0.2)',flexShrink:0}}/>
-                  :<div style={{width:52,height:52,borderRadius:'50%',background:'rgba(0,122,255,0.1)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,fontWeight:700,color:'var(--accent)',flexShrink:0}}>{(contactModal.borrowerName||'?')[0].toUpperCase()}</div>}
-                <div>
-                  <div style={{fontWeight:700,fontSize:16}}>{contactModal.borrowerName}</div>
-                  <div style={{fontSize:12,color:'var(--text-secondary)'}}>{contactModal.emiId}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:15,color:'var(--text-primary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{contactModal.borrowerName}</div>
+                  <div style={{fontSize:12,color:'var(--text-secondary)',marginTop:2}}>{contactModal.phone}{contactModal.emiId?' · '+contactModal.emiId:''}</div>
+                  {contactModal.daysOverdue>0&&<div style={{marginTop:5,display:'inline-flex',alignItems:'center',gap:4,fontSize:11,fontWeight:700,color:'#fff',background:'#ff3b30',padding:'2px 9px',borderRadius:99}}>⚠ {contactModal.daysOverdue}d overdue{fine>0?' · Fine '+formatCurrency(fine):''}</div>}
                 </div>
               </div>
-
-              {/* Contact details */}
-              {[
-                ['Primary Phone', <a key="ph" href={`tel:${contactModal.phone}`} style={{color:'var(--accent)',fontWeight:700,fontSize:15,textDecoration:'none'}}>📞 {contactModal.phone}</a>],
-                contactModal.email&&['Email', <a key="em" href={`mailto:${contactModal.email}`} style={{color:'var(--accent)'}}>{contactModal.email}</a>],
-                contactModal.address&&['Address', contactModal.address],
-                contactModal.guardianName&&['Guardian Name', contactModal.guardianName],
-                contactModal.guardianPhone&&['Guardian Phone', <a key="gph" href={`tel:${contactModal.guardianPhone}`} style={{color:'var(--accent)',fontWeight:700,fontSize:15,textDecoration:'none'}}>📞 {contactModal.guardianPhone}</a>],
-                contactModal.guardianAddress&&['Guardian Address', contactModal.guardianAddress],
-              ].filter(Boolean).map(([label,value],i)=>(
-                <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 0',borderBottom:'1px solid rgba(0,0,0,.05)'}}>
-                  <span style={{fontSize:12,color:'var(--text-secondary)',flexShrink:0}}>{label}</span>
-                  <span style={{fontSize:13,fontWeight:600,textAlign:'right',maxWidth:'65%'}}>{value||'—'}</span>
-                </div>
-              ))}
-
-              {/* Loan info */}
-              <div style={{height:1,background:'rgba(0,0,0,.07)',margin:'10px 0'}}/>
-              {[
-                ['EMI Amount',   formatCurrency(contactModal.emiAmount||0)],
-                ['Frequency',    FREQ_LABEL[contactModal.frequency]||contactModal.frequency||'—'],
-                ['Next Due',     fmtDate(contactModal.nextDueDate)],
-                ['Paid / Total', `${cols.length} / ${contactModal.totalPeriods||'?'}`],
-                ['Loan Amount',  formatCurrency(contactModal.loanAmount||0)],
-                fine>0&&['Fine Due', formatCurrency(fine)],
-              ].filter(Boolean).map(([label,value],i)=>(
-                <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'7px 0',borderBottom:'1px solid rgba(0,0,0,.04)'}}>
-                  <span style={{fontSize:12,color:'var(--text-secondary)'}}>{label}</span>
-                  <span style={{fontSize:13,fontWeight:600,color:label==='Fine Due'?'#ff3b30':'var(--text-primary)'}}>{value}</span>
-                </div>
-              ))}
+              <Sec title="Contact"/>
+              <R label="Phone" value={<a href={`tel:${contactModal.phone}`} style={{color:'var(--accent)',fontWeight:700,fontSize:14,textDecoration:'none'}}>📞 {contactModal.phone}</a>}/>
+              {contactModal.email&&<R label="Email" value={<a href={`mailto:${contactModal.email}`} style={{color:'var(--accent)'}}>{contactModal.email}</a>}/>}
+              {contactModal.address&&<R label="Address" value={contactModal.address}/>}
+              {contactModal.guardianName&&<><Sec title="Guardian"/><R label="Name" value={contactModal.guardianName}/>{contactModal.guardianPhone&&<R label="Phone" value={<a href={`tel:${contactModal.guardianPhone}`} style={{color:'var(--accent)',fontWeight:700,fontSize:14,textDecoration:'none'}}>📞 {contactModal.guardianPhone}</a>}/>}</>}
+              <Sec title="EMI Details"/>
+              <R label="Loan Amount" value={formatCurrency(contactModal.loanAmount||0)}/>
+              <R label="EMI Amount" value={formatCurrency(contactModal.emiAmount||0)} color="#007aff"/>
+              <R label="Frequency" value={FREQ_LABEL[contactModal.frequency]||contactModal.frequency||'—'}/>
+              <R label="Paid / Total" value={`${cols.length} / ${contactModal.totalPeriods||'?'}`}/>
+              <R label="Next Due" value={fmtDate(contactModal.nextDueDate)}/>
+              {fine>0&&<R label="Fine Due" value={formatCurrency(fine)} color="#ff3b30"/>}
+              <button onClick={()=>setContactModal(null)} style={{width:'100%',marginTop:14,padding:'11px',borderRadius:10,border:'none',background:'#007aff',color:'#fff',fontSize:13.5,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>Close</button>
             </div>
           );
         })()}

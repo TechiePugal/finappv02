@@ -779,20 +779,21 @@ export default function EMILoans() {
       <Modal open={!!collectLoan} onClose={() => setCollectLoan(null)} title="Collect EMI Payment" width={500}>
         {collectLoan && (
           <>
-            {/* Borrower info strip */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 14px', background: 'rgba(0,122,255,0.04)', borderRadius: 12, marginBottom: 16, border: '1px solid rgba(0,122,255,0.1)' }}>
-              <PhotoAvatar
-                src={collectLoan.photo} name={collectLoan.borrowerName} size={48}
-                onClick={collectLoan.photo ? () => setPhotoPopup({ src: collectLoan.photo, name: collectLoan.borrowerName }) : undefined}
-              />
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700, fontSize: 15 }}>{collectLoan.borrowerName}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{collectLoan.emiId} · {collectLoan.phone}</div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>EMI #{cpf.periodNo} of {collectLoan.totalPeriods}</div>
-                <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--accent)' }}>{formatCurrency(collectLoan.emiAmount || 0)}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{FREQ_LABEL[collectLoan.frequency]} expected</div>
+            {/* emiLoanPopupV2 — Gradient header */}
+            <div style={{background:'linear-gradient(135deg,#007aff,#34aadc)',borderRadius:12,padding:'16px',marginBottom:16}}>
+              <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:10}}>
+                {collectLoan.photo
+                  ?<img src={collectLoan.photo} alt="" style={{width:48,height:48,borderRadius:'50%',objectFit:'cover',border:'2.5px solid rgba(255,255,255,0.5)',flexShrink:0}}/>
+                  :<div style={{width:48,height:48,borderRadius:'50%',background:'rgba(255,255,255,0.2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,fontWeight:800,color:'#fff',flexShrink:0}}>{(collectLoan.borrowerName||'?')[0].toUpperCase()}</div>}
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:800,fontSize:16,color:'#fff'}}>{collectLoan.borrowerName}</div>
+                  <div style={{fontSize:12,color:'rgba(255,255,255,0.75)',marginTop:2}}>{collectLoan.emiId} · {collectLoan.phone}</div>
+                </div>
+                <div style={{textAlign:'right'}}>
+                  <div style={{fontSize:11,color:'rgba(255,255,255,0.7)'}}>EMI #{cpf.periodNo} of {collectLoan.totalPeriods}</div>
+                  <div style={{fontSize:20,fontWeight:900,color:'#fff'}}>{formatCurrency(Math.round(emiPrincipalPerPeriod(collectLoan)+emiInterestPerPeriod(collectLoan)))}</div>
+                  <div style={{fontSize:10,color:'rgba(255,255,255,0.7)'}}>P {formatCurrency(Math.round(emiPrincipalPerPeriod(collectLoan)))} + I {formatCurrency(Math.round(emiInterestPerPeriod(collectLoan)))}</div>
+                </div>
               </div>
             </div>
 
@@ -815,19 +816,32 @@ export default function EMILoans() {
 
             {/* Fine section */}
             {cpf.daysOverdue > 2 && (
-              <div style={{ background: 'rgba(255,59,48,0.06)', border: '1px solid rgba(255,59,48,0.18)', borderRadius: 10, padding: '12px 14px', marginBottom: 14 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: '#c0392b', marginBottom: 8 }}>
-                  Fine Applicable — {cpf.daysOverdue - 2} days × ₹{collectLoan.dailyFineRate || 50}/day
+              <div style={{ background: 'rgba(255,59,48,0.06)', border: '1px solid rgba(255,59,48,0.15)', borderRadius: 12, padding: '12px 14px', marginBottom: 14 }}>
+                <div style={{ fontSize: 12, color: '#c0392b', fontWeight: 600, marginBottom: 10 }}>
+                  ⚠ {cpf.daysOverdue - 2} days after grace — ₹{collectLoan.dailyFineRate || 50}/day suggested
                 </div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, marginBottom: 8 }}>
-                  <input type="checkbox" checked={cpf.collectFine} onChange={e => setCpf(p => ({ ...p, collectFine: e.target.checked }))} style={{ width: 16, height: 16, accentColor: 'var(--accent)', cursor: 'pointer' }} />
-                  <span>Collect fine of <strong style={{ color: '#ff3b30' }}>{formatCurrency(parseFloat(cpf.fine) || 0)}</strong></span>
-                </label>
+                {/* iOS toggle */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: cpf.collectFine ? 10 : 0 }}>
+                  <div onClick={() => setCpf(p => ({ ...p, collectFine: !p.collectFine, fine: '' }))}
+                    style={{ width: 44, height: 26, borderRadius: 999, padding: 2, display: 'flex', alignItems: 'center',
+                      justifyContent: cpf.collectFine ? 'flex-end' : 'flex-start',
+                      background: cpf.collectFine ? '#ff3b30' : '#e5e5ea',
+                      transition: 'background .2s', cursor: 'pointer', flexShrink: 0 }}>
+                    <div style={{ width: 22, height: 22, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 4px rgba(0,0,0,0.22)' }}/>
+                  </div>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: cpf.collectFine ? '#ff3b30' : 'var(--text-secondary)' }}>
+                    {cpf.collectFine ? 'Fine ON — enter amount below' : 'Fine OFF'}
+                  </span>
+                </div>
                 {cpf.collectFine && (
                   <div>
-                    <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Fine Amount (₹) — edit if needed</label>
+                    <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 5 }}>Fine Amount (₹)</label>
                     <input type="number" value={cpf.fine} onChange={e => setCpf(p => ({ ...p, fine: e.target.value }))}
-                      style={{ height: 36, padding: '0 12px', borderRadius: 8, border: '1.5px solid rgba(0,0,0,0.1)', fontSize: 14, fontFamily: 'inherit', background: 'rgba(118,118,128,0.07)', color: 'var(--text-primary)', outline: 'none', width: 160 }} />
+                      placeholder="Enter fine amount…"
+                      style={{ height: 36, padding: '0 12px', borderRadius: 9, border: '1.5px solid rgba(255,59,48,0.3)',
+                        fontSize: 14, fontFamily: 'inherit', background: '#fff', color: 'var(--text-primary)',
+                        outline: 'none', width: '100%', boxSizing: 'border-box' }}
+                      autoFocus />
                   </div>
                 )}
               </div>

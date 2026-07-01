@@ -400,9 +400,11 @@ export default function ChitList() {
                       <div style={{ fontSize:12.5, color:T.text4, display:'flex', gap:10, flexWrap:'wrap' }}>
                         <span>{fmt(c.totalChitValue)} · {c.totalMembers} members</span>
                         <span>·</span>
-                        <span>Sub: {fmt(c.perHeadValue)}/head</span>
+                        <span>{/* cf_chitlist_v2 */}{fmt(c.totalChitValue)} chit · {c.totalMembers} members · {fmt(c.perHeadValue)}/head</span>
                         <span>·</span>
-                        <span>{c.commissionType} commission</span>
+                        <span>Slab: {c.slabType==='Fixed'?fmt(c.slabValue):((c.slabValue||0)+'% = '+fmt(Math.round((c.totalChitValue||0)*(c.slabValue||0)/100)))}/round</span>
+                        <span>·</span>
+                        <span>Org fee: {c.managerCommissionPct||0}%{c.managerCommissionPct>0?' = '+fmt(Math.round((c.totalChitValue||0)*(c.managerCommissionPct||0)/100)):''}</span>
                       </div>
                     </div>
                     {/* Actions */}
@@ -537,14 +539,14 @@ export default function ChitList() {
                         <option value="Double">Double commission</option>
                       </Sel>
                     </Field>
-                    <Field label="Slab Type" hint="Investment when not yet taken">
+                    <Field label="Slab Type" hint="What your company pays each round BEFORE taking the chit prize. Once taken, you pay full per-head.">
                       <Sel value={form.slabType} onChange={e=>sf('slabType',e.target.value)}>
                         <option value="Fixed">Fixed Amount (₹)</option>
                         <option value="Percentage">Percentage (%)</option>
                       </Sel>
                     </Field>
                     <Field label={form.slabType==='Fixed'?'Slab Amount (₹)':'Slab (%)'} required>
-                      <Inp type="number" step="0.1" value={form.slabValue} onChange={e=>sf('slabValue',e.target.value)} placeholder={form.slabType==='Fixed'?'e.g. 45000':'e.g. 5'}/>
+                      <Inp type="number" step="0.1" value={form.slabValue} onChange={e=>sf('slabValue',e.target.value)} placeholder={form.slabType==='Fixed'?`e.g. ${Math.round((parseFloat(form.totalChitValue)||0)/(parseFloat(form.totalMembers)||1)*0.9)} (below per-head)`:'e.g. 5'}/>
                     </Field>
                     <Field label="Auction Day of Month">
                       <Inp type="number" value={form.auctionDay} onChange={e=>sf('auctionDay',e.target.value)} placeholder="15"/>

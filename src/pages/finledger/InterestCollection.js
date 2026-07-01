@@ -81,8 +81,8 @@ export default function InterestCollection(){
       date:new Date().toISOString().split('T')[0],
       mode:'Cash',
       amount:String(Math.round(interest)),
-      fine:String(fine),
-      collectFine:fine>0,
+      fine:'',  // empty — user enters manually
+      collectFine:false, // OFF by default
       addToLoan:false, // for compound — add interest to loan principal
       remarks:''
     });
@@ -335,36 +335,53 @@ export default function InterestCollection(){
           const daysOD=getDaysOverdue(month);
           const fineAmt=parseFloat(pf.fine)||0;
           return(
-            <>
-              {/* Summary */}
+            <> {/* intColV3 */}
+              {/* identity strip */}
+              <div style={{display:'flex',alignItems:'center',gap:14,padding:'14px 16px',borderRadius:14,marginBottom:16,background:'rgba(255,149,0,0.06)',border:'1px solid rgba(255,149,0,0.2)'}}>
+                <div style={{width:52,height:52,borderRadius:'50%',background:'linear-gradient(135deg,#ff9500,#ff6b00)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:20,fontWeight:800,color:'#fff',flexShrink:0}}>{(modal.borrowerName||'?')[0].toUpperCase()}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:15,color:'var(--text-primary)'}}>{modal.borrowerName}</div>
+                  <div style={{fontSize:12,color:'var(--text-secondary)',marginTop:2}}>{modal.loanId} · {modal.phone}</div>
+                </div>
+              </div>
+              {/* 3-col stats */}
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>
-                {[
-                  {label:'Outstanding',val:formatCurrency(Math.round(outstanding)),color:'#007aff'},
-                  {label:'Interest Due',val:formatCurrency(Math.round(interest)),color:'#ff9500'},
-                  {label:'Days Overdue',val:daysOD>0?`${daysOD} days`:'On time',color:daysOD>2?'#ff3b30':'#34c759'},
-                ].map((c,i)=>(
-                  <div key={i} style={{padding:'10px 12px',background:`${c.color}10`,borderRadius:10,textAlign:'center'}}>
-                    <div style={{fontSize:11,color:'var(--text-secondary)',marginBottom:3}}>{c.label}</div>
-                    <div style={{fontSize:14,fontWeight:700,color:c.color}}>{c.val}</div>
+                {[{l:'Outstanding',v:formatCurrency(Math.round(outstanding)),c:'#007aff'},{l:'Interest Due',v:formatCurrency(Math.round(interest)),c:'#ff9500'},{l:'Days OD',v:daysOD>0?`${daysOD} days`:'On time',c:daysOD>2?'#ff3b30':'#34c759'}].map((s,i)=>(
+                  <div key={i} style={{padding:'10px 12px',borderRadius:10,background:`${s.c}0d`,textAlign:'center'}}>
+                    <div style={{fontSize:10,color:'var(--text-secondary)',fontWeight:600,textTransform:'uppercase',marginBottom:3}}>{s.l}</div>
+                    <div style={{fontSize:14,fontWeight:800,color:s.c}}>{s.v}</div>
                   </div>
                 ))}
               </div>
 
               {/* Fine section */}
               {daysOD>2&&(
-                <div style={{background:'rgba(255,59,48,0.06)',border:'1px solid rgba(255,59,48,0.15)',borderRadius:10,padding:'12px 14px',marginBottom:14}}>
-                  <div style={{fontSize:13,color:'#c0392b',fontWeight:600,marginBottom:8}}>
-                    ⚠ {daysOD-2} days after grace period — Fine applicable: {formatCurrency((daysOD-2)*DAILY_FINE)}
+                <div style={{background:'rgba(255,59,48,0.06)',border:'1px solid rgba(255,59,48,0.15)',borderRadius:12,padding:'12px 14px',marginBottom:14}}>
+                  <div style={{fontSize:12,color:'#c0392b',fontWeight:600,marginBottom:10}}>
+                    ⚠ {daysOD-2} days after grace — suggested fine: {formatCurrency((daysOD-2)*DAILY_FINE)}
                   </div>
-                  <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:13,marginBottom:8}}>
-                    <input type="checkbox" checked={pf.collectFine} onChange={e=>setPf(p=>({...p,collectFine:e.target.checked}))} style={{width:15,height:15,accentColor:'var(--accent)'}}/>
-                    <span>Collect fine of <strong>{formatCurrency(fineAmt)}</strong></span>
-                  </label>
+                  {/* iOS toggle */}
+                  <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:pf.collectFine?10:0}}>
+                    <div onClick={()=>setPf(p=>({...p,collectFine:!p.collectFine,fine:p.collectFine?'':''}))}
+                      style={{width:44,height:26,borderRadius:999,padding:2,display:'flex',alignItems:'center',
+                        justifyContent:pf.collectFine?'flex-end':'flex-start',
+                        background:pf.collectFine?'#ff3b30':'#e5e5ea',
+                        transition:'background .2s,justify-content .2s',cursor:'pointer',flexShrink:0}}>
+                      <div style={{width:22,height:22,borderRadius:'50%',background:'#fff',boxShadow:'0 1px 4px rgba(0,0,0,0.22)'}}/>
+                    </div>
+                    <span style={{fontSize:13,fontWeight:600,color:pf.collectFine?'#ff3b30':'var(--text-secondary)'}}>
+                      {pf.collectFine?'Fine ON — enter amount below':'Fine OFF'}
+                    </span>
+                  </div>
                   {pf.collectFine&&(
                     <div>
-                      <label style={{fontSize:12,color:'var(--text-secondary)',display:'block',marginBottom:4}}>Fine Amount (₹) — editable</label>
+                      <label style={{fontSize:12,color:'var(--text-secondary)',display:'block',marginBottom:5}}>Fine Amount (₹)</label>
                       <input type="number" value={pf.fine} onChange={e=>setPf(p=>({...p,fine:e.target.value}))}
-                        style={{height:34,padding:'0 10px',borderRadius:8,border:'1.5px solid rgba(0,0,0,.1)',fontSize:13,fontFamily:'inherit',background:'rgba(118,118,128,0.07)',color:'var(--text-primary)',outline:'none',width:160}}/>
+                        placeholder="Enter fine amount…"
+                        style={{height:36,padding:'0 12px',borderRadius:9,border:'1.5px solid rgba(255,59,48,0.3)',
+                          fontSize:14,fontFamily:'inherit',background:'#fff',color:'var(--text-primary)',
+                          outline:'none',width:'100%',boxSizing:'border-box'}}
+                        autoFocus/>
                     </div>
                   )}
                 </div>

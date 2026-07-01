@@ -296,12 +296,11 @@ export async function processAuction(chitId, auctionScheduleId, auctionData, use
   if (!auctionData.takenByCompany && !auctionData.winnerId) {
     throw new Error('Auction cannot close without a Taken selection (winner or company).');
   }
-  if (!auctionData.bidAmount || auctionData.bidAmount <= 0) {
-    throw new Error('Bid amount is required and must be greater than zero.');
-  }
-  if (auctionData.bidAmount >= chit.perHeadValue) {
-    throw new Error(`Bid amount must be less than Per Head Value (₹${chit.perHeadValue?.toLocaleString('en-IN')}).`);
-  }
+  // Bid amount: 0 is valid (no bid — winner takes full prize)
+  // Upper limit: must be less than total chit value
+  const _bid = parseFloat(auctionData.bidAmount) || 0;
+  if (_bid < 0) throw new Error('Bid amount cannot be negative.');
+  if (_bid >= (chit.totalChitValue || 0)) throw new Error(`Bid must be less than total chit value (₹${(chit.totalChitValue||0).toLocaleString('en-IN')}).`);
 
   // Check financial year lock
   if (chit.financialYearLocked) {

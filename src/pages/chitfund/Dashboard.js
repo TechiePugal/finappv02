@@ -156,14 +156,15 @@ export default function Dashboard() {
           </div>
           <div style={{ display:'flex', flexDirection:'column', gap:12, justifyContent:'center' }}>
             <div onClick={()=>nav('/cf/chits')} style={{ cursor:'pointer', padding:'14px 16px', borderRadius:12, background:'rgba(0,122,255,0.06)', border:`1.5px solid ${tokens.blue}30` }}>
-              <span style={{ fontSize:11, fontWeight:800, color:tokens.blue, textTransform:'uppercase', letterSpacing:'.05em' }}>🏢 Formed — You Manage</span>
+              <span style={{ fontSize:11, fontWeight:800, color:tokens.blue, textTransform:'uppercase', letterSpacing:'.05em' }}>🏢 Formed Chits — You are Organiser {/* cf_dash_v2 */}</span>
               <div style={{ fontSize:22, fontWeight:900, color:tokens.text, letterSpacing:'-.5px', marginTop:6 }}>{fmt(formedValue)}</div>
-              <div style={{ fontSize:12, color:tokens.textSub, marginTop:3 }}>{chits.length} chit{chits.length!==1?'s':''} · commission <strong style={{color:tokens.green}}>{fmt(formedComm)}</strong></div>
+              <div style={{ fontSize:12, color:tokens.textSub, marginTop:3 }}>{chits.length} chit{chits.length!==1?'s':''} · Total commission earned: <strong style={{color:tokens.green}}>{fmt(formedComm)}</strong></div>
+              <div style={{ fontSize:11, color:tokens.textMuted, marginTop:2 }}>Org fee = % of total chit value per auction round</div>
             </div>
             <div onClick={()=>nav('/cf/other-chits')} style={{ cursor:'pointer', padding:'14px 16px', borderRadius:12, background:'rgba(52,199,89,0.06)', border:`1.5px solid ${tokens.green}30` }}>
-              <span style={{ fontSize:11, fontWeight:800, color:tokens.green, textTransform:'uppercase', letterSpacing:'.05em' }}>👥 Joined — You Joined</span>
+              <span style={{ fontSize:11, fontWeight:800, color:tokens.green, textTransform:'uppercase', letterSpacing:'.05em' }}>👥 Joined Chits — You are a Member</span>
               <div style={{ fontSize:22, fontWeight:900, color:tokens.text, letterSpacing:'-.5px', marginTop:6 }}>{fmt(joinedValue)}</div>
-              <div style={{ fontSize:12, color:tokens.textSub, marginTop:3 }}>{joined.length} chit{joined.length!==1?'s':''} · {joinedActive.length} still running</div>
+              <div style={{ fontSize:12, color:tokens.textSub, marginTop:3 }}>{joined.length} chit{joined.length!==1?'s':''} · {joinedActive.length} still running · you pay per-head each round</div>
             </div>
           </div>
         </div>

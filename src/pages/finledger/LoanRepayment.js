@@ -204,18 +204,26 @@ export default function LoanRepayment(){
       {/* Payment modal */}
       <Modal open={!!modal} onClose={()=>setModal(null)} title={`Record Repayment — ${modal?.borrowerName}`} width={480}>
         {modal&&(
-          <>
-            {/* Balance summary */}
-            <div style={{background:'rgba(0,122,255,0.06)',borderRadius:12,padding:'12px 16px',marginBottom:16}}>
-              <div style={{display:'flex',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
-                <div><div style={{fontSize:11,color:'var(--text-secondary)'}}>Original Loan</div><div style={{fontSize:16,fontWeight:700}}>{formatCurrency(modal.loanAmount||0)}</div></div>
-                <div><div style={{fontSize:11,color:'var(--text-secondary)'}}>Total Repaid</div><div style={{fontSize:16,fontWeight:700,color:'#34c759'}}>{formatCurrency(Math.round(getRepaid(modal)))}</div></div>
-                <div><div style={{fontSize:11,color:'var(--text-secondary)'}}>Outstanding</div><div style={{fontSize:16,fontWeight:700,color:'#ff9500'}}>{formatCurrency(Math.round(getBalance(modal)))}</div></div>
+          <> {/* loanRepV3 */}
+            {/* Photo + balance strip */}
+            <div style={{display:'flex',alignItems:'center',gap:14,padding:'14px 16px',borderRadius:14,marginBottom:16,background:'rgba(52,199,89,0.06)',border:'1px solid rgba(52,199,89,0.2)'}}>
+              <div style={{width:52,height:52,borderRadius:'50%',background:'linear-gradient(135deg,#34c759,#30b0c7)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:20,fontWeight:800,color:'#fff',flexShrink:0}}>{(modal.borrowerName||'?')[0].toUpperCase()}</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:700,fontSize:15,color:'var(--text-primary)'}}>{modal.borrowerName}</div>
+                <div style={{fontSize:12,color:'var(--text-secondary)',marginTop:2}}>{modal.loanId} · {modal.phone}</div>
               </div>
-              {/* Progress bar */}
-              <div style={{height:6,background:'rgba(0,0,0,.1)',borderRadius:3,marginTop:10,overflow:'hidden'}}>
-                <div style={{width:`${modal.loanAmount>0?Math.round((getRepaid(modal)/modal.loanAmount)*100):0}%`,height:'100%',background:'#34c759',borderRadius:3,transition:'width .3s'}}/>
-              </div>
+            </div>
+            {/* 3-col balance stats */}
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>
+              {[{l:'Original',v:formatCurrency(modal.loanAmount||0),c:'var(--text-primary)'},{l:'Repaid',v:formatCurrency(Math.round(getRepaid(modal))),c:'#34c759'},{l:'Outstanding',v:formatCurrency(Math.round(getBalance(modal))),c:'#ff9500'}].map((s,i)=>(
+                <div key={i} style={{padding:'10px 12px',borderRadius:10,background:i===2?'rgba(255,149,0,0.06)':i===1?'rgba(52,199,89,0.06)':'rgba(0,0,0,0.03)',textAlign:'center'}}>
+                  <div style={{fontSize:10,color:'var(--text-secondary)',fontWeight:600,textTransform:'uppercase',marginBottom:3}}>{s.l}</div>
+                  <div style={{fontSize:14,fontWeight:800,color:s.c}}>{s.v}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{height:6,borderRadius:3,background:'rgba(0,0,0,0.06)',marginBottom:18,overflow:'hidden'}}>
+              <div style={{width:`${modal.loanAmount>0?Math.round((getRepaid(modal)/modal.loanAmount)*100):0}%`,height:'100%',background:'#34c759',borderRadius:3,transition:'width .4s'}}/>
             </div>
 
             <form onSubmit={savePay} style={{display:'flex',flexDirection:'column',gap:12}}>

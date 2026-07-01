@@ -140,7 +140,7 @@ export default function ChitDetail() {
   // Commission preview using spec-correct forward calculator
   const isCompanyWinnerSelected = aForm.winnerId === 'company';
   let commPreview = null;
-  if (aForm.bidAmount && +aForm.bidAmount > 0 && aForm.winnerId) {
+  if (aForm.bidAmount !== '' && aForm.winnerId) {
     try {
       commPreview = calcCommissionForward({
         chitValue: chit.totalChitValue,
@@ -182,7 +182,7 @@ export default function ChitDetail() {
     // companyIncluded: company is a member in the dropdown, selected like anyone else
     // No separate "takenByCompany" toggle needed - company won = winner.id === 'company'
     if (!aForm.winnerId) return setError('Select a winner from the list.');
-    if (!aForm.bidAmount || +aForm.bidAmount <= 0) return setError('Bid amount is required.');
+    if (aForm.bidAmount === '' || aForm.bidAmount === null || aForm.bidAmount === undefined) return setError('Bid amount is required (enter 0 if no bid).');
 
     // Find winner — could be a member or the company slot
     const isCompanyWinner = aForm.winnerId === 'company';
@@ -641,7 +641,7 @@ export default function ChitDetail() {
                 </FormField>
 
                 {/* Bid amount */}
-                <FormField label="Bid Amount (₹)" required hint={`What the winner foregoes — must be between ₹1 and ${fmt(chit.perHeadValue - 1)}`}>
+                <FormField label="Bid Amount (₹)" hint={`Amount the winner bids from the TOTAL chit pool (₹${(chit.totalChitValue||0).toLocaleString("en-IN")}). ₹0 = no bid (full prize). Lower bid = higher prize for winner.`}>
                   <Input type="number" step="1" value={aForm.bidAmount}
                     onChange={e => setAForm(f => ({ ...f, bidAmount: e.target.value }))}
                     prefix="₹" placeholder={String(Math.round(chit.perHeadValue * 0.85))} />
@@ -666,7 +666,7 @@ export default function ChitDetail() {
                         chit.commissionType === 'Single'
                           ? ['Non-cashed Net Payable', fmt(String(Math.round((chit.perHeadValue||0) - (commPreview.memberCommission||0))))]
                           : ['Every Member Pays',      fmt(String(Math.round((chit.perHeadValue||0) - (commPreview.memberCommission||0))))],
-                        ['Winner In-Hand Prize',       fmt(String(Math.round((chit.perHeadValue||0) * (chit.totalMembers||0) - (aForm.bidAmount||0))))],
+                        ['Winner In-Hand Prize',       fmt(String(Math.round((chit.totalChitValue||0) - (parseFloat(aForm.bidAmount)||0))))],  // total - bid
                       ].map(([lbl, val], i) => (
                         <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                           <span style={{ color: tokens.textSub }}>{lbl}:</span>

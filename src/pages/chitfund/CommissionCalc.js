@@ -230,7 +230,7 @@ export default function CommissionCalc() {
             </div>
 
             {inputMode === 'forward' ? (
-              <FormField label="Bid Amount (₹)" hint={`Winner foregoes this. Must be > ${fmt(orgAmount)} and < ${fmt(chitValue)}`}>
+              <FormField label="Bid Amount (₹)" hint={`Amount winner bids from the TOTAL chit pool (${fmt(chitValue)}). Enter 0 for no bid. Lower bid = larger prize for winner, less commission for members.`}>
                 <Input type="number" value={form.bidAmount} onChange={e => set('bidAmount', e.target.value)}
                   placeholder={String(Math.round(sub * 0.85))} />
               </FormField>

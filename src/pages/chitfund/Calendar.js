@@ -238,7 +238,7 @@ export default function CalendarPage() {
             <div style={{ flex:1, minWidth:160 }}>
               <div style={{ fontSize:11, color:"rgba(255,255,255,0.7)", fontWeight:700, textTransform:"uppercase", letterSpacing:".05em" }}>Next Upcoming Auction · {when}</div>
               <div style={{ fontSize:16, fontWeight:800, color:"#fff", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{nx.chitName} — Auction #{nx.auctionNumber}</div>
-              <div style={{ fontSize:12.5, color:"rgba(255,255,255,0.82)", marginTop:1 }}>{dtn.toLocaleDateString("en-IN",{weekday:"short",day:"numeric",month:"short"})} · Each member pays ~{formatCurrency(nx.perHeadValue||0)}</div>
+              <div style={{ fontSize:12.5, color:"rgba(255,255,255,0.82)", marginTop:1 }}>{dtn.toLocaleDateString("en-IN",{weekday:"short",day:"numeric",month:"short"})} · Each pays ~{formatCurrency((() => { const s=nx.slabValue||0; const ph=nx.perHeadValue||0; return (s>0&&!nx.isTaken)?s:ph; })())}{nx.isTaken?' (per-head)':' (slab)'}</div>
             </div>
             <div style={{ flexShrink:0, padding:"8px 14px", borderRadius:10, background:"rgba(255,255,255,0.2)", color:"#fff", fontSize:12.5, fontWeight:700, display:"flex", alignItems:"center", gap:6 }}>View details <ArrowRight size={14}/></div>
           </div>
