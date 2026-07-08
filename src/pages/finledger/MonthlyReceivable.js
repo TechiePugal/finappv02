@@ -65,7 +65,7 @@ export default function MonthlyReceivable() {
         .filter(d => d.data().status === 'Paid')
         .reduce((s,d) => s + (d.data().amountPaid||0), 0);
 
-      const totalPayable    = activeDeposits.reduce((s,d) => s + ((d.depositAmount||0)*(d.interestRate||0)/100/12), 0);
+      const totalPayable    = activeDeposits.reduce((s,d) => s + ((d.depositAmount||0)*(d.interestRate||0)/100), 0); // monthly basis
       const totalPaidOut    = dpSnap.docs
         .filter(d => d.data().status === 'Paid')
         .reduce((s,d) => s + (d.data().amountPaid||0), 0);
@@ -88,7 +88,7 @@ export default function MonthlyReceivable() {
 
       const depositRows = activeDeposits.map(d => ({
         ...d,
-        correctInterest: (d.depositAmount||0)*(d.interestRate||0)/100/12,
+        correctInterest: (d.depositAmount||0)*(d.interestRate||0)/100, // monthly basis
         payment: dpMap[d.id] || null,
       }));
 

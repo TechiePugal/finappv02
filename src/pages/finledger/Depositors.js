@@ -43,7 +43,7 @@ export default function Depositors(){
   });
   const active=data.filter(d=>d.status==='Active');
   const totalAmt=active.reduce((s,d)=>s+(d.depositAmount||0),0);
-  const monthlyPay=active.reduce((s,d)=>s+((d.depositAmount||0)*(d.interestRate||0)/100/12),0);
+  const monthlyPay=active.reduce((s,d)=>s+((d.depositAmount||0)*(d.interestRate||0)/100),0); // monthly basis
 
   if(loading) return <PageLoader stats={4}/>;
   return(

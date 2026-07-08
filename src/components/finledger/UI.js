@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 
 /* ═══════════════════════════════
    CARD
@@ -336,10 +337,11 @@ export function FilterTabs({ options=[], value, onChange }) {
 export function Modal({ open, onClose, title, children, width=500, footer }) {
   // modalRebuildV3
   useEffect(()=>{if(open)document.body.style.overflow='hidden';else document.body.style.overflow='';return()=>{document.body.style.overflow='';};},[open]);
+  useEffect(()=>{if(!open)return;const h=e=>{if(e.key==='Escape')onClose();};window.addEventListener('keydown',h);return()=>window.removeEventListener('keydown',h);},[open,onClose]);
   if(!open) return null;
-  return (
+  return createPortal(
     <div onClick={e=>{if(e.target===e.currentTarget)onClose();}}
-      style={{position:'fixed',inset:0,zIndex:1050,
+      style={{position:'fixed',inset:0,zIndex:99999,
         background:'rgba(10,10,20,0.55)',
         backdropFilter:'blur(8px) saturate(160%)',
         WebkitBackdropFilter:'blur(8px) saturate(160%)',
@@ -382,7 +384,8 @@ export function Modal({ open, onClose, title, children, width=500, footer }) {
         @keyframes flFadeIn{from{opacity:0}to{opacity:1}}
         @keyframes flPopIn{from{opacity:0;transform:scale(0.93) translateY(10px)}to{opacity:1;transform:none}}
       `}</style>
-    </div>
+    </div>,
+    document.body
   );
 }
 

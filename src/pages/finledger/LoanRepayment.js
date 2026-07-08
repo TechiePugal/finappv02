@@ -52,7 +52,7 @@ export default function LoanRepayment(){
   }
 
   async function savePay(e){
-    e.preventDefault();
+    if(e&&e.preventDefault) e.preventDefault();
     if(!pf.amount||parseFloat(pf.amount)<=0)return toast.error('Enter a valid amount');
     const balance=getBalance(modal);
     const amount=parseFloat(pf.amount);
@@ -202,7 +202,13 @@ export default function LoanRepayment(){
       </Card>
 
       {/* Payment modal */}
-      <Modal open={!!modal} onClose={()=>setModal(null)} title={`Record Repayment — ${modal?.borrowerName}`} width={480}>
+      <Modal open={!!modal} onClose={()=>setModal(null)} title={`Record Repayment — ${modal?.borrowerName}`} width={480}
+        footer={modal&&(
+          <div style={{display:'flex',gap:10,width:'100%'}}>
+            <Button onClick={()=>savePay()} disabled={saving} full>{saving?'Saving…':'Record Repayment'}</Button>
+            <Button variant="secondary" onClick={()=>setModal(null)}>Cancel</Button>
+          </div>
+        )}>
         {modal&&(
           <> {/* loanRepV3 */}
             {/* Photo + balance strip */}
@@ -274,17 +280,14 @@ export default function LoanRepayment(){
                   style={{width:'100%',height:38,padding:'0 12px',borderRadius:10,border:'1.5px solid rgba(0,0,0,0.1)',fontSize:14,fontFamily:'inherit',outline:'none',background:'rgba(118,118,128,0.07)',color:'var(--text-primary)'}}/>
               </div>
 
-              <div style={{display:'flex',gap:10,paddingTop:4}}>
-                <Button type="submit" disabled={saving} full>{saving?'Saving…':'Record Repayment'}</Button>
-                <Button variant="secondary" onClick={()=>setModal(null)}>Cancel</Button>
-              </div>
             </form>
           </>
         )}
       </Modal>
 
       {/* Repayment history modal */}
-      <Modal open={!!histModal} onClose={()=>setHistModal(null)} title={`Repayment History — ${histModal?.borrower?.borrowerName}`} width={560}>
+      <Modal open={!!histModal} onClose={()=>setHistModal(null)} title={`Repayment History — ${histModal?.borrower?.borrowerName}`} width={560}
+        footer={histModal&&<Button full onClick={()=>setHistModal(null)}>Close</Button>}>
         {histModal&&(
           <>
             <div style={{background:'rgba(0,122,255,0.06)',borderRadius:10,padding:'10px 14px',marginBottom:14,fontSize:13,color:'var(--accent)'}}>

@@ -336,40 +336,58 @@ export default function EMIAlerts(){
       </Card>
 
       {/* Contact Modal */}
-      <Modal open={!!contactModal} onClose={()=>setContactModal(null)} title={`Contact — ${contactModal?.borrowerName||''}`} width={420}>
+      <Modal open={!!contactModal} onClose={()=>setContactModal(null)} title={`Contact — ${contactModal?.borrowerName||''}`} width={420}
+        footer={contactModal&&<Button full onClick={()=>setContactModal(null)}>Close</Button>}>
         {contactModal&&(()=>{
           const cols=collections[contactModal.id]||[];
           const fine=contactModal.daysOverdue>2?(contactModal.daysOverdue-2)*(contactModal.dailyFineRate||50):0;
-          const R=({label,value,color})=>(<div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 0',borderBottom:'1px solid rgba(0,0,0,.05)'}}><span style={{fontSize:12,color:'var(--text-secondary)',flexShrink:0}}>{label}</span><span style={{fontSize:13,fontWeight:600,color:color||'var(--text-primary)',textAlign:'right',maxWidth:'65%'}}>{value??'—'}</span></div>); // emiAlertPopupV2
-          const Sec=({title})=>(<><div style={{height:1,background:'rgba(0,0,0,.07)',margin:'10px 0'}}/><div style={{fontSize:11,fontWeight:700,color:'var(--text-secondary)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6}}>{title}</div></>);
+          const Section=({title,accent,children})=>(
+            <div style={{border:`1px solid ${accent}33`,borderRadius:12,marginBottom:10,overflow:'hidden'}}>
+              <div style={{padding:'7px 14px',background:`${accent}0d`,fontSize:11,fontWeight:800,color:accent,textTransform:'uppercase',letterSpacing:'.05em'}}>{title}</div>
+              <div style={{padding:'10px 14px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:'6px 16px'}}>{children}</div>
+            </div>
+          );
+          const F=({label,value,color,full})=>(
+            <div style={{gridColumn:full?'1 / -1':'auto'}}>
+              <div style={{fontSize:10,color:'var(--text-secondary)',fontWeight:600,textTransform:'uppercase',letterSpacing:'.03em',marginBottom:2}}>{label}</div>
+              <div style={{fontSize:13,fontWeight:600,color:color||'var(--text-primary)'}}>{value??'—'}</div>
+            </div>
+          );
           return(
             <div>
-              {/* emiAlertV3 — photo + status strip */}
+              {/* Identity strip */}
               <div style={{display:'flex',alignItems:'center',gap:14,padding:'14px 16px',borderRadius:14,marginBottom:14,background:'linear-gradient(135deg,rgba(0,122,255,0.08),rgba(88,86,214,0.08))',border:'1px solid rgba(0,122,255,0.15)'}}>
-                <div style={{position:'relative',flexShrink:0}}>
-                  {contactModal.photo
-                    ?<img src={contactModal.photo} alt="" style={{width:56,height:56,borderRadius:'50%',objectFit:'cover',border:'3px solid rgba(0,122,255,0.25)'}}/>
-                    :<div style={{width:56,height:56,borderRadius:'50%',background:'linear-gradient(135deg,#007aff,#5856d6)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:22,fontWeight:800,color:'#fff'}}>{(contactModal.borrowerName||'?')[0].toUpperCase()}</div>}
-                </div>
+                {contactModal.photo
+                  ?<img src={contactModal.photo} alt="" style={{width:56,height:56,borderRadius:'50%',objectFit:'cover',border:'3px solid rgba(0,122,255,0.25)',flexShrink:0}}/>
+                  :<div style={{width:56,height:56,borderRadius:'50%',background:'linear-gradient(135deg,#007aff,#5856d6)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:22,fontWeight:800,color:'#fff',flexShrink:0}}>{(contactModal.borrowerName||'?')[0].toUpperCase()}</div>}
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontWeight:700,fontSize:15,color:'var(--text-primary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{contactModal.borrowerName}</div>
                   <div style={{fontSize:12,color:'var(--text-secondary)',marginTop:2}}>{contactModal.phone}{contactModal.emiId?' · '+contactModal.emiId:''}</div>
                   {contactModal.daysOverdue>0&&<div style={{marginTop:5,display:'inline-flex',alignItems:'center',gap:4,fontSize:11,fontWeight:700,color:'#fff',background:'#ff3b30',padding:'2px 9px',borderRadius:99}}>⚠ {contactModal.daysOverdue}d overdue{fine>0?' · Fine '+formatCurrency(fine):''}</div>}
                 </div>
               </div>
-              <Sec title="Contact"/>
-              <R label="Phone" value={<a href={`tel:${contactModal.phone}`} style={{color:'var(--accent)',fontWeight:700,fontSize:14,textDecoration:'none'}}>📞 {contactModal.phone}</a>}/>
-              {contactModal.email&&<R label="Email" value={<a href={`mailto:${contactModal.email}`} style={{color:'var(--accent)'}}>{contactModal.email}</a>}/>}
-              {contactModal.address&&<R label="Address" value={contactModal.address}/>}
-              {contactModal.guardianName&&<><Sec title="Guardian"/><R label="Name" value={contactModal.guardianName}/>{contactModal.guardianPhone&&<R label="Phone" value={<a href={`tel:${contactModal.guardianPhone}`} style={{color:'var(--accent)',fontWeight:700,fontSize:14,textDecoration:'none'}}>📞 {contactModal.guardianPhone}</a>}/>}</>}
-              <Sec title="EMI Details"/>
-              <R label="Loan Amount" value={formatCurrency(contactModal.loanAmount||0)}/>
-              <R label="EMI Amount" value={formatCurrency(contactModal.emiAmount||0)} color="#007aff"/>
-              <R label="Frequency" value={FREQ_LABEL[contactModal.frequency]||contactModal.frequency||'—'}/>
-              <R label="Paid / Total" value={`${cols.length} / ${contactModal.totalPeriods||'?'}`}/>
-              <R label="Next Due" value={fmtDate(contactModal.nextDueDate)}/>
-              {fine>0&&<R label="Fine Due" value={formatCurrency(fine)} color="#ff3b30"/>}
-              <button onClick={()=>setContactModal(null)} style={{width:'100%',marginTop:14,padding:'11px',borderRadius:10,border:'none',background:'#007aff',color:'#fff',fontSize:13.5,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>Close</button>
+
+              <Section title="Contact" accent="#007aff">
+                <F label="Phone" value={<a href={`tel:${contactModal.phone}`} style={{color:'var(--accent)',fontWeight:700,textDecoration:'none'}}>📞 {contactModal.phone}</a>}/>
+                {contactModal.email&&<F label="Email" value={<a href={`mailto:${contactModal.email}`} style={{color:'var(--accent)'}}>{contactModal.email}</a>}/>}
+                {contactModal.address&&<F label="Address" value={contactModal.address} full/>}
+              </Section>
+
+              {contactModal.guardianName&&(
+                <Section title="Guardian" accent="#5856d6">
+                  <F label="Name" value={contactModal.guardianName}/>
+                  {contactModal.guardianPhone&&<F label="Phone" value={<a href={`tel:${contactModal.guardianPhone}`} style={{color:'var(--accent)',fontWeight:700,textDecoration:'none'}}>📞 {contactModal.guardianPhone}</a>}/>}
+                </Section>
+              )}
+
+              <Section title="EMI Details" accent="#ff9500">
+                <F label="Loan Amount" value={formatCurrency(contactModal.loanAmount||0)}/>
+                <F label="EMI Amount" value={formatCurrency(contactModal.emiAmount||0)} color="#007aff"/>
+                <F label="Frequency" value={FREQ_LABEL[contactModal.frequency]||contactModal.frequency||'—'}/>
+                <F label="Paid / Total" value={`${cols.length} / ${contactModal.totalPeriods||'?'}`}/>
+                <F label="Next Due" value={fmtDate(contactModal.nextDueDate)}/>
+                {fine>0&&<F label="Fine Due" value={formatCurrency(fine)} color="#ff3b30"/>}
+              </Section>
             </div>
           );
         })()}

@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   collection, onSnapshot, addDoc, updateDoc, deleteDoc,
   doc, query, orderBy, serverTimestamp
-} from 'firebase/firestore';
+,getDocs} from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import { uploadDocumentFile } from '../../utils/fileStore';
 import toast from 'react-hot-toast';
@@ -159,16 +160,17 @@ function PhotoAvatar({ src, name, size = 34, onClick }) {
 // ── PhotoPopup — shows full photo in a centered overlay ───────────────────
 function PhotoPopup({ src, name, onClose }) {
   if (!src) return null;
-  return (
+  return createPortal(
     <div
       onClick={onClose}
       style={{
-        position: 'fixed', inset: 0, zIndex: 2000,
+        position: 'fixed', inset: 0, zIndex: 99999,
         background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}
     >
       <div onClick={e => e.stopPropagation()} style={{ position: 'relative' }}>
+        <button onClick={onClose} /* photoCloseX */ style={{position:'absolute',top:-14,right:-14,width:32,height:32,borderRadius:'50%',background:'#fff',border:'none',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 4px 12px rgba(0,0,0,0.35)',zIndex:1,fontSize:15,fontWeight:700,color:'#111'}}>✕</button>
         <img
           src={src} alt={name}
           style={{
@@ -190,7 +192,8 @@ function PhotoPopup({ src, name, onClose }) {
           }}
         >×</button>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -199,6 +202,10 @@ function PhotoPopup({ src, name, onClose }) {
 // the modal to close when typing.
 function LoanForm({ form, setForm, photoPreview, onPhotoChange, onPhotoRemove }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const [custs, setCusts] = useState([]);
+  const [custQ, setCustQ] = useState('');
+  const [linkedUser, setLinkedUser] = useState(form.customerId ? { id: form.customerId, name: form.borrowerName, phone: form.phone, customerId: form.customerId } : null);
+  useEffect(() => { getDocs(collection(db, 'customer_master')).then(s => setCusts(s.docs.map(d => ({ id: d.id, ...d.data() })))).catch(() => {}); }, []);
   const emi = (form.loanAmount && form.interestRate && form.totalPeriods)
     ? Math.round(calcEMI(form.loanAmount, form.interestRate, form.totalPeriods, form.frequency))
     : 0;
@@ -229,6 +236,38 @@ function LoanForm({ form, setForm, photoPreview, onPhotoChange, onPhotoRemove })
         </div>
       </div>
 
+
+      {/* User picker — Step 1: pick the User first */}
+      <div style={{ marginBottom: 16, padding: '14px 16px', background: linkedUser ? 'rgba(52,199,89,0.06)' : 'rgba(0,122,255,0.05)', border: linkedUser ? '1.5px solid rgba(52,199,89,0.3)' : '1.5px dashed rgba(0,122,255,0.3)', borderRadius: 12 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: linkedUser ? '#248a3d' : '#0a84ff', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 8 }}>
+          {linkedUser ? '✓ Linked to User' : 'Step 1 — Select the User'}
+        </div>
+        {linkedUser ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg,#34c759,#30b0c7)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 800, flexShrink: 0 }}>{(linkedUser.name || '?')[0].toUpperCase()}</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>{linkedUser.name}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{linkedUser.phone} · {linkedUser.customerId}</div>
+            </div>
+            <button type="button" onClick={() => { setLinkedUser(null); set('borrowerName', ''); set('phone', ''); set('customerId', ''); }} style={{ fontSize: 12, color: '#ff3b30', background: 'none', border: '1px solid rgba(255,59,48,0.3)', borderRadius: 8, padding: '5px 10px', cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0 }}>Change</button>
+          </div>
+        ) : (
+          <>
+            <input value={custQ} onChange={e => setCustQ(e.target.value)} placeholder="Search by user name, phone or ID…" style={{ width: '100%', boxSizing: 'border-box', height: 36, padding: '0 12px', borderRadius: 9, border: '1px solid rgba(0,0,0,0.12)', fontSize: 13, fontFamily: 'inherit', outline: 'none' }} />
+            {custQ.trim() && (
+              <div style={{ marginTop: 8, display: 'grid', gap: 4, maxHeight: 180, overflowY: 'auto' }}>
+                {custs.filter(cc => [cc.name, cc.phone, cc.customerId].some(v => String(v || '').toLowerCase().includes(custQ.trim().toLowerCase()))).slice(0, 6).map(cc => (
+                  <div key={cc.id} onClick={() => { setLinkedUser(cc); set('borrowerName', cc.name || ''); set('phone', cc.phone || ''); set('customerId', cc.id); setCustQ(''); }} style={{ padding: '8px 10px', borderRadius: 8, background: '#fff', border: '1px solid rgba(0,0,0,0.08)', cursor: 'pointer', fontSize: 13 }}>
+                    <strong>{cc.name}</strong> <span style={{ color: 'var(--text-secondary)', fontSize: 11.5 }}>· {cc.phone} · {cc.customerId}</span>
+                  </div>))}
+                {custs.filter(cc => [cc.name, cc.phone, cc.customerId].some(v => String(v || '').toLowerCase().includes(custQ.trim().toLowerCase()))).length === 0 && (
+                  <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', padding: '8px 2px' }}>No matching user. <a href="/fl/customers" style={{ color: '#0a84ff' }}>Enroll a new User first →</a></div>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
       {/* Borrower Details */}
       <SectionHeader title="Borrower Details" />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
@@ -239,7 +278,7 @@ function LoanForm({ form, setForm, photoPreview, onPhotoChange, onPhotoRemove })
           </Select>
         </FormField>
         <FormField label="Borrower Name" required>
-          <Input value={form.borrowerName} onChange={e => set('borrowerName', e.target.value)} placeholder="Full name" />
+          <Input value={form.borrowerName} onChange={e => set('borrowerName', e.target.value)} placeholder="Full name" disabled={!!linkedUser} />
         </FormField>
         <FormField label="Phone Number" required>
           <Input value={form.phone} onChange={e => set('phone', e.target.value)} type="tel" placeholder="9876543210" />
@@ -338,7 +377,7 @@ export default function EMILoans() {
   const [photoPreview, setPhotoPreview] = useState(null);
 
   // Collect form
-  const [cpf, setCpf] = useState({ amount: '', fine: '0', date: today(), mode: 'Cash', remarks: '', collectFine: false, dueDate: '', daysOverdue: 0, periodNo: 1, earlyClose: false });
+  const [cpf, setCpf] = useState({ amount: '', fine: '0', date: today(), mode: 'Cash', remarks: '', collectFine: false, dueDate: '', daysOverdue: 0, periodNo: 1, earlyClose: false, editingId: null, editingLedgerId: null });
   const [saving, setSaving] = useState(false);
   const [expandedLoan, setExpandedLoan] = useState(null);
 
@@ -479,10 +518,30 @@ export default function EMILoans() {
       dueDate: nextSlot?.dueDate || '',
       daysOverdue: nextSlot ? getDaysOverdue(nextSlot.dueDate) : 0,
       periodNo: cols.length + 1,
+      editingId: null, editingLedgerId: null,
     });
   }
 
-  async function saveCollection() {
+  // Edit an ALREADY-collected period — updates in place, does not duplicate
+  function editCollection(loan, col) {
+    setCollectLoan(loan);
+    setCpf({
+      amount: String(col.amount || ''),
+      fine: String(col.fine || 0),
+      date: col.date || today(),
+      mode: col.mode || 'Cash',
+      remarks: col.remarks || '',
+      collectFine: (col.fine || 0) > 0,
+      dueDate: col.dueDate || '',
+      daysOverdue: col.daysOverdue || 0,
+      periodNo: col.periodNo,
+      earlyClose: col.earlyClosure || false,
+      editingId: col.id, editingLedgerId: col.ledgerEntryId || null,
+    });
+  }
+
+  async function saveCollection(statusSel='Paid') {
+    const isPartial=statusSel==='Partial';
     if (!cpf.amount || parseFloat(cpf.amount) <= 0) return toast.error('Enter valid amount');
     setSaving(true);
     try {
@@ -490,15 +549,52 @@ export default function EMILoans() {
       const cols = collections[loan.id] || [];
       const fine = cpf.collectFine ? parseFloat(cpf.fine) || 0 : 0;
       const totalCollected = parseFloat(cpf.amount) + fine;
-      const paidPeriods = cols.length + 1;
+      const fullCols=(cols||[]).filter(x=>x.status!=='Partial');
+      const paidPeriods = fullCols.length + (isPartial?0:1);
+
+      const isEditing = !!cpf.editingId;
+      const effectivePeriodNo = isEditing ? cpf.periodNo : paidPeriods;
+
+      if (isEditing) {
+        // Update the EXISTING collection record in place — no duplicate
+        await updateDoc(doc(db, 'emi_collections', cpf.editingId), {
+          amount: parseFloat(cpf.amount), fine, totalCollected,
+          date: cpf.date, mode: cpf.mode, remarks: cpf.remarks,
+          status: statusSel, updatedAt: serverTimestamp(),
+        });
+        if (cpf.editingLedgerId) {
+          await updateDoc(doc(db, 'finance_ledger_entries', cpf.editingLedgerId), {
+            description: `EMI #${effectivePeriodNo} from ${loan.borrowerName}${fine > 0 ? ` + Fine ${formatCurrency(fine)}` : ''}${statusSel==='Partial'?' (partial)':''}`,
+            amount: totalCollected, paymentMode: cpf.mode, date: cpf.date, updatedAt: serverTimestamp(),
+          });
+        }
+        // Recompute paidPeriods from the FULL collection set (this edit may have changed Paid<->Partial)
+        const updatedCols = cols.map(x => x.id === cpf.editingId ? { ...x, status: statusSel } : x);
+        const recount = updatedCols.filter(x => x.status !== 'Partial').length;
+        const fullyPaidEdit = recount >= loan.totalPeriods;
+        await updateDoc(doc(db, 'emi_loans', loan.id), {
+          paidPeriods: recount, status: fullyPaidEdit ? 'Closed' : 'Active', updatedAt: serverTimestamp(),
+        });
+        toast.success(`✓ EMI #${effectivePeriodNo} updated to ${statusSel}.`);
+        setCollectLoan(null);
+        setSaving(false);
+        return;
+      }
+
+      const ledgerRef = await addDoc(collection(db, 'finance_ledger_entries'), {
+        type: 'Credit', category: 'EMI Collection',
+        description: `EMI #${paidPeriods} from ${loan.borrowerName}${fine > 0 ? ` + Fine ${formatCurrency(fine)}` : ''}${isPartial?' (partial)':''}`,
+        amount: totalCollected, paymentMode: cpf.mode, date: cpf.date,
+        borrowerName: loan.borrowerName, loanId: loan.id, createdAt: serverTimestamp(),
+      });
 
       await addDoc(collection(db, 'emi_collections'), {
         loanId: loan.id, borrowerName: loan.borrowerName, emiId: loan.emiId,
         amount: parseFloat(cpf.amount), fine, totalCollected,
         expectedEMI: loan.emiAmount, date: cpf.date, mode: cpf.mode,
-        remarks: cpf.earlyClose ? ('Early closure settlement. '+cpf.remarks).trim() : cpf.remarks, periodNo: paidPeriods, earlyClosure: cpf.earlyClose || false,
+        remarks: cpf.earlyClose ? ('Early closure settlement. '+cpf.remarks).trim() : cpf.remarks, periodNo: paidPeriods, earlyClosure: cpf.earlyClose || false, status: statusSel,
         dueDate: cpf.dueDate, daysOverdue: cpf.daysOverdue,
-        frequency: loan.frequency, createdAt: serverTimestamp(),
+        frequency: loan.frequency, ledgerEntryId: ledgerRef.id, createdAt: serverTimestamp(),
       });
 
       const fullyPaid = cpf.earlyClose || paidPeriods >= loan.totalPeriods;
@@ -506,16 +602,9 @@ export default function EMILoans() {
         paidPeriods: cpf.earlyClose ? loan.totalPeriods : paidPeriods, status: fullyPaid ? 'Closed' : 'Active', closedEarly: cpf.earlyClose || false, updatedAt: serverTimestamp(),
       });
 
-      await addDoc(collection(db, 'finance_ledger_entries'), {
-        type: 'Credit', category: 'EMI Collection',
-        description: `EMI #${paidPeriods} from ${loan.borrowerName}${fine > 0 ? ` + Fine ${formatCurrency(fine)}` : ''}`,
-        amount: totalCollected, paymentMode: cpf.mode, date: cpf.date,
-        borrowerName: loan.borrowerName, loanId: loan.id, createdAt: serverTimestamp(),
-      });
-
       toast.success(fullyPaid
         ? (cpf.earlyClose ? '✓ Loan closed early — fully settled.' : `🎉 All ${loan.totalPeriods} EMIs collected! Loan closed.`)
-        : `✓ EMI #${paidPeriods} collected. ${loan.totalPeriods - paidPeriods} remaining.`
+        : isPartial ? `◐ Partial EMI recorded — period #${paidPeriods+1} still due.` : `✓ EMI #${paidPeriods} collected. ${loan.totalPeriods - paidPeriods} remaining.`
       );
       setCollectLoan(null);
     } catch (e) { toast.error('Failed: ' + e.message); } finally { setSaving(false); }
@@ -534,7 +623,7 @@ export default function EMILoans() {
       const col = cols.find(c => c.periodNo === i + 1);
       const overdue = getDaysOverdue(slot.dueDate);
       const fine = calcFine(slot.dueDate, loan.dailyFineRate || 50);
-      return { ...slot, col, overdue, fine, status: col ? 'Paid' : overdue > 0 ? 'Overdue' : 'Pending' };
+      return { ...slot, col, overdue, fine, status: col ? (col.status==='Partial' ? 'Partial' : 'Paid') : overdue > 0 ? 'Overdue' : 'Pending' };
     });
   }
 
@@ -744,39 +833,48 @@ export default function EMILoans() {
       </Card>
 
       {/* ── ADD MODAL ── */}
-      <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Create New EMI Loan" width={700}>
+      <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Create New EMI Loan" width={700}
+        footer={addOpen&&(
+          <div style={{ display: 'flex', gap: 10, width: '100%' }}>
+            <Button onClick={() => saveLoan(false)} disabled={saving} style={{ flex: 1, justifyContent: 'center' }}>{saving ? 'Creating…' : 'Create EMI Loan'}</Button>
+            <Button variant="secondary" onClick={() => setAddOpen(false)}>Cancel</Button>
+          </div>
+        )}>
         <LoanForm
           form={form} setForm={setForm}
           photoPreview={photoPreview}
           onPhotoChange={handlePhotoFile}
           onPhotoRemove={removePhoto}
         />
-        <div style={{ display: 'flex', gap: 10, marginTop: 20, paddingTop: 16, borderTop: '1px solid rgba(0,0,0,0.07)' }}>
-          <Button onClick={() => saveLoan(false)} disabled={saving} style={{ flex: 1, justifyContent: 'center' }}>
-            {saving ? 'Creating…' : 'Create EMI Loan'}
-          </Button>
-          <Button variant="secondary" onClick={() => setAddOpen(false)}>Cancel</Button>
-        </div>
       </Modal>
 
       {/* ── EDIT MODAL ── */}
-      <Modal open={!!editLoan} onClose={() => setEditLoan(null)} title={`Edit EMI Loan — ${editLoan?.borrowerName || ''}`} width={700}>
+      <Modal open={!!editLoan} onClose={() => setEditLoan(null)} title={`Edit EMI Loan — ${editLoan?.borrowerName || ''}`} width={700}
+        footer={editLoan&&(
+          <div style={{ display: 'flex', gap: 10, width: '100%' }}>
+            <Button onClick={() => saveLoan(true)} disabled={saving} style={{ flex: 1, justifyContent: 'center' }}>{saving ? 'Saving…' : 'Save Changes'}</Button>
+            <Button variant="secondary" onClick={() => setEditLoan(null)}>Cancel</Button>
+          </div>
+        )}>
         <LoanForm
           form={form} setForm={setForm}
           photoPreview={photoPreview}
           onPhotoChange={handlePhotoFile}
           onPhotoRemove={removePhoto}
         />
-        <div style={{ display: 'flex', gap: 10, marginTop: 20, paddingTop: 16, borderTop: '1px solid rgba(0,0,0,0.07)' }}>
-          <Button onClick={() => saveLoan(true)} disabled={saving} style={{ flex: 1, justifyContent: 'center' }}>
-            {saving ? 'Saving…' : 'Save Changes'}
-          </Button>
-          <Button variant="secondary" onClick={() => setEditLoan(null)}>Cancel</Button>
-        </div>
       </Modal>
 
       {/* ── COLLECT EMI MODAL ── */}
-      <Modal open={!!collectLoan} onClose={() => setCollectLoan(null)} title="Collect EMI Payment" width={500}>
+      <Modal open={!!collectLoan} onClose={() => setCollectLoan(null)} title={cpf.editingId ? `Edit EMI #${cpf.periodNo} — Change Status` : "Collect EMI Payment"} width={500}
+        footer={collectLoan&&(
+          <div style={{ display: 'flex', gap: 10, width: '100%' }}>
+            <Button variant="secondary" onClick={() => saveCollection('Partial')} disabled={saving}>Partial</Button>
+            <Button onClick={() => saveCollection('Paid')} disabled={saving} style={{ flex: 1, justifyContent: 'center' }}>
+              {saving ? 'Saving…' : `✓ Collect ${cpf.collectFine && parseFloat(cpf.fine) > 0 ? formatCurrency((parseFloat(cpf.amount) || 0) + (parseFloat(cpf.fine) || 0)) : formatCurrency(parseFloat(cpf.amount) || 0)}`}
+            </Button>
+            <Button variant="secondary" onClick={() => setCollectLoan(null)}>Cancel</Button>
+          </div>
+        )}>
         {collectLoan && (
           <>
             {/* emiLoanPopupV2 — Gradient header */}
@@ -899,18 +997,13 @@ export default function EMILoans() {
               </div>
             ) : null}
 
-            <div style={{ display: 'flex', gap: 10 }}>
-              <Button onClick={saveCollection} disabled={saving} style={{ flex: 1, justifyContent: 'center' }}>
-                {saving ? 'Saving…' : `✓ Collect ${cpf.collectFine && parseFloat(cpf.fine) > 0 ? formatCurrency((parseFloat(cpf.amount) || 0) + (parseFloat(cpf.fine) || 0)) : formatCurrency(parseFloat(cpf.amount) || 0)}`}
-              </Button>
-              <Button variant="secondary" onClick={() => setCollectLoan(null)}>Cancel</Button>
-            </div>
           </>
         )}
       </Modal>
 
       {/* ── SCHEDULE / CALENDAR MODAL ── */}
-      <Modal open={!!calLoan} onClose={() => setCalLoan(null)} title={`EMI Schedule — ${calLoan?.borrowerName || ''}`} width={620}>
+      <Modal open={!!calLoan} onClose={() => setCalLoan(null)} title={`EMI Schedule — ${calLoan?.borrowerName || ''}`} width={620}
+        footer={calLoan&&<Button full onClick={() => setCalLoan(null)}>Close</Button>}>
         {calLoan && (() => {
           const sched = getScheduleWithStatus(calLoan);
           const paidCount = sched.filter(s => s.col).length;
@@ -957,9 +1050,10 @@ export default function EMILoans() {
               {/* Schedule list */}
               <div style={{ maxHeight: 380, overflowY: 'auto', paddingRight: 4 }}>
                 {sched.map((slot, i) => {
-                  const sColor = { Paid: '#34c759', Overdue: '#ff3b30', Pending: '#ff9500' }[slot.status] || '#aaa';
+                  const sColor = { Paid: '#34c759', Partial: '#5856d6', Overdue: '#ff3b30', Pending: '#ff9500' }[slot.status] || '#aaa';
                   return (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 10, marginBottom: 5, background: slot.status === 'Paid' ? 'rgba(52,199,89,0.04)' : slot.status === 'Overdue' ? 'rgba(255,59,48,0.04)' : 'rgba(118,118,128,0.03)', border: `1px solid ${slot.status === 'Paid' ? 'rgba(52,199,89,0.18)' : slot.status === 'Overdue' ? 'rgba(255,59,48,0.18)' : 'rgba(0,0,0,0.06)'}` }}>
+                    <div key={i} onClick={slot.col ? () => editCollection(calLoan, slot.col) : undefined}
+                      style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 10, marginBottom: 5, cursor: slot.col ? 'pointer' : 'default', background: slot.status === 'Paid' ? 'rgba(52,199,89,0.04)' : slot.status === 'Partial' ? 'rgba(88,86,214,0.05)' : slot.status === 'Overdue' ? 'rgba(255,59,48,0.04)' : 'rgba(118,118,128,0.03)', border: `1px solid ${slot.status === 'Paid' ? 'rgba(52,199,89,0.18)' : slot.status === 'Overdue' ? 'rgba(255,59,48,0.18)' : 'rgba(0,0,0,0.06)'}` }}>
                       {/* Period number badge */}
                       <div style={{ width: 30, height: 30, borderRadius: 8, background: sColor + '18', border: `1.5px solid ${sColor + '35'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800, color: sColor, flexShrink: 0 }}>
                         {slot.periodNo}
@@ -968,10 +1062,11 @@ export default function EMILoans() {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 13, fontWeight: 500 }}>Due: {fmtDate(slot.dueDate)}</div>
                         {slot.col ? (
-                          <div style={{ fontSize: 11, color: '#34c759', marginTop: 2 }}>
-                            ✓ Paid {fmtDate(slot.col.date)} · {formatCurrency(slot.col.amount)}
+                          <div style={{ fontSize: 11, color: slot.col.status === 'Partial' ? '#5856d6' : '#34c759', marginTop: 2 }}>
+                            {slot.col.status === 'Partial' ? '◐ Partial' : '✓ Paid'} {fmtDate(slot.col.date)} · {formatCurrency(slot.col.amount)}
                             {slot.col.fine > 0 && ` + Fine ${formatCurrency(slot.col.fine)}`}
                             {slot.col.mode && ` · ${slot.col.mode}`}
+                            <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}> · tap to edit</span>
                           </div>
                         ) : slot.overdue > 0 ? (
                           <div style={{ fontSize: 11, color: '#ff3b30', marginTop: 2 }}>
@@ -997,7 +1092,8 @@ export default function EMILoans() {
       </Modal>
 
       {/* ── HISTORY MODAL ── */}
-      <Modal open={!!histLoan} onClose={() => setHistLoan(null)} title={`Payment History — ${histLoan?.loan?.borrowerName || ''}`} width={540}>
+      <Modal open={!!histLoan} onClose={() => setHistLoan(null)} title={`Payment History — ${histLoan?.loan?.borrowerName || ''}`} width={540}
+        footer={histLoan&&<Button full onClick={() => setHistLoan(null)}>Close</Button>}>
         {histLoan && (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'rgba(0,122,255,0.04)', borderRadius: 10, marginBottom: 14 }}>
@@ -1033,7 +1129,13 @@ export default function EMILoans() {
       </Modal>
 
       {/* ── DELETE CONFIRM ── */}
-      <Modal open={!!delLoan} onClose={() => setDelLoan(null)} title="Delete EMI Loan" width={420}>
+      <Modal open={!!delLoan} onClose={() => setDelLoan(null)} title="Delete EMI Loan" width={420}
+        footer={delLoan&&(
+          <div style={{ display: 'flex', gap: 10, width: '100%' }}>
+            <Button variant="danger" onClick={deleteLoan} style={{ flex: 1, justifyContent: 'center' }}>Delete Permanently</Button>
+            <Button variant="secondary" onClick={() => setDelLoan(null)}>Cancel</Button>
+          </div>
+        )}>
         {delLoan && (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', background: 'rgba(255,59,48,0.06)', borderRadius: 10, marginBottom: 16, border: '1px solid rgba(255,59,48,0.15)' }}>
@@ -1048,10 +1150,6 @@ export default function EMILoans() {
             <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 20, lineHeight: 1.6 }}>
               This will permanently delete this EMI loan and all <strong>{(collections[delLoan.id] || []).length} payment records</strong>. This action cannot be undone.
             </p>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <Button variant="danger" onClick={deleteLoan} style={{ flex: 1, justifyContent: 'center' }}>Delete Permanently</Button>
-              <Button variant="secondary" onClick={() => setDelLoan(null)}>Cancel</Button>
-            </div>
           </>
         )}
       </Modal>

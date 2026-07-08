@@ -1,6 +1,6 @@
 import React,{useState,useEffect} from 'react';
 import {useNavigate,useParams} from 'react-router-dom';
-import {collection,addDoc,doc,getDoc,updateDoc,serverTimestamp} from 'firebase/firestore';
+import {collection,addDoc,doc,getDoc,updateDoc,serverTimestamp,getDocs} from 'firebase/firestore';
 import {db} from '../../firebase/config';
 import {uploadDocumentFile,openDocument} from '../../utils/fileStore';
 import toast from 'react-hot-toast';
@@ -12,7 +12,7 @@ function genId(){return 'DEP-'+Date.now().toString(36).toUpperCase();}
 function calcPeriodInterest(amt,rate,tenureMonths,compound){
   // per month deposit: rate is % per month directly
   const p=parseFloat(amt)||0, r=parseFloat(rate)||0, t=normTenure(tenureMonths);
-  return compound ? p*(r/100)*t : (p*r/100)*t;
+  return compound ? p*(Math.pow(1+r/100,t)-1) : (p*(r/100)*t);
 }
 
 // Generate full schedule from start date to maturity (or 36 months if no maturity)
@@ -29,7 +29,8 @@ function genFullSchedule(amt,rate,tenureMonths,compound,start,maturity){
   let idx=0;
   while(cur < end && idx < 200){
     const next=new Date(cur); next.setMonth(next.getMonth()+t);
-    const int = compound ? p*(r/100/12)*t : (p*r/100/12)*t;
+    // monthly rate, compound = (1+r)^t-1 over t months; simple = r*t flat
+    const int = compound ? p*(Math.pow(1+r/100,t)-1) : (p*(r/100)*t);
     slots.push({
       idx:++idx,
       dueDate: next.toISOString().split('T')[0],
@@ -77,6 +78,9 @@ export default function DepositorForm(){
   }
 
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+  const[custs,setCusts]=useState([]);const[custQ,setCustQ]=useState('');const[linkedUser,setLinkedUser]=useState(null);
+  useEffect(()=>{getDocs(collection(db,'customer_master')).then(s=>setCusts(s.docs.map(d=>({id:d.id,...d.data()})))).catch(()=>{});},[]);
+
 
   async function handlePhoto(file){
     if(!file)return;
@@ -153,12 +157,43 @@ export default function DepositorForm(){
             </div>
             <FormField label="Deposit ID"><Input value={form.depositId} disabled style={{color:'var(--accent)',fontWeight:600}}/></FormField>
               <FormField label="Status" required><Select value={form.status} onChange={e=>set('status',e.target.value)}><option>Active</option><option>Closed</option></Select></FormField>
-              <FormField label="Full Name" required><Input value={form.name} onChange={e=>set('name',e.target.value)} placeholder="Investor full name"/></FormField>
-              <FormField label="Phone Number" required><Input value={form.phone} onChange={e=>set('phone',e.target.value)} placeholder="9876543210" type="tel"/></FormField>
+            {/* User picker — Step 1: pick the User first */}
+            <div style={{marginBottom:14,padding:'14px 16px',background:linkedUser?'rgba(52,199,89,0.06)':'rgba(0,122,255,0.05)',border:linkedUser?'1.5px solid rgba(52,199,89,0.3)':'1.5px dashed rgba(0,122,255,0.3)',borderRadius:12}}>
+              <div style={{fontSize:11,fontWeight:700,color:linkedUser?'#248a3d':'#0a84ff',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:8}}>
+                {linkedUser ? '✓ Linked to User' : 'Step 1 — Select the User'}
+              </div>
+              {linkedUser ? (
+                <div style={{display:'flex',alignItems:'center',gap:10}}>
+                  <div style={{width:36,height:36,borderRadius:'50%',background:'linear-gradient(135deg,#34c759,#30b0c7)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:800,flexShrink:0}}>{(linkedUser.name||'?')[0].toUpperCase()}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:700,fontSize:14}}>{linkedUser.name}</div>
+                    <div style={{fontSize:12,color:'var(--text-secondary)'}}>{linkedUser.phone} · {linkedUser.customerId}</div>
+                  </div>
+                  <button type="button" onClick={()=>{setLinkedUser(null);set('name','');set('phone','');set('customerId','');}} style={{fontSize:12,color:'#ff3b30',background:'none',border:'1px solid rgba(255,59,48,0.3)',borderRadius:8,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',flexShrink:0}}>Change</button>
+                </div>
+              ) : (
+                <>
+                  <input value={custQ} onChange={e=>setCustQ(e.target.value)} placeholder="Search by user name, phone or ID…" style={{width:'100%',boxSizing:'border-box',height:36,padding:'0 12px',borderRadius:9,border:'1px solid rgba(0,0,0,0.12)',fontSize:13,fontFamily:'inherit',outline:'none'}}/>
+                  {custQ.trim()&&(
+                    <div style={{marginTop:8,display:'grid',gap:4,maxHeight:180,overflowY:'auto'}}>
+                      {custs.filter(cc=>[cc.name,cc.phone,cc.customerId].some(v=>String(v||'').toLowerCase().includes(custQ.trim().toLowerCase()))).slice(0,6).map(cc=>(
+                        <div key={cc.id} onClick={()=>{setLinkedUser(cc);set('name',cc.name||'');set('phone',cc.phone||'');set('customerId',cc.id);setCustQ('');}} style={{padding:'8px 10px',borderRadius:8,background:'#fff',border:'1px solid rgba(0,0,0,0.08)',cursor:'pointer',fontSize:13}}>
+                          <strong>{cc.name}</strong> <span style={{color:'var(--text-secondary)',fontSize:11.5}}>· {cc.phone} · {cc.customerId}</span>
+                        </div>))}
+                      {custs.filter(cc=>[cc.name,cc.phone,cc.customerId].some(v=>String(v||'').toLowerCase().includes(custQ.trim().toLowerCase()))).length===0&&(
+                        <div style={{fontSize:12.5,color:'var(--text-secondary)',padding:'8px 2px'}}>No matching user. <a href="/fl/customers" style={{color:'#0a84ff'}}>Enroll a new User first →</a></div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+              <FormField label="Full Name" required><Input value={form.name} onChange={e=>set('name',e.target.value)} placeholder="Investor full name" disabled={!!linkedUser}/></FormField>
+              <FormField label="Phone Number" required><Input value={form.phone} onChange={e=>set('phone',e.target.value)} placeholder="9876543210" type="tel" disabled={!!linkedUser}/></FormField>
               <FormField label="Email"><Input value={form.email} onChange={e=>set('email',e.target.value)} placeholder="email@example.com" type="email"/></FormField>
               <FormField label="Address"><Input value={form.address} onChange={e=>set('address',e.target.value)} placeholder="Full address"/></FormField>
               <FormField label="Deposit Amount (₹)" required><Input value={form.depositAmount} onChange={e=>set('depositAmount',e.target.value)} placeholder="500000" type="number" min="1"/></FormField>
-              <FormField label="Annual Interest Rate (%)" required><Input value={form.interestRate} onChange={e=>set('interestRate',e.target.value)} placeholder="12" type="number" step="0.01" min="0"/></FormField>
+              <FormField label="Monthly Interest Rate (%)" required><Input value={form.interestRate} onChange={e=>set('interestRate',e.target.value)} placeholder="1.5" type="number" step="0.01" min="0"/></FormField>
               <FormField label="Interest Payout Tenure (months)" required
                 hint="Enter number of months between each payout — 1=Monthly, 3=Quarterly, 6=Half-Yearly, 12=Yearly">
                 <Input value={form.interestTenure} onChange={e=>set('interestTenure',e.target.value)} placeholder="1" type="number" min="1" max="60"/>

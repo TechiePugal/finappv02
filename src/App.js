@@ -35,6 +35,8 @@ import FLDepositors from './pages/finledger/Depositors';
 import FLDepositorForm from './pages/finledger/DepositorForm';
 import FLDepositorSettlement from './pages/finledger/DepositorSettlement';
 import FLBorrowers from './pages/finledger/Borrowers';
+import FLCustomers from './pages/finledger/Customers';
+import FLJournal from './pages/finledger/Journal';
 import FLBorrowerForm from './pages/finledger/BorrowerForm';
 import FLInterestCollection from './pages/finledger/InterestCollection';
 import FLLoanRepayment from './pages/finledger/LoanRepayment';
@@ -161,6 +163,8 @@ function AppRouter() {
         <Routes>
           <Route path="/fl" element={<FLLayout user={user} />}>
             <Route index element={<FLDashboard />} />
+            <Route path="customers" element={<FLCustomers />} />
+            <Route path="journal" element={<FLJournal />} />
             <Route path="depositors" element={<FLDepositors />} />
             <Route path="depositors/new" element={<FLDepositorForm />} />
             <Route path="depositors/edit/:id" element={<FLDepositorForm />} />

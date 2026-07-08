@@ -14,11 +14,12 @@ const NAV_GROUPS = [
       icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg> },
     { to:'/fl/alerts', label:'Alerts',
       icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg> },
-    { to:'/fl/emi-alerts', label:'EMI Alerts',
-      icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> },
+    { to:'/fl/customers', label:'Users',
+      icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
+
   ]},
   { label:'Deposits', items:[
-    { to:'/fl/depositors', label:'Depositors',
+        { to:'/fl/depositors', label:'Depositors',
       icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
     { to:'/fl/depositor-settlement', label:'Settle Interest',
       icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><line x1="12" y1="6" x2="12" y2="8"/><line x1="12" y1="16" x2="12" y2="18"/></svg> },
@@ -34,10 +35,14 @@ const NAV_GROUPS = [
   { label:'EMI', items:[ // navReorg2
     { to:'/fl/emi-loans', label:'EMI Loans',
       icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M12 10v4M10 12h4"/></svg> },
+      { to:'/fl/emi-alerts', label:'EMI Alerts',
+      icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> },
   ]},
   { label:'Reports', items:[
     { to:'/fl/reports', label:'Financial Reports',
       icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><rect x="2" y="2" width="20" height="20" rx="2" fill="none"/></svg> },
+    { to:'/fl/journal', label:'Journal',
+      icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> },
   ]},
   { label:'Records', items:[
     { to:'/fl/ledger', label:'Ledger',

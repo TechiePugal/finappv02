@@ -66,7 +66,7 @@ export default function Dashboard(){
       const monthlyPay = activeDeps.reduce((s,d)=>s+((d.depositAmount||0)*(d.interestRate||0)/100),0); // monthly rate
 
       // Current month actuals
-      const curMonthCollected = paySnap.docs.filter(d=>d.data().status==='Paid'&&d.data().month===curMo).reduce((s,d)=>s+(d.data().amountPaid||0),0);
+      const curMonthCollected = paySnap.docs.filter(d=>['Paid','Partial'].includes(d.data().status)&&d.data().month===curMo).reduce((s,d)=>s+(d.data().amountPaid||0),0);
       const curMonthSettled   = setSnap.docs.filter(d=>d.data().status==='Paid').reduce((s,d)=>s+(d.data().amountPaid||0),0);
 
       const secVal = bors.reduce((s,b)=>s+(b.securityValue||0),0);

@@ -67,7 +67,8 @@ export default function DepositorSettlement(){
   function calcPeriodInt(dep){
     // monthlyRate: rate entered as % per month (not annual)
     const p=dep.depositAmount||0,r=dep.interestRate||0,t=parseInt(dep.interestTenure)||1;
-    return dep.compounding?p*(r/100)*t:(p*r/100)*t; // monthlyRate
+    // Simple: principal × monthly rate × months. Compound: principal × ((1+r)^t − 1)
+    return dep.compounding?p*(Math.pow(1+r/100,t)-1):(p*(r/100)*t);
   }
 
   function openPay(depositor,slot){
@@ -309,7 +310,16 @@ export default function DepositorSettlement(){
       </div>
 
       {/* Settlement Modal */}
-      <Modal open={!!modal} onClose={()=>setModal(null)} title={`Settle Interest — ${modal?.depositor?.name}`} width={500}>
+      <Modal open={!!modal} onClose={()=>setModal(null)} title={`Settle Interest — ${modal?.depositor?.name}`} width={500}
+        footer={modal&&(
+          <div style={{display:'flex',gap:10,width:'100%'}}>
+            {pf.addToDeposit
+              ?<Button onClick={()=>savePay(false)} disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?'Saving…':'Add to Deposit Principal'}</Button>
+              :<><Button onClick={()=>savePay(true)} disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?'Saving…':'✓ Settle Payout'}</Button>
+              <Button variant="danger" onClick={()=>savePay(false)} disabled={saving}>Mark Unpaid</Button></>
+            }
+          </div>
+        )}>
         {modal&&(()=>{
           const{depositor,slot}=modal;
           const interest=calcPeriodInt(depositor);
@@ -396,13 +406,6 @@ export default function DepositorSettlement(){
                 </>
               )}
 
-              <div style={{display:'flex',gap:10,marginTop:16}}>
-                {pf.addToDeposit
-                  ?<Button onClick={()=>savePay(false)} disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?'Saving…':'Add to Deposit Principal'}</Button>
-                  :<><Button onClick={()=>savePay(true)} disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?'Saving…':'✓ Settle Payout'}</Button>
-                  <Button variant="danger" onClick={()=>savePay(false)} disabled={saving}>Mark Unpaid</Button></>
-                }
-              </div>
             </>
           );
         })()}

@@ -433,7 +433,9 @@ export function printAlertsReport(list, tab, repayments, interests){
   const title = tabLabels[tab]||'Alerts';
 
   function getBalance(b){
-    const repaid=(repayments||[]).filter(r=>r.borrowerId===b.id).reduce((a,r)=>a+(r.repaidAmount||r.amount||0),0);
+    // repayments is keyed by borrowerId -> array of records (NOT a flat array)
+    const reps=(repayments&&repayments[b.id])||[];
+    const repaid=reps.reduce((a,r)=>a+(r.repaidAmount||r.amount||0),0);
     return Math.max(0,(b.loanAmount||0)-repaid);
   }
 
@@ -463,7 +465,7 @@ export function printAlertsReport(list, tab, repayments, interests){
       <tbody>
         ${list.map((b,i)=>{
           const bal=getBalance(b);
-          const rps=(repayments||[]).filter(r=>r.borrowerId===b.id);
+          const rps=(repayments&&repayments[b.id])||[];
           const lastRep=rps.length?rps.reduce((l,r)=>r.date>l?r.date:l,rps[0].date):null;
           return`<tr>
             <td>${i+1}</td>

@@ -193,7 +193,13 @@ export default function FinanceExpenses(){
       </Card>
 
       {/* Add/Edit Modal */}
-      <Modal open={!!modal} onClose={()=>setModal(null)} title={modal==='add'?'Add Expense':'Edit Expense'} width={520}>
+      <Modal open={!!modal} onClose={()=>setModal(null)} title={modal==='add'?'Add Expense':'Edit Expense'} width={520}
+        footer={modal&&(
+          <div style={{display:'flex',gap:10,width:'100%'}}>
+            <Button onClick={save} disabled={saving} full>{saving?'Saving…':modal==='add'?'Add Expense':'Save Changes'}</Button>
+            <Button variant="secondary" onClick={()=>setModal(null)}>Cancel</Button>
+          </div>
+        )}>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
           <FormField label="Category" required>
             <Select value={form.category} onChange={e=>set('category',e.target.value)}>
@@ -216,19 +222,17 @@ export default function FinanceExpenses(){
         <div style={{marginTop:12}}>
           <FormField label="Notes"><Input value={form.notes} onChange={e=>set('notes',e.target.value)} placeholder="Optional notes"/></FormField>
         </div>
-        <div style={{display:'flex',gap:10,marginTop:16}}>
-          <Button onClick={save} disabled={saving} full>{saving?'Saving…':modal==='add'?'Add Expense':'Save Changes'}</Button>
-          <Button variant="secondary" onClick={()=>setModal(null)}>Cancel</Button>
-        </div>
       </Modal>
 
       {/* Delete confirm */}
-      <Modal open={!!delId} onClose={()=>setDelId(null)} title="Delete Expense" width={380}>
+      <Modal open={!!delId} onClose={()=>setDelId(null)} title="Delete Expense" width={380}
+        footer={delId&&(
+          <div style={{display:'flex',gap:10,width:'100%'}}>
+            <Button variant="danger" onClick={del} style={{flex:1,justifyContent:'center'}}>Delete</Button>
+            <Button variant="secondary" onClick={()=>setDelId(null)}>Cancel</Button>
+          </div>
+        )}>
         <p style={{fontSize:14,color:'var(--text-secondary)',marginBottom:16}}>Are you sure you want to delete this expense? This cannot be undone.</p>
-        <div style={{display:'flex',gap:10}}>
-          <Button variant="danger" onClick={del}>Delete</Button>
-          <Button variant="secondary" onClick={()=>setDelId(null)}>Cancel</Button>
-        </div>
       </Modal>
     </div>
   );

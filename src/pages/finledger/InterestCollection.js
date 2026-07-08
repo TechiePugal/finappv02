@@ -32,12 +32,14 @@ export default function InterestCollection(){
   const[modal,setModal]=useState(null); // borrower
   const[pf,setPf]=useState({date:'',mode:'Cash',amount:'',fine:'0',collectFine:false,addToLoan:false,remarks:''});
   const[saving,setSaving]=useState(false);
-  const[viewMode,setViewMode]=useState('month');
+  const _flt=(()=>{try{return JSON.parse(localStorage.getItem('fl_ic_filters'))||{}}catch(e){return{}}})();
+  const[viewMode,setViewMode]=useState(_flt.viewMode||'month');
   const[search,setSearch]=useState('');
-  const[statusFilter,setStatusFilter]=useState('all');
-  const[amtRange,setAmtRange]=useState('all');
-  const[monthsFilter,setMonthsFilter]=useState('all');
-  const[sortBy,setSortBy]=useState('name'); // intFilterAdded
+  const[statusFilter,setStatusFilter]=useState(_flt.statusFilter||'all');
+  const[amtRange,setAmtRange]=useState(_flt.amtRange||'all');
+  const[monthsFilter,setMonthsFilter]=useState(_flt.monthsFilter||'all');
+  const[sortBy,setSortBy]=useState(_flt.sortBy||'name'); // intFilterAdded
+  useEffect(()=>{try{localStorage.setItem('fl_ic_filters',JSON.stringify({viewMode,statusFilter,amtRange,monthsFilter,sortBy}))}catch(e){}},[viewMode,statusFilter,amtRange,monthsFilter,sortBy]);
   const[month,setMonth]=useState(()=>{const n=new Date();return`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;});
   const[selected,setSelected]=useState(null);
   const DAILY_FINE=50;
@@ -71,10 +73,12 @@ export default function InterestCollection(){
     return outstanding*(b.interestRate||0)/100;
   }
 
-  function openModal(b){
+  function openModal(b,forMonth){
+    const m=forMonth||month;
+    if(forMonth&&forMonth!==month) setMonth(forMonth); // keep 'month' state in sync for calc, without forcing view
     const outstanding=getOutstanding(b);
     const interest=calcInterest(b,outstanding);
-    const daysOverdue=getDaysOverdue(month);
+    const daysOverdue=getDaysOverdue(m);
     const fine=daysOverdue>2?(daysOverdue-2)*DAILY_FINE:0;
     setModal(b);
     setPf({
@@ -92,22 +96,24 @@ export default function InterestCollection(){
     if(!modal)return;
     setSaving(true);
     try{
+      const isPartial=paid==='partial';const isPaid=paid===true;
+      const collected=isPaid||isPartial;
       const bPays=payments[modal.id]||{};
       const existing=bPays[month];
       const outstanding=getOutstanding(modal);
       const interest=calcInterest(modal,outstanding);
       const fine=pf.collectFine?parseFloat(pf.fine)||0:0;
-      const totalCollected=paid?(parseFloat(pf.amount)||0)+fine:0;
+      const totalCollected=collected?(parseFloat(pf.amount)||0)+fine:0;
 
       const data={
         borrowerId:modal.id,borrowerName:modal.borrowerName,
         loanAmount:modal.loanAmount,outstandingBalance:outstanding,
         interestRate:modal.interestRate,amountDue:Math.round(interest),
-        amountPaid:paid?(parseFloat(pf.amount)||0):0,
-        fine:paid?fine:0,totalCollected,
-        status:paid?'Paid':'Unpaid',
-        paymentDate:paid?pf.date:null,paymentMode:paid?pf.mode:null,
-        remarks:pf.remarks,month,addedToLoan:pf.addToLoan&&!paid,
+        amountPaid:collected?(parseFloat(pf.amount)||0):0,
+        fine:collected?fine:0,totalCollected,
+        status:isPaid?'Paid':isPartial?'Partial':'Unpaid',
+        paymentDate:collected?pf.date:null,paymentMode:collected?pf.mode:null,
+        remarks:pf.remarks,month,addedToLoan:pf.addToLoan&&!collected,
         updatedAt:serverTimestamp()
       };
 
@@ -115,11 +121,11 @@ export default function InterestCollection(){
       if(existing){await updateDoc(doc(db,'borrower_interest_payments',existing.id),data);}
       else{data.createdAt=serverTimestamp();const r=await addDoc(collection(db,'borrower_interest_payments'),data);payId=r.id;}
 
-      if(paid){
+      if(collected){
         // Ledger entry
         const lData={
           type:'Credit',category:'Loan Interest',
-          description:`Interest from ${modal.borrowerName} — ${month}${fine>0?` + Fine ₹${fine}`:''}`,
+          description:`Interest${isPartial?' (partial)':''} from ${modal.borrowerName} — ${month}${fine>0?` + Fine ₹${fine}`:''}`,
           amount:totalCollected,paymentMode:pf.mode,date:pf.date,
           borrowerName:modal.borrowerName,borrowerId:modal.id,
           linkedPaymentId:payId,createdAt:serverTimestamp()
@@ -129,7 +135,7 @@ export default function InterestCollection(){
       }
 
       // Compound interest: add interest amount to loan principal
-      if(pf.addToLoan&&!paid){
+      if(pf.addToLoan&&!collected){
         const newLoanAmount=(modal.loanAmount||0)+Math.round(interest);
         await updateDoc(doc(db,'borrower_master',modal.id),{
           loanAmount:newLoanAmount,
@@ -138,14 +144,14 @@ export default function InterestCollection(){
         });
         toast.success(`Interest ₹${Math.round(interest).toLocaleString('en-IN')} added to loan principal. New loan: ${formatCurrency(newLoanAmount)}`);
       } else {
-        toast.success(paid?`Payment recorded!${fine>0?` (incl. fine ₹${fine})`:''}`:paid===false?'Marked as unpaid':'Saved');
+        toast.success(isPaid?`Payment recorded!${fine>0?` (incl. fine ₹${fine})`:''}`:isPartial?'Partial payment recorded':'Marked as unpaid');
       }
       setModal(null);
     }catch(e){toast.error('Failed: '+e.message);}finally{setSaving(false);}
   }
 
   const totalDue=borrowers.reduce((s,b)=>s+calcInterest(b),0);
-  const totalColl=borrowers.filter(b=>payments[b.id]?.[month]?.status==='Paid').reduce((s,b)=>s+(payments[b.id]?.[month]?.totalCollected||payments[b.id]?.[month]?.amountPaid||0),0);
+  const totalColl=borrowers.filter(b=>['Paid','Partial'].includes(payments[b.id]?.[month]?.status)).reduce((s,b)=>s+(payments[b.id]?.[month]?.totalCollected||payments[b.id]?.[month]?.amountPaid||0),0);
   const pending=totalDue-totalColl;
   const rate=totalDue>0?Math.round((totalColl/totalDue)*100):0;
 
@@ -160,7 +166,7 @@ export default function InterestCollection(){
     const q=search.trim().toLowerCase();
     const ms=!q||[b.borrowerName,b.phone,b.loanId,b.guardianName,b.guardianPhone].some(v=>String(v||'').toLowerCase().includes(q));
     const p=payments[b.id]?.[month];
-    const mst=statusFilter==='all'||(statusFilter==='paid'&&p?.status==='Paid')||(statusFilter==='pending'&&!p)||(statusFilter==='unpaid'&&p?.status==='Unpaid');
+    const mst=statusFilter==='all'||(statusFilter==='paid'&&p?.status==='Paid')||(statusFilter==='partial'&&p?.status==='Partial')||(statusFilter==='pending'&&!p)||(statusFilter==='unpaid'&&p?.status==='Unpaid');
     const amt=b.loanAmount||0;let ma=true;
     if(amtRange==='0-10000')ma=amt<=10000;else if(amtRange==='10000-50000')ma=amt>10000&&amt<=50000;else if(amtRange==='50000-100000')ma=amt>50000&&amt<=100000;else if(amtRange==='100000+')ma=amt>100000;
     const mu=_getMoUnpaid(b);let mm=true;
@@ -191,11 +197,20 @@ export default function InterestCollection(){
               style={{padding:'8px 14px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:10,fontSize:14,color:'var(--text-primary)',outline:'none',fontFamily:'inherit'}}/>
           </div>
         }/>
+
+
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>
+        <StatCard label="Total Due" value={formatCurrency(Math.round(totalDue))} sub="Interest on outstanding" color="#ff9500"/>
+        <StatCard label="Collected" value={formatCurrency(Math.round(totalColl))} sub="Received this month" color="#34c759"/>
+        <StatCard label="Pending" value={formatCurrency(Math.round(pending))} sub="Still outstanding" color={pending>0?'#ff3b30':'#34c759'}/>
+        <StatCard label="Collection Rate" value={`${rate}%`} sub="Of total due" color={rate>=90?'#34c759':rate>=60?'#ff9500':'#ff3b30'}/>
+      </div>
+      {/* icLayoutV2 */}
       <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:14,alignItems:'center'}}>
         <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name, phone, loan ID, guardian…"
           style={{padding:'8px 14px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:10,fontSize:13,color:'var(--text-primary)',outline:'none',fontFamily:'inherit',flex:'1 1 200px',minWidth:180}}/>
         <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} style={{padding:'7px 10px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:9,fontSize:12.5,color:'var(--text-primary)',outline:'none',fontFamily:'inherit',cursor:'pointer'}}>
-          <option value="all">All Status</option><option value="pending">Pending</option><option value="paid">Paid</option><option value="unpaid">Unpaid</option>
+          <option value="all">All Status</option><option value="pending">Pending</option><option value="paid">Paid</option><option value="partial">Partial</option><option value="unpaid">Unpaid</option>
         </select>
         <select value={monthsFilter} onChange={e=>setMonthsFilter(e.target.value)} style={{padding:'7px 10px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:9,fontSize:12.5,color:'var(--text-primary)',outline:'none',fontFamily:'inherit',cursor:'pointer'}}>
           <option value="all">All Borrowers</option><option value="1mo">1+ Month Unpaid</option><option value="2mo">2+ Months Unpaid</option><option value="3mo">3+ Months Unpaid</option><option value="6mo">6+ Months Unpaid</option>
@@ -206,13 +221,6 @@ export default function InterestCollection(){
         <select value={sortBy} onChange={e=>setSortBy(e.target.value)} style={{padding:'7px 10px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:9,fontSize:12.5,color:'var(--text-primary)',outline:'none',fontFamily:'inherit',cursor:'pointer'}}>
           <option value="name">Sort: Name A–Z</option><option value="loan">Sort: Highest Loan</option><option value="interest">Sort: Highest Interest</option><option value="unpaid">Sort: Most Months Unpaid</option>
         </select>
-      </div>
-
-      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>
-        <StatCard label="Total Due" value={formatCurrency(Math.round(totalDue))} sub="Interest on outstanding" color="#ff9500"/>
-        <StatCard label="Collected" value={formatCurrency(Math.round(totalColl))} sub="Received this month" color="#34c759"/>
-        <StatCard label="Pending" value={formatCurrency(Math.round(pending))} sub="Still outstanding" color={pending>0?'#ff3b30':'#34c759'}/>
-        <StatCard label="Collection Rate" value={`${rate}%`} sub="Of total due" color={rate>=90?'#34c759':rate>=60?'#ff9500':'#ff3b30'}/>
       </div>
 
       {/* Progress bar */}
@@ -259,7 +267,7 @@ export default function InterestCollection(){
                       <td style={{padding:'12px 14px',fontSize:13,color:'#ff3b30',fontWeight:fine>0?700:400}}>{fine>0?formatCurrency(fine):'—'}</td>
                       <td style={{padding:'12px 14px'}}>{p?<Badge label={p.status} type={p.status.toLowerCase()}/>:<Badge label="Pending" type="pending"/>}</td>
                       <td style={{padding:'12px 14px'}}>
-                        <Button size="sm" variant={p?.status==='Paid'?'secondary':'primary'} onClick={()=>openModal(b)}>{p?.status==='Paid'?'Update':'Collect'}</Button>
+                        <Button size="sm" variant={['Paid','Partial'].includes(p?.status)?'secondary':'primary'} onClick={()=>openModal(b)}>{p?.status==='Paid'?'Update':p?.status==='Partial'?'Partial ✎':'Collect'}</Button>
                       </td>
                     </tr>
                   );
@@ -309,7 +317,7 @@ export default function InterestCollection(){
                           const isPaid=p?.status==='Paid';
                           const label=new Date(mo+'-01').toLocaleDateString('en-IN',{month:'short',year:'numeric'});
                           return(
-                            <div key={mo} onClick={()=>{setMonth(mo);setViewMode('month');openModal(b);}}
+                            <div key={mo} onClick={()=>openModal(b,mo)} /* stays on History — no forced view switch */
                               style={{padding:'10px 12px',borderRadius:10,border:`1px solid ${isPaid?'rgba(52,199,89,0.25)':mo===month?'rgba(0,122,255,0.3)':'rgba(0,0,0,0.07)'}`,background:isPaid?'rgba(52,199,89,0.04)':mo===month?'rgba(0,122,255,0.04)':'#fafafa',cursor:'pointer'}}>
                               <div style={{fontSize:12,fontWeight:600,color:isPaid?'#1a7a34':mo===month?'#007aff':'var(--text-primary)',marginBottom:4}}>{label}</div>
                               <div style={{fontSize:13,fontWeight:700,color:isPaid?'#34c759':'var(--text-secondary)'}}>{isPaid?formatCurrency(p.totalCollected||p.amountPaid):'Pending'}</div>
@@ -328,7 +336,17 @@ export default function InterestCollection(){
       )}
 
       {/* Collection Modal */}
-      <Modal open={!!modal} onClose={()=>setModal(null)} title={`Collect Interest — ${modal?.borrowerName}`} width={500}>
+      <Modal open={!!modal} onClose={()=>setModal(null)} title={`Collect Interest — ${modal?.borrowerName}`} width={500}
+        footer={modal&&(
+          <div style={{display:'flex',gap:10,width:'100%'}}>
+            {pf.addToLoan
+              ?<Button onClick={()=>savePay(false)} disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?'Saving…':'Add Interest to Principal'}</Button>
+              :<><Button onClick={()=>savePay(true)} disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?'Saving…':'✓ Mark as Paid'}</Button>
+              <Button variant="secondary" onClick={()=>savePay('partial')} disabled={saving}>Partial</Button>
+              <Button variant="danger" onClick={()=>savePay(false)} disabled={saving}>Mark Unpaid</Button></>
+            }
+          </div>
+        )}>
         {modal&&(()=>{
           const outstanding=getOutstanding(modal);
           const interest=calcInterest(modal,outstanding);
@@ -437,13 +455,6 @@ export default function InterestCollection(){
                 </div>
               )}
 
-              <div style={{display:'flex',gap:10,marginTop:16}}>
-                {pf.addToLoan
-                  ?<Button onClick={()=>savePay(false)} disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?'Saving…':'Add Interest to Principal'}</Button>
-                  :<><Button onClick={()=>savePay(true)} disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?'Saving…':'✓ Mark as Paid'}</Button>
-                  <Button variant="danger" onClick={()=>savePay(false)} disabled={saving}>Mark Unpaid</Button></>
-                }
-              </div>
             </>
           );
         })()}

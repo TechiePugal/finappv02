@@ -223,6 +223,22 @@ export default function Alerts(){
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="12" y2="18"/><line x1="15" y1="15" x2="12" y2="18"/></svg>
             Export PDF
           </button>
+          <button onClick={()=>{
+            const rows=filtered.map(b=>{
+              const reps=(repayments[b.id]||[]).reduce((s,r)=>s+(r.repaidAmount||r.amount||0),0);
+              const out=Math.max(0,(b.loanAmount||0)-reps);
+              return [b.borrowerName||'',b.phone||'',b.loanId||'',b.guardianName||'',b.guardianPhone||'',b.loanAmount||0,out,(b.interestRate||0)+'%/mo',b.status||'',b.loanStartDate||'',b.agreementExpiryDate||b.agreementDate||''];
+            });
+            const head=['Name','Phone','Loan ID','Guardian','Guardian Phone','Loan Amount','Outstanding','Rate','Status','Loan Start','Agreement Expiry'];
+            const esc=v=>{const s=String(v??'');return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;};
+            const csv=[head,...rows].map(r=>r.map(esc).join(',')).join('\n');
+            const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
+            const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`alerts-${tab}-${new Date().toISOString().split('T')[0]}.csv`;a.click();URL.revokeObjectURL(a.href);
+          }} /* exportAlertsCsv */
+            style={{display:'flex',alignItems:'center',gap:6,padding:'6px 14px',borderRadius:9,border:'1px solid rgba(52,199,89,.3)',background:'rgba(52,199,89,.06)',color:'#248a3d',cursor:'pointer',fontSize:12,fontWeight:600,fontFamily:'inherit',whiteSpace:'nowrap'}}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Export CSV
+          </button>
         </div>
 
         {filtered.length===0?(
@@ -293,53 +309,65 @@ export default function Alerts(){
       </Card>
 
       {/* Contact Modal */}
-      <Modal open={!!contactModal} onClose={()=>setContactModal(null)} title={`Contact — ${contactModal?.borrowerName}`} width={440}>
+      <Modal open={!!contactModal} onClose={()=>setContactModal(null)} title={`Contact — ${contactModal?.borrowerName}`} width={440}
+        footer={contactModal&&<Button full onClick={()=>setContactModal(null)}>Close</Button>}>
         {contactModal&&(()=>{
           const bal=getBalance(contactModal);
           const unpaidMo=getUnpaidInterestMonths(contactModal);
           const lastRep=getLastRepaymentDate(contactModal);
           const expiryDate=contactModal.agreementExpiryDate||contactModal.agreementDate;
           const daysToExpiry=expiryDate?daysBetween(today,expiryDate):null;
+          const Section=({title,accent,children})=>(
+            <div style={{border:`1px solid ${accent}33`,borderRadius:12,marginBottom:10,overflow:'hidden'}}>
+              <div style={{padding:'7px 14px',background:`${accent}0d`,fontSize:11,fontWeight:800,color:accent,textTransform:'uppercase',letterSpacing:'.05em'}}>{title}</div>
+              <div style={{padding:'10px 14px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:'6px 16px'}}>{children}</div>
+            </div>
+          );
+          const F=({label,value,color,full})=>(
+            <div style={{gridColumn:full?'1 / -1':'auto'}}>
+              <div style={{fontSize:10,color:'var(--text-secondary)',fontWeight:600,textTransform:'uppercase',letterSpacing:'.03em',marginBottom:2}}>{label}</div>
+              <div style={{fontSize:13,fontWeight:600,color:color||'var(--text-primary)'}}>{value??'—'}</div>
+            </div>
+          );
           return(
-            <div style={{display:'flex',flexDirection:'column',gap:0}}>
-              {/* Alert summary */}
-              <div style={{background:'rgba(255,59,48,0.06)',borderRadius:10,padding:'12px 14px',marginBottom:14,fontSize:13,color:'#c0392b',fontWeight:500}}>
-                ⚠ Follow-up required — outstanding balance {formatCurrency(Math.round(bal))}
-                {unpaidMo>=2&&` · ${unpaidMo} months interest overdue`}
-                {daysToExpiry!==null&&daysToExpiry<0&&' · Agreement expired'}
+            <div>
+              {/* Identity strip */}
+              <div style={{display:'flex',alignItems:'center',gap:14,padding:'14px 16px',borderRadius:14,marginBottom:14,background:'linear-gradient(135deg,rgba(255,59,48,0.08),rgba(255,149,0,0.08))',border:'1px solid rgba(255,59,48,0.18)'}}>
+                {contactModal.photo
+                  ?<img src={contactModal.photo} alt="" style={{width:56,height:56,borderRadius:'50%',objectFit:'cover',border:'3px solid rgba(255,59,48,0.25)',flexShrink:0}}/>
+                  :<div style={{width:56,height:56,borderRadius:'50%',background:'linear-gradient(135deg,#ff3b30,#ff9500)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:22,fontWeight:800,color:'#fff',flexShrink:0}}>{(contactModal.borrowerName||'?')[0].toUpperCase()}</div>}
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:15,color:'var(--text-primary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{contactModal.borrowerName}</div>
+                  <div style={{fontSize:12,color:'var(--text-secondary)',marginTop:2}}>{contactModal.phone}{contactModal.loanId?' · '+contactModal.loanId:''}</div>
+                  <div style={{marginTop:5,display:'inline-flex',alignItems:'center',gap:4,fontSize:11,fontWeight:700,color:'#fff',background:'#ff3b30',padding:'2px 9px',borderRadius:99}}>
+                    ⚠ {formatCurrency(Math.round(bal))} due{unpaidMo>=2?` · ${unpaidMo}mo overdue`:''}{daysToExpiry!==null&&daysToExpiry<0?' · Expired':''}
+                  </div>
+                </div>
               </div>
 
-              {/* Photo */}
-              {contactModal.photo&&(
-                <div style={{textAlign:'center',marginBottom:14}}>
-                  <img src={contactModal.photo} alt="" style={{width:56,height:56,borderRadius:'50%',objectFit:'cover',border:'3px solid rgba(0,122,255,0.2)'}}/>  /* alertsV3 */
-                </div>
-              )}
-
-              <Row label="Borrower" value={contactModal.borrowerName}/>
-              <Row label="Phone" value={<a href={`tel:${contactModal.phone}`} style={{color:'var(--accent)',fontWeight:700,fontSize:15,textDecoration:'none'}}>📞 {contactModal.phone}</a>}/>
-              {contactModal.email&&<Row label="Email" value={<a href={`mailto:${contactModal.email}`} style={{color:'var(--accent)'}}>{contactModal.email}</a>}/>}
-              {contactModal.address&&<Row label="Address" value={contactModal.address}/>}
+              <Section title="Contact" accent="#007aff">
+                <F label="Phone" value={<a href={`tel:${contactModal.phone}`} style={{color:'var(--accent)',fontWeight:700,textDecoration:'none'}}>📞 {contactModal.phone}</a>}/>
+                {contactModal.email&&<F label="Email" value={<a href={`mailto:${contactModal.email}`} style={{color:'var(--accent)'}}>{contactModal.email}</a>}/>}
+                {contactModal.address&&<F label="Address" value={contactModal.address} full/>}
+              </Section>
 
               {contactModal.guardianName&&(
-                <>
-                  <div style={{height:1,background:'rgba(0,0,0,.07)',margin:'10px 0'}}/>
-                  <div style={{fontSize:11,fontWeight:700,color:'var(--text-secondary)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6}}>Guardian</div>
-                  <Row label="Name" value={contactModal.guardianName}/>
-                  {contactModal.guardianPhone&&<Row label="Phone" value={<a href={`tel:${contactModal.guardianPhone}`} style={{color:'var(--accent)',fontWeight:700,fontSize:15,textDecoration:'none'}}>📞 {contactModal.guardianPhone}</a>}/>}
-                  {contactModal.guardianAddress&&<Row label="Address" value={contactModal.guardianAddress}/>}
-                </>
+                <Section title="Guardian" accent="#5856d6">
+                  <F label="Name" value={contactModal.guardianName}/>
+                  {contactModal.guardianPhone&&<F label="Phone" value={<a href={`tel:${contactModal.guardianPhone}`} style={{color:'var(--accent)',fontWeight:700,textDecoration:'none'}}>📞 {contactModal.guardianPhone}</a>}/>}
+                  {contactModal.guardianAddress&&<F label="Address" value={contactModal.guardianAddress} full/>}
+                </Section>
               )}
 
-              <div style={{height:1,background:'rgba(0,0,0,.07)',margin:'10px 0'}}/>
-              <div style={{fontSize:11,fontWeight:700,color:'var(--text-secondary)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6}}>Loan Details</div>
-              <Row label="Loan ID" value={contactModal.loanId||contactModal.id.slice(-8)}/>
-              <Row label="Original Loan" value={formatCurrency(contactModal.loanAmount||0)}/>
-              <Row label="Outstanding" value={formatCurrency(Math.round(bal))} color="#ff9500"/>
-              <Row label="Monthly Interest" value={formatCurrency(Math.round(bal*(contactModal.interestRate||0)/100))} color="#007aff"/>
-              {lastRep&&<Row label="Last Repayment" value={fmtDate(lastRep)}/>}
-              {contactModal.loanStartDate&&<Row label="Loan Start" value={fmtDate(contactModal.loanStartDate)}/>}
-              {expiryDate&&<Row label="Agreement Expiry" value={fmtDate(expiryDate)} color={daysToExpiry!==null&&daysToExpiry<0?'#ff3b30':'var(--text-primary)'}/>}
+              <Section title="Loan Details" accent="#ff9500">
+                <F label="Loan ID" value={contactModal.loanId||contactModal.id.slice(-8)}/>
+                <F label="Original Loan" value={formatCurrency(contactModal.loanAmount||0)}/>
+                <F label="Outstanding" value={formatCurrency(Math.round(bal))} color="#ff9500"/>
+                <F label="Monthly Interest" value={formatCurrency(Math.round(bal*(contactModal.interestRate||0)/100))} color="#007aff"/>
+                {lastRep&&<F label="Last Repayment" value={fmtDate(lastRep)}/>}
+                {contactModal.loanStartDate&&<F label="Loan Start" value={fmtDate(contactModal.loanStartDate)}/>}
+                {expiryDate&&<F label="Agreement Expiry" value={fmtDate(expiryDate)} color={daysToExpiry!==null&&daysToExpiry<0?'#ff3b30':'var(--text-primary)'} full/>}
+              </Section>
             </div>
           );
         })()}

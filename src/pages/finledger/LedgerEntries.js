@@ -47,6 +47,7 @@ export default function LedgerEntries(){
   function openEdit(e){setEditItem(e);setForm({type:e.type,category:e.category,description:e.description,amount:String(e.amount),paymentMode:e.paymentMode||'Cash',date:e.date||new Date().toISOString().split('T')[0]});setShowModal(true);}
 
   async function saveEntry(e){
+    if(e&&e.preventDefault)e.preventDefault();
     e.preventDefault();
     if(!form.description||!form.amount) return toast.error('Fill all required fields');
     setSaving(true);
@@ -208,7 +209,13 @@ export default function LedgerEntries(){
         <p style={{fontSize:12,color:'var(--text-tertiary)',marginTop:12,textAlign:'right'}}>{filtered.length} of {entries.length} entries</p>
       </Card>
 
-      <Modal open={showModal} onClose={()=>setShowModal(false)} title={editItem?'Edit Ledger Entry':'Add Ledger Entry'}>
+      <Modal open={showModal} onClose={()=>setShowModal(false)} title={editItem?'Edit Ledger Entry':'Add Ledger Entry'}
+        footer={showModal&&(
+          <div style={{display:'flex',gap:10,width:'100%'}}>
+            <Button onClick={()=>saveEntry()} disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?'Saving…':editItem?'Update Entry':'Add Entry'}</Button>
+            <Button variant="secondary" onClick={()=>setShowModal(false)}>Cancel</Button>
+          </div>
+        )}>
         <form onSubmit={saveEntry} style={{display:'flex',flexDirection:'column',gap:14}}>
           {editItem&&<div style={{padding:'10px 14px',background:'rgba(255,149,0,0.08)',borderRadius:10,border:'1px solid rgba(255,149,0,0.2)'}}>
             <p style={{fontSize:12,color:'#a05a00'}}>⚠️ Editing this entry will also update linked payment records if applicable.</p>
@@ -225,10 +232,6 @@ export default function LedgerEntries(){
             <div><label style={lbl}>Payment Mode</label><select value={form.paymentMode} onChange={e=>setForm(p=>({...p,paymentMode:e.target.value}))} style={inp}><option>Cash</option><option>Bank Transfer</option><option>UPI</option><option>Cheque</option></select></div>
           </div>
           <div><label style={lbl}>Date</label><input type="date" value={form.date} onChange={e=>setForm(p=>({...p,date:e.target.value}))} style={inp}/></div>
-          <div style={{display:'flex',gap:10,marginTop:4}}>
-            <Button type="submit" disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?'Saving…':editItem?'Update Entry':'Add Entry'}</Button>
-            <Button variant="secondary" onClick={()=>setShowModal(false)}>Cancel</Button>
-          </div>
         </form>
       </Modal>
     </div>
