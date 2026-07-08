@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell } from 'recharts';
 import { FileText, Gavel, TrendingUp, Wallet, AlertTriangle, Clock, CheckCircle, ArrowRight, Plus, BarChart3 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import { getDashboardData, getOtherChits } from '../../utils/cf_firestore';
+import { getDashboardData, getOtherChits, getOtherChitPayments } from '../../utils/cf_firestore';
 import { buildMonthProjection, getExpectedPayable, getCommBreakdown, getChitsForMonth, getChitRoundForMonth, calcTakeSuggestion } from '../../utils/cf_engine';
 import { formatCurrency, formatMonthYear, roundTo } from '../../utils/cf_format';
 import { Card, StatCard, tokens, SectionHeader } from '../../components/chitfund/UI';
@@ -18,11 +18,18 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState('');
   const [joined, setJoined] = useState([]);
+  const [joinedPays, setJoinedPays] = useState({});
 
   useEffect(() => {
     if (!user) return;
     getDashboardData(user.uid).then(d => { setData(d); setLoading(false); }).catch(e => { setLoadErr('Failed to load data — check connection'); setLoading(false); });
-    getOtherChits(user.uid).then(setJoined).catch(() => {});
+    getOtherChits(user.uid).then(list => {
+      setJoined(list);
+      const active = list.filter(j => j.myStatus !== 'Cashed');
+      Promise.all(active.map(j => getOtherChitPayments(j.id).then(p => [j.id, p]))).then(pairs => {
+        setJoinedPays(Object.fromEntries(pairs));
+      }).catch(() => {});
+    }).catch(() => {});
   }, [user]);
 
   if (loading) return <PageLoader stats={4} />;
@@ -37,7 +44,7 @@ export default function Dashboard() {
   const scheds  = data?.schedules || {};
   const active  = chits.filter(c => c.status === 'Active');
   const proj    = buildMonthProjection(chits, scheds);
-  const next1   = proj[0]?.total || 0;
+  const next1   = proj[0]?.total || 0; // formed-only (kept for existing stat cards)
   const next3   = proj.slice(0,3).reduce((s,m)=>s+m.total,0);
   const next6   = proj.slice(0,6).reduce((s,m)=>s+m.total,0);
   const totalExposure = chits.reduce((s,c)=>s+Math.max(0,(c.totalInvested||0)-(c.totalCommissionEarned||0)-(c.totalReceived||0)),0);
@@ -63,11 +70,23 @@ export default function Dashboard() {
   upcoming.sort((a,b) => a.daysAway - b.daysAway);
   const urgent = upcoming.filter(u => u.daysAway <= 1);
 
-  const chartData = proj.slice(0,8).map((m,i) => ({
-    month: formatMonthYear(m.month),
-    required: m.total,
-    isNow: i===0,
-  }));
+  const chartData = proj.slice(0,8).map((m,i) => {
+    // Combined: add joined-chit subscription obligations for this month offset
+    const joinedThisMonth = joined.filter(j => j.myStatus !== 'Cashed').reduce((s,j) => {
+      const pays = joinedPays[j.id] || [];
+      const paidCount = pays.filter(p => p.status === 'Paid').length;
+      const sub = (j.totalChitValue||0) / (j.totalMembers||1);
+      const stillOwesThisMonth = (paidCount + i) < (j.totalMembers||0);
+      return s + (stillOwesThisMonth ? sub : 0);
+    }, 0);
+    return {
+      month: formatMonthYear(m.month),
+      formed: m.total,
+      joinedObligation: Math.round(joinedThisMonth),
+      required: m.total + Math.round(joinedThisMonth),
+      isNow: i===0,
+    };
+  });
 
   const formedValue   = chits.reduce((s,c)=>s+(c.totalChitValue||0),0);
   const formedComm    = chits.reduce((s,c)=>s+(c.totalCommissionEarned||0),0);
@@ -86,6 +105,16 @@ export default function Dashboard() {
     const pct = c.totalMembers>0 ? Math.round(((c.auctionsCompleted||0)/c.totalMembers)*100) : 0;
     return { c, sug, br, pct };
   });
+
+  // Joined-chit reminders — payment due/overdue this month
+  const _curMo = (() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`; })();
+  const joinedReminders = joined.filter(j => j.myStatus !== 'Cashed').map(j => {
+    const pays = joinedPays[j.id] || [];
+    const thisMoPay = pays.find(p => p.month === _curMo);
+    const paid = thisMoPay && thisMoPay.status === 'Paid';
+    const sub = (j.totalChitValue || 0) / (j.totalMembers || 1);
+    return { j, paid, sub };
+  }).filter(r => !r.paid);
 
   const now_ = new Date();
   const hour = now_.getHours();
@@ -196,18 +225,41 @@ export default function Dashboard() {
         </Card>
       )}
 
+      {joinedReminders.length > 0 && (
+        <Card>
+          <SectionHeader title="Joined Chit Reminders — Payment Due" />
+          <p style={{ margin:'-4px 0 14px', fontSize:12.5, color:tokens.textSub }}>Chits you've joined where this month's subscription isn't marked paid yet.</p>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))', gap:12 }}>
+            {joinedReminders.map(({ j, sub }) => (
+              <div key={j.id} onClick={()=>nav('/cf/other-chits')} style={{ cursor:'pointer', padding:'14px 16px', borderRadius:12, border:`1.5px solid ${tokens.amber}55`, background:'rgba(255,149,0,0.05)' }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6, gap:8 }}>
+                  <span style={{ fontSize:14, fontWeight:700, color:tokens.text, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{j.companyName}</span>
+                  <span style={{ fontSize:11, fontWeight:800, padding:'3px 10px', borderRadius:99, flexShrink:0, background:'#FEF3C7', color:'#92400E' }}>⏰ Due this month</span>
+                </div>
+                <div style={{ fontSize:12.5, color:tokens.textSub }}>Subscription: <strong style={{color:tokens.text}}>{fmt(sub)}</strong></div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
       <div className="cf-dash-main-aside">
         {/* Chart */}
         <Card>
-          <SectionHeader title="Monthly Fund Requirement — 8-Month Forecast"
+          <SectionHeader title="Combined Fund Projection — 8-Month Forecast"
+            sub="Formed-chit slab investment + joined-chit subscriptions, combined"
             action={<button onClick={()=>nav('/cf/projection')} style={{ background:'none', border:'none', color:tokens.blue, fontSize:12.5, fontWeight:600, cursor:'pointer', fontFamily:'inherit', display:'flex', alignItems:'center', gap:4 }}>Full View <ArrowRight size={12}/></button>}/>
-          <div style={{ display:'flex', gap:20, marginBottom:14, flexWrap:'wrap' }}>
-            {[{l:'This Month',v:fmt(next1),c:tokens.blue},{l:'3 Months',v:fmt(next3),c:'#B45309'},{l:'6 Months',v:fmt(next6),c:tokens.purple}].map((k,i)=>(
+          <div style={{ display:'flex', gap:20, marginBottom:10, flexWrap:'wrap' }}>
+            {[{l:'This Month (Combined)',v:fmt(chartData[0]?.required||0),c:tokens.blue},{l:'3 Months',v:fmt(chartData.slice(0,3).reduce((s,m)=>s+m.required,0)),c:'#B45309'},{l:'6 Months',v:fmt(chartData.slice(0,6).reduce((s,m)=>s+m.required,0)),c:tokens.purple}].map((k,i)=>(
               <div key={i}>
                 <div style={{ fontSize:11, color:tokens.textMuted, textTransform:'uppercase', letterSpacing:'.06em', marginBottom:2 }}>{k.l}</div>
                 <div style={{ fontSize:16, fontWeight:800, color:k.c }}>{k.v}</div>
               </div>
             ))}
+          </div>
+          <div style={{ display:'flex', gap:14, marginBottom:12, fontSize:11.5 }}>
+            <span style={{ display:'flex', alignItems:'center', gap:5 }}><span style={{width:9,height:9,borderRadius:2,background:tokens.blue,display:'inline-block'}}/>Formed (your slab)</span>
+            <span style={{ display:'flex', alignItems:'center', gap:5 }}><span style={{width:9,height:9,borderRadius:2,background:tokens.green,display:'inline-block'}}/>Joined (your subscriptions)</span>
           </div>
           <div style={{ height:190 }}>
             <ResponsiveContainer width="100%" height="100%">
@@ -217,12 +269,17 @@ export default function Dashboard() {
                 <YAxis tick={{ fontSize:10, fill:tokens.textSub }} tickFormatter={v=>`₹${(v/1000).toFixed(0)}K`}/>
                 <Tooltip content={({ active, payload, label }) => active && payload?.length ? (
                   <div style={{ background:'#fff', border:`1px solid ${tokens.border}`, borderRadius:9, padding:'8px 13px', boxShadow:'0 4px 16px rgba(0,0,0,.09)' }}>
-                    <div style={{ fontSize:11, color:tokens.textSub, marginBottom:3 }}>{label}</div>
-                    <div style={{ fontSize:15, fontWeight:800, color:tokens.blue }}>{formatCurrency(payload[0].value)}</div>
+                    <div style={{ fontSize:11, color:tokens.textSub, marginBottom:4, fontWeight:700 }}>{label}</div>
+                    <div style={{ fontSize:12, color:tokens.blue }}>Formed: {formatCurrency(payload.find(p=>p.dataKey==='formed')?.value||0)}</div>
+                    <div style={{ fontSize:12, color:tokens.green }}>Joined: {formatCurrency(payload.find(p=>p.dataKey==='joinedObligation')?.value||0)}</div>
+                    <div style={{ fontSize:13, fontWeight:800, color:tokens.text, marginTop:3, borderTop:`1px solid ${tokens.border}`, paddingTop:3 }}>Total: {formatCurrency((payload.find(p=>p.dataKey==='formed')?.value||0)+(payload.find(p=>p.dataKey==='joinedObligation')?.value||0))}</div>
                   </div>
                 ) : null}/>
-                <Bar dataKey="required" radius={[5,5,0,0]}>
+                <Bar dataKey="formed" stackId="a" radius={[0,0,0,0]}>
                   {chartData.map((d,i) => <Cell key={i} fill={d.isNow ? tokens.blue : '#BFDBFE'}/>)}
+                </Bar>
+                <Bar dataKey="joinedObligation" stackId="a" radius={[5,5,0,0]}>
+                  {chartData.map((d,i) => <Cell key={i} fill={d.isNow ? tokens.green : '#BBF7D0'}/>)}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>

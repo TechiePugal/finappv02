@@ -27,6 +27,10 @@ import CFExposure from './pages/chitfund/Exposure';
 import CFCommissionCalc from './pages/chitfund/CommissionCalc';
 import CFSettings from './pages/chitfund/Settings';
 import CFOtherChits from './pages/chitfund/OtherChits';
+import CFJournal from './pages/chitfund/Journal';
+import CFJoinedAuctions from './pages/chitfund/JoinedAuctions';
+import CFJoinedExposure from './pages/chitfund/JoinedExposure';
+import CFJoinedLedger from './pages/chitfund/JoinedLedger';
 
 // Finance Ledger (react-router with /fl prefix)
 import FLLayout from './components/finledger/Layout';
@@ -148,6 +152,10 @@ function AppRouter() {
             <Route path="settings" element={<CFSettings />} />
             <Route path="commission-calc" element={<CFCommissionCalc />} />
             <Route path="other-chits" element={<CFOtherChits />} />
+            <Route path="journal" element={<CFJournal />} />
+            <Route path="joined-auctions" element={<CFJoinedAuctions />} />
+            <Route path="joined-exposure" element={<CFJoinedExposure />} />
+            <Route path="joined-ledger" element={<CFJoinedLedger />} />
           </Route>
           <Route path="*" element={<Navigate to="/cf" replace />} />
         </Routes>

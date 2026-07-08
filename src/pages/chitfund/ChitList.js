@@ -136,6 +136,9 @@ const BLANK = {
   managerCommissionPct:'5', slabType:'Fixed', slabValue:'',
   commissionBase:'On Total', auctionDay:'15',
   companyIncluded: false,   // ← KEY NEW FIELD
+  companyMemberContribution:'',   // company's own per-round payment when it IS a member (replaces Slab)
+  companyMemberCount:'1',   // how many member slots the company itself holds (Company 1, Company 2, ...)
+  organiserCommissionMode:'percent',   // 'percent' = organiser fee applies across all auctions | 'first_free' = company takes auction #1 with no bid, no organiser fee
   range1:'', range2:'', range3:'', range4:'',
 };
 
@@ -181,7 +184,8 @@ export default function ChitList() {
   const phases = form.totalMembers ? calcPhases(+form.totalMembers) : [];
 
   // External member slots = totalMembers - (companyIncluded ? 1 : 0)
-  const externalSlots = form.totalMembers ? Math.max(0, +form.totalMembers - (form.companyIncluded ? 1 : 0)) : 0;
+  const companySlotCount = form.companyIncluded ? Math.max(1, +form.companyMemberCount || 1) : 0;
+  const externalSlots = form.totalMembers ? Math.max(0, +form.totalMembers - companySlotCount) : 0;
 
   function openCreate() { setForm(BLANK); setStep(1); setFormErr(''); setMembers([{name:'',phone:''}]); setShowCreate(true); }
   function openEdit(c) {
@@ -196,6 +200,9 @@ export default function ChitList() {
       slabType: c.slabType||'Fixed', slabValue: String(c.slabValue||''),
       commissionBase: c.commissionBase||'On Total', auctionDay: String(c.auctionDay||15),
       companyIncluded: c.companyIncluded || false,
+      companyMemberContribution: String(c.companyMemberContribution||''),
+      companyMemberCount: String(c.companyMemberCount||'1'),
+      organiserCommissionMode: c.organiserCommissionMode||'percent',
       range1: String(c.range_phase1||c.range1||''), range2: String(c.range_phase2||c.range2||''),
       range3: String(c.range_phase3||c.range3||''), range4: String(c.range_phase4||c.range4||''),
     });
@@ -209,9 +216,13 @@ export default function ChitList() {
     if (!form.totalChitValue || +form.totalChitValue <= 0)   return setFormErr('Chit value must be greater than 0.');
     if (!form.totalMembers   || +form.totalMembers < 2)      return setFormErr('Minimum 2 total members.');
     if (!form.startDate)                                     return setFormErr('Start date is required.');
-    if (!form.slabValue || +form.slabValue <= 0)             return setFormErr('Slab value is required.');
-    if (form.slabType === 'Fixed' && sub > 0 && +form.slabValue > sub)
-      return setFormErr(`Slab (${fmt(+form.slabValue)}) cannot exceed per-head (${fmt(sub)}).`);
+    if (form.companyIncluded) {
+      if (!form.companyMemberContribution || +form.companyMemberContribution <= 0) return setFormErr("Company's own contribution amount is required.");
+    } else {
+      if (!form.slabValue || +form.slabValue <= 0)             return setFormErr('Slab value is required.');
+      if (form.slabType === 'Fixed' && sub > 0 && +form.slabValue > sub)
+        return setFormErr(`Slab (${fmt(+form.slabValue)}) cannot exceed per-head (${fmt(sub)}).`);
+    }
     if (editTarget) { await handleSave(); return; }
     setMembers(Array.from({ length: externalSlots }, (_, i) => members[i] || { name:'', phone:'' }));
     setStep(2);
@@ -220,13 +231,19 @@ export default function ChitList() {
   async function handleSave() {
     setSaving(true);
     try {
+      const _orgModeFirstFree = form.companyIncluded && form.organiserCommissionMode === 'first_free';
       const payload = {
         ...form,
+        managerCommissionPct: _orgModeFirstFree ? 0 : +form.managerCommissionPct,
         totalChitValue:      +form.totalChitValue,
         totalMembers:        +form.totalMembers,
         auctionInterval:     +form.auctionInterval,
         managerCommissionPct:+form.managerCommissionPct,
-        slabValue:           +form.slabValue,
+        slabValue:           form.companyIncluded ? +form.companyMemberContribution : +form.slabValue,
+        slabType:            form.companyIncluded ? 'Fixed' : form.slabType,
+        companyMemberContribution: form.companyIncluded ? +form.companyMemberContribution : 0,
+        companyMemberCount: form.companyIncluded ? Math.max(1, +form.companyMemberCount || 1) : 0,
+        organiserCommissionMode: form.companyIncluded ? form.organiserCommissionMode : 'percent',
         auctionDay:          +form.auctionDay || 15,
         companyIncluded:     form.companyIncluded,
         range_phase1:        +form.range1 || 0,
@@ -241,6 +258,13 @@ export default function ChitList() {
         const named = members.filter(m => m.name.trim());
         const id = await createChit(payload, user.uid);
         if (named.length) await Promise.all(named.map(m => addMember(id, m, user.uid)));
+        // Auto-create Company slot member entries (Company 1, Company 2, ...)
+        if (form.companyIncluded) {
+          const n = Math.max(1, +form.companyMemberCount || 1);
+          await Promise.all(Array.from({ length: n }, (_, i) => addMember(id, {
+            name: n > 1 ? `Company ${i + 1}` : 'Company', phone: '', isCompany: true,
+          }, user.uid)));
+        }
         closeCreate(); load();
         showNotif('Chit fund created!');
         nav(`/cf/chits/${id}`); return;
@@ -512,12 +536,39 @@ export default function ChitList() {
                   {/* Company included toggle — THE KEY NEW FEATURE */}
                   <Toggle
                     checked={form.companyIncluded}
-                    onChange={v => sf('companyIncluded', v)}
+                    onChange={v => { sf('companyIncluded', v); if (v && !form.companyMemberContribution && sub>0) sf('companyMemberContribution', String(Math.round(sub))); }}
                     label="Company is a Member"
                     hint={form.companyIncluded
-                      ? `Company holds 1 slot → you add ${externalSlots} external members. In auctions, company appears as a winner option.`
+                      ? `Company holds ${companySlotCount} slot${companySlotCount>1?'s':''} → you add ${externalSlots} external members.`
                       : 'Company is NOT a member — all slots are external members. No "company wins" in auctions.'}
                   />
+
+                  {form.companyIncluded && (
+                    <>
+                      <Field label="How Many Slots Does the Company Hold?" hint={`Auto-creates member entries: ${Array.from({length:companySlotCount},(_,i)=>`Company ${i+1}`).join(', ')}`}>
+                        <Inp type="number" min="1" value={form.companyMemberCount} onChange={e=>sf('companyMemberCount', e.target.value)} placeholder="1"/>
+                      </Field>
+
+                      <Field label="Organiser Commission Mode" hint="How the organiser (you) earns from running this chit — separate from the company's own member contribution above.">
+                        <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                          <label style={{ display:'flex', alignItems:'flex-start', gap:9, cursor:'pointer', padding:'10px 12px', borderRadius:10, border:`1.5px solid ${form.organiserCommissionMode==='first_free'?T.accent:T.border}`, background:form.organiserCommissionMode==='first_free'?'#F0F5FF':'#fff' }}>
+                            <input type="radio" checked={form.organiserCommissionMode==='first_free'} onChange={()=>sf('organiserCommissionMode','first_free')} style={{ marginTop:2 }}/>
+                            <div>
+                              <div style={{ fontSize:13, fontWeight:700, color:T.text }}>No commission — Company takes Auction #1</div>
+                              <div style={{ fontSize:11.5, color:T.text4, marginTop:2 }}>Company's slot(s) win the first auction(s) automatically at ₹0 bid (full prize, no discount). Organiser fee is 0% — you earn nothing extra beyond that.</div>
+                            </div>
+                          </label>
+                          <label style={{ display:'flex', alignItems:'flex-start', gap:9, cursor:'pointer', padding:'10px 12px', borderRadius:10, border:`1.5px solid ${form.organiserCommissionMode==='percent'?T.accent:T.border}`, background:form.organiserCommissionMode==='percent'?'#F0F5FF':'#fff' }}>
+                            <input type="radio" checked={form.organiserCommissionMode==='percent'} onChange={()=>sf('organiserCommissionMode','percent')} style={{ marginTop:2 }}/>
+                            <div>
+                              <div style={{ fontSize:13, fontWeight:700, color:T.text }}>Fixed % commission across all auctions</div>
+                              <div style={{ fontSize:11.5, color:T.text4, marginTop:2 }}>You earn the Organiser Fee % (set below) on every auction, same as a normal chit. Company's member slot(s) still participate and can win normally.</div>
+                            </div>
+                          </label>
+                        </div>
+                      </Field>
+                    </>
+                  )}
 
                   <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
                     <Field label="Start Date" required>
@@ -539,15 +590,23 @@ export default function ChitList() {
                         <option value="Double">Double commission</option>
                       </Sel>
                     </Field>
-                    <Field label="Slab Type" hint="What your company pays each round BEFORE taking the chit prize. Once taken, you pay full per-head.">
-                      <Sel value={form.slabType} onChange={e=>sf('slabType',e.target.value)}>
-                        <option value="Fixed">Fixed Amount (₹)</option>
-                        <option value="Percentage">Percentage (%)</option>
-                      </Sel>
-                    </Field>
-                    <Field label={form.slabType==='Fixed'?'Slab Amount (₹)':'Slab (%)'} required>
-                      <Inp type="number" step="0.1" value={form.slabValue} onChange={e=>sf('slabValue',e.target.value)} placeholder={form.slabType==='Fixed'?`e.g. ${Math.round((parseFloat(form.totalChitValue)||0)/(parseFloat(form.totalMembers)||1)*0.9)} (below per-head)`:'e.g. 5'}/>
-                    </Field>
+                    {form.companyIncluded ? (
+                      <Field label="Company's Own Contribution (₹)" required hint={`Company is a member here — it pays this amount each round, same as any member. Defaults to per-head (${fmt(sub)}).`}>
+                        <Inp type="number" step="0.1" value={form.companyMemberContribution} onChange={e=>sf('companyMemberContribution',e.target.value)} placeholder={String(Math.round(sub))}/>
+                      </Field>
+                    ) : (
+                      <>
+                        <Field label="Slab Type" hint="What your company pays each round BEFORE taking the chit prize. Once taken, you pay full per-head.">
+                          <Sel value={form.slabType} onChange={e=>sf('slabType',e.target.value)}>
+                            <option value="Fixed">Fixed Amount (₹)</option>
+                            <option value="Percentage">Percentage (%)</option>
+                          </Sel>
+                        </Field>
+                        <Field label={form.slabType==='Fixed'?'Slab Amount (₹)':'Slab (%)'} required>
+                          <Inp type="number" step="0.1" value={form.slabValue} onChange={e=>sf('slabValue',e.target.value)} placeholder={form.slabType==='Fixed'?`e.g. ${Math.round((parseFloat(form.totalChitValue)||0)/(parseFloat(form.totalMembers)||1)*0.9)} (below per-head)`:'e.g. 5'}/>
+                        </Field>
+                      </>
+                    )}
                     <Field label="Auction Day of Month">
                       <Inp type="number" value={form.auctionDay} onChange={e=>sf('auctionDay',e.target.value)} placeholder="15"/>
                     </Field>

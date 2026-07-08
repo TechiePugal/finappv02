@@ -60,12 +60,16 @@ function PaymentModal({ open, onClose, auction }) {
       .then(p => { setPayments(p); setLoading(false); });
   }, [open, auction]);
 
-  async function togglePayment(payId, currentStatus) {
+  async function togglePayment(payId, currentStatus, mode) {
     setUpdatingId(payId);
     const next = currentStatus === 'Paid' ? 'Pending' : 'Paid';
-    await updatePaymentStatus(payId, next, null);
-    setPayments(prev => prev.map(p => p.id === payId ? { ...p, paymentStatus: next } : p));
+    await updatePaymentStatus(payId, next, null, mode);
+    setPayments(prev => prev.map(p => p.id === payId ? { ...p, paymentStatus: next, paymentMode: mode || p.paymentMode } : p));
     setUpdatingId(null);
+  }
+  async function setMode(payId, mode) {
+    setPayments(prev => prev.map(p => p.id === payId ? { ...p, paymentMode: mode } : p));
+    await updatePaymentStatus(payId, payments.find(p=>p.id===payId)?.paymentStatus || 'Pending', null, mode);
   }
 
   async function markAll(status) {
@@ -189,7 +193,16 @@ function PaymentModal({ open, onClose, auction }) {
                   <div style={{ fontSize: 10.5, color: tokens.textMuted }}>net payable</div>
                 </div>
                 {/* Collect toggle */}
-                <CollectBtn isPaid={isPaid} loading={isUpdating} onClick={() => togglePayment(p.id, p.paymentStatus)} />
+                <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                  <CollectBtn isPaid={isPaid} loading={isUpdating} onClick={() => togglePayment(p.id, p.paymentStatus, p.paymentMode || 'Cash')} />
+                  {isPaid && (
+                    <select value={p.paymentMode || 'Cash'} onChange={e => setMode(p.id, e.target.value)}
+                      style={{ fontSize:10.5, padding:'3px 6px', borderRadius:6, border:`1px solid ${tokens.border}`, background:'#fff', color:tokens.textSub, fontFamily:'inherit', cursor:'pointer' }}>
+                      <option value="Cash">💵 Cash</option>
+                      <option value="Bank">🏦 Bank</option>
+                    </select>
+                  )}
+                </div>
               </div>
             );
           })}

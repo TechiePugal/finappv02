@@ -16,6 +16,7 @@
  * NO: member management, ledger entries, commission distribution — not your job as a member.
  */
 import React, { useEffect, useState, useCallback } from 'react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell } from 'recharts';
 import {
   Plus, Edit2, Trash2, ChevronDown, ChevronRight,
   CheckCircle, Clock, TrendingUp, Wallet, AlertTriangle, X,
@@ -31,7 +32,7 @@ import {
   calcPhases, getPhaseIndex, getExpectedPayable, calcCommissionReverse,
   addMonthsToYM
 } from '../../utils/cf_engine';
-import { tokens } from '../../components/chitfund/UI';
+import { tokens, Card, SectionHeader } from '../../components/chitfund/UI';
 import { PageLoader } from '../../components/Skeleton';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -157,12 +158,18 @@ function analyseJoinedChit(chit, payments) {
     }
   }
 
-  // Profit calculation
+  // Profit calculation (projected — if not yet taken)
   const profitIfTakenNow = chit.totalChitValue - totalPaid - sub;
   const remainingMonths = Math.max(0, chit.totalMembers - paidCount);
   const futureCost = sub * remainingMonths;
 
-  return { alerts, paidCount, totalPaid, profitIfTakenNow, remainingMonths, futureCost, sub };
+  // REALIZED P&L — actual money in vs actual money out (once you've won/taken)
+  const wonRecord = payments.find(p => p.iWon);
+  const totalReceived = payments.reduce((s,p) => s + (p.iWon ? (p.prizeReceived||0) : 0), 0);
+  const hasWon = !!wonRecord;
+  const realizedPL = hasWon ? (totalReceived - totalPaid) : null; // null = not yet realized
+
+  return { alerts, paidCount, totalPaid, profitIfTakenNow, remainingMonths, futureCost, sub, hasWon, totalReceived, realizedPL };
 }
 
 // ── Form blank ────────────────────────────────────────────────────────────────
@@ -296,7 +303,7 @@ function PayModal({ chit, payments, onClose, onSave }) {
 // ── Chit card ─────────────────────────────────────────────────────────────────
 function JoinedChitCard({ chit, payments, onEdit, onDelete, onAddPayment, onTogglePayment, onMarkTaken }) {
   const [expanded, setExpanded] = useState(false);
-  const { alerts, paidCount, totalPaid, profitIfTakenNow, remainingMonths, futureCost, sub } = analyseJoinedChit(chit, payments);
+  const { alerts, paidCount, totalPaid, profitIfTakenNow, remainingMonths, futureCost, sub, hasWon, totalReceived, realizedPL } = analyseJoinedChit(chit, payments);
   const isCashed = chit.myStatus === 'Cashed';
   const phases = calcPhases(chit.totalMembers || 1);
   const chitLike = toChitLike(chit);
@@ -383,6 +390,33 @@ function JoinedChitCard({ chit, payments, onEdit, onDelete, onAddPayment, onTogg
             {k.sub && <div style={{ fontSize:9.5, color:tokens.textMuted, marginTop:1 }}>{k.sub}</div>}
           </div>
         ))}
+      </div>
+
+      {/* P&L — realized if won, projected otherwise */}
+      <div style={{ padding:'12px 18px', borderBottom:`1px solid ${tokens.border}`,
+        background: hasWon ? (realizedPL >= 0 ? 'rgba(52,199,89,0.05)' : 'rgba(255,59,48,0.05)') : 'rgba(0,122,255,0.04)' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:8 }}>
+          <div>
+            <div style={{ fontSize:10.5, fontWeight:700, color:tokens.textMuted, textTransform:'uppercase', letterSpacing:'.05em' }}>
+              {hasWon ? 'Realized Profit / Loss' : 'Projected Profit / Loss (if taken now)'}
+            </div>
+            <div style={{ fontSize:12, color:tokens.textSub, marginTop:2 }}>
+              {hasWon
+                ? `Paid ${fmt(totalPaid)} total · Received ${fmt(totalReceived)} prize`
+                : `Chit value ${fmt(chit.totalChitValue)} · Paid so far ${fmt(totalPaid)} · minus next sub ${fmt(sub)}`}
+            </div>
+          </div>
+          <div style={{ textAlign:'right' }}>
+            {(() => { const v = hasWon ? realizedPL : profitIfTakenNow; const isProfit = v >= 0; return (
+              <div style={{ fontSize:19, fontWeight:900, color: isProfit ? tokens.green : tokens.red }}>
+                {isProfit ? '+' : '−'}{fmt(Math.abs(v))}
+                <span style={{ fontSize:11, fontWeight:700, marginLeft:6, padding:'2px 8px', borderRadius:99, background: isProfit?'rgba(52,199,89,0.15)':'rgba(255,59,48,0.15)', color: isProfit?tokens.green:tokens.red }}>
+                  {isProfit ? 'PROFIT' : 'LOSS'}
+                </span>
+              </div>
+            ); })()}
+          </div>
+        </div>
       </div>
 
       {/* Progress bar */}
@@ -631,6 +665,45 @@ export default function OtherChits() {
           <div style={{ fontSize:12, color:tokens.textSub, lineHeight:1.6 }}>You are the <strong>manager</strong>. Full ERP: process auctions, manage members, track commission, ledger entries.</div>
         </div>
       </div>
+
+      {/* 6-Month Payment Projection */}
+      {(() => {
+        const projData = Array.from({ length: 6 }, (_, i) => {
+          const d = new Date(); d.setMonth(d.getMonth() + i);
+          const label = d.toLocaleDateString('en-IN', { month: 'short', year: '2-digit' });
+          const owed = chits.filter(c => c.myStatus !== 'Cashed').reduce((s, c) => {
+            const pays = paymentsMap[c.id] || [];
+            const paidCount = pays.filter(p => p.status === 'Paid').length;
+            const sub = (c.totalChitValue || 0) / (c.totalMembers || 1);
+            const stillOwes = (paidCount + i) < (c.totalMembers || 0);
+            return s + (stillOwes ? sub : 0);
+          }, 0);
+          return { label, owed: Math.round(owed) };
+        });
+        return (
+          <Card style={{ marginBottom: 20 }}>
+            <SectionHeader title="Your Upcoming Payments — Next 6 Months" sub="What you'll owe across all joined chits, month by month" />
+            <div style={{ height: 170, marginTop: 8 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={projData} margin={{ left: -8, right: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={tokens.border} vertical={false} />
+                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: tokens.textSub }} />
+                  <YAxis tick={{ fontSize: 10, fill: tokens.textSub }} tickFormatter={v => `₹${(v / 1000).toFixed(0)}K`} />
+                  <Tooltip content={({ active, payload, label }) => active && payload?.length ? (
+                    <div style={{ background: '#fff', border: `1px solid ${tokens.border}`, borderRadius: 9, padding: '8px 13px', boxShadow: '0 4px 16px rgba(0,0,0,.09)' }}>
+                      <div style={{ fontSize: 11, color: tokens.textSub, marginBottom: 3 }}>{label}</div>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: tokens.green }}>{fmt(payload[0].value)}</div>
+                    </div>
+                  ) : null} />
+                  <Bar dataKey="owed" radius={[5, 5, 0, 0]}>
+                    {projData.map((d, i) => <Cell key={i} fill={i === 0 ? tokens.green : '#BBF7D0'} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+        );
+      })()}
 
       {/* Stats */}
       <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:13, marginBottom:22 }}>

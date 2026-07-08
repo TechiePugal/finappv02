@@ -332,6 +332,7 @@ export async function processAuction(chitId, auctionScheduleId, auctionData, use
     chitId, auctionNumber: auctionData.auctionNumber, auctionDate: auctionData.auctionDate,
     winnerId: auctionData.winnerId, winnerName: auctionData.winnerName,
     bidAmount: auctionData.bidAmount, takenByCompany: auctionData.takenByCompany,
+    payoutCash: auctionData.payoutCash || 0, payoutBank: auctionData.payoutBank || 0,
     notes: auctionData.notes || '', ...commInfo, investment, riskScore,
     processedBy: userId, createdAt: serverTimestamp(),
   });
@@ -475,10 +476,10 @@ export async function processAuction(chitId, auctionScheduleId, auctionData, use
 
 // ─── UPDATE PAYMENT STATUS ────────────────────────────────────────────────
 
-export async function updatePaymentStatus(paymentId, status, userId) {
-  await updateDoc(doc(db, 'chit_member_payments', paymentId), {
-    paymentStatus: status, updatedAt: serverTimestamp(), updatedBy: userId,
-  });
+export async function updatePaymentStatus(paymentId, status, userId, paymentMode) {
+  const upd = { paymentStatus: status, updatedAt: serverTimestamp(), updatedBy: userId };
+  if (paymentMode) upd.paymentMode = paymentMode; // 'Cash' | 'Bank' — how this member's contribution was actually collected
+  await updateDoc(doc(db, 'chit_member_payments', paymentId), upd);
   await writeAuditLog('UPDATE', 'payment', paymentId, { paymentStatus: status }, userId);
   cacheDeletePattern('payments');
   cacheDeletePattern('all-payments');

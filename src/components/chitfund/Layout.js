@@ -8,6 +8,7 @@ const NAV = [
     { to:'/cf', label:'Dashboard', icon:<><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></> },
     { to:'/cf/projection', label:'Fund Projection', icon:<><polyline points="3,17 9,11 13,15 21,7"/><polyline points="16,7 21,7 21,12"/></> },
     { to:'/cf/calendar', label:'Calendar', icon:<><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></> },
+    { to:'/cf/journal', label:'Journal', icon:<><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></> },
   ]},
   { group:'Formed Chits (You Manage)', color:'#007AFF', items:[
     { to:'/cf/chits', label:'Manage Chit Funds', icon:<><rect x="3" y="3" width="18" height="14" rx="2"/><path d="M7 3V2M17 3V2M3 8h18"/></> },
@@ -18,6 +19,9 @@ const NAV = [
   ]},
   { group:'Joined Chits (You Joined)', color:'#34C759', items:[
     { to:'/cf/other-chits', label:'My Joined Chits', icon:<><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8"/></> },
+    { to:'/cf/joined-auctions', label:'Auctions', icon:<><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 3"/></> },
+    { to:'/cf/joined-exposure', label:'Exposure & Risk', icon:<><path d="M12 2v20M2 7l10-5 10 5M2 12h20"/></> },
+    { to:'/cf/joined-ledger', label:'Ledger', icon:<><path d="M3 3h7a3 3 0 0 1 3 3v15a2.5 2.5 0 0 0-2.5-2.5H3z"/><path d="M21 3h-7a3 3 0 0 0-3 3v15a2.5 2.5 0 0 1 2.5-2.5H21z"/></> },
   ]},
 ];
 const MOB_MAIN = ['/cf', '/cf/chits', '/cf/calendar', '/cf/other-chits'];

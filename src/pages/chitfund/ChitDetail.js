@@ -92,7 +92,18 @@ export default function ChitDetail() {
 
   // Process auction modal
   const [auctionModal, setAuctionModal] = useState(null); // auction slot
-  const [aForm, setAForm] = useState({ winnerId: '', bidAmount: '', notes: '' });
+  const [aForm, setAForm] = useState({ winnerId: '', bidAmount: '', notes: '', payoutCash: '', payoutBank: '' });
+  // For 'first_free' organiser mode: company slot(s) win early auctions automatically at ₹0 bid, no commission.
+  function openAuctionFormFor(auction) {
+    const isFirstFreeMode = chit.companyIncluded && chit.organiserCommissionMode === 'first_free';
+    const companyNotYetTaken = companyMembers.length > 0 && companyMembers.some(m => m.status !== 'Taken');
+    if (isFirstFreeMode && companyNotYetTaken) {
+      const nextCompanyMember = companyMembers.find(m => m.status !== 'Taken');
+      setAForm({ winnerId: nextCompanyMember?.id || 'company', bidAmount: '0', notes: 'Company slot — automatic, no bid (first-free organiser mode).', payoutCash: '', payoutBank: '' });
+    } else {
+      setAForm({ winnerId: '', bidAmount: '', notes: '', payoutCash: '', payoutBank: '' });
+    }
+  }
   const [auctionSaving, setAuctionSaving] = useState(false);
 
   // Delete auction modal
@@ -138,6 +149,7 @@ export default function ChitDetail() {
 
   // Commission preview for process-auction modal
   // Commission preview using spec-correct forward calculator
+  const companyMembers = (members || []).filter(m => m.isCompany);
   const isCompanyWinnerSelected = aForm.winnerId === 'company';
   let commPreview = null;
   if (aForm.bidAmount !== '' && aForm.winnerId) {
@@ -200,6 +212,8 @@ export default function ChitDetail() {
         winnerName: winner.name,
         bidAmount: +aForm.bidAmount,
         takenByCompany: isCompanyWinner,  // derived from selection, not a manual toggle
+        payoutCash: +aForm.payoutCash || 0,
+        payoutBank: +aForm.payoutBank || 0,
         notes: aForm.notes,
       }, user.uid);
       setAuctionModal(null); setError(''); load();
@@ -308,7 +322,7 @@ export default function ChitDetail() {
           <div style={{ display: 'flex', gap: 8 }}>
             <IBtn icon={Edit2} onClick={openEditChit} title="Edit chit fund settings" />
             {nextAuction && (
-              <button onClick={() => { setAuctionModal(nextAuction); setAForm({ winnerId: '', bidAmount: '', notes: '' }); setError(''); }}
+              <button onClick={() => { setAuctionModal(nextAuction); openAuctionFormFor(nextAuction); setError(''); }}
                 style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', borderRadius: 10, border: 'none', background: tokens.blue, color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
                 <Gavel size={14} /> Process Auction #{nextAuction.auctionNumber}
               </button>
@@ -326,6 +340,22 @@ export default function ChitDetail() {
         <StatCard label="Commission"       value={fmt(chit.totalCommissionEarned||0)} icon={BarChart3} accent={tokens.green} />
         <StatCard label="Net Exposure"     value={fmt(exposure)}                     icon={Zap}      accent={exposure > 0 ? tokens.red : tokens.green} />
       </div>
+
+      {/* P&L — organiser profit is the commission earned; investment is recovered, not a loss */}
+      <Card style={{ padding: '14px 18px', marginBottom: 16, background: 'rgba(52,199,89,0.05)', border: '1px solid rgba(52,199,89,0.18)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+          <div>
+            <div style={{ fontSize: 10.5, fontWeight: 700, color: tokens.textMuted, textTransform: 'uppercase', letterSpacing: '.05em' }}>Organiser Profit (Realized)</div>
+            <div style={{ fontSize: 12, color: tokens.textSub, marginTop: 2 }}>
+              Commission earned across {chit.auctionsCompleted} auction{chit.auctionsCompleted !== 1 ? 's' : ''} · Amount invested (temporary, recovered when taken): {fmt(chit.totalInvested || 0)}
+            </div>
+          </div>
+          <div style={{ fontSize: 20, fontWeight: 900, color: tokens.green }}>
+            +{fmt(chit.totalCommissionEarned || 0)}
+            <span style={{ fontSize: 11, fontWeight: 700, marginLeft: 6, padding: '2px 8px', borderRadius: 99, background: 'rgba(52,199,89,0.15)', color: tokens.green }}>PROFIT</span>
+          </div>
+        </div>
+      </Card>
 
       {/* Progress bar */}
       <Card style={{ padding: '12px 18px', marginBottom: 16 }}>
@@ -421,7 +451,7 @@ export default function ChitDetail() {
               </p>
             </div>
             {nextAuction && (
-              <button onClick={() => { setAuctionModal(nextAuction); setAForm({ winnerId: '', bidAmount: '', notes: '' }); setError(''); }}
+              <button onClick={() => { setAuctionModal(nextAuction); openAuctionFormFor(nextAuction); setError(''); }}
                 style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 9, border: 'none', background: tokens.blue, color: '#fff', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
                 <Gavel size={13} /> Process #{nextAuction.auctionNumber}
               </button>
@@ -477,7 +507,7 @@ export default function ChitDetail() {
                 <div style={{ flexShrink: 0, display: 'flex', gap: 6, alignItems: 'center' }}>
                   {isPending ? (
                     <button
-                      onClick={e => { e.stopPropagation(); setAuctionModal(a); setAForm({ winnerId: '', bidAmount: '', notes: '' }); setError(''); }}
+                      onClick={e => { e.stopPropagation(); setAuctionModal(a); openAuctionFormFor(a); setError(''); }}
                       style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', borderRadius: 8, border: 'none', background: isUrgent ? tokens.red : tokens.amber, color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
                       <Gavel size={12} /> Process
                     </button>
@@ -646,6 +676,37 @@ export default function ChitDetail() {
                     onChange={e => setAForm(f => ({ ...f, bidAmount: e.target.value }))}
                     prefix="₹" placeholder={String(Math.round(chit.perHeadValue * 0.85))} />
                 </FormField>
+
+                {/* Winner payout split — how the money actually leaves: cash-in-hand vs bank/account */}
+                {aForm.bidAmount !== '' && (() => {
+                  const winnerInHand = Math.round((chit.totalChitValue||0) - (parseFloat(aForm.bidAmount)||0));
+                  const cashV = parseFloat(aForm.payoutCash)||0, bankV = parseFloat(aForm.payoutBank)||0;
+                  const splitTotal = cashV + bankV;
+                  const mismatch = aForm.payoutCash !== '' && aForm.payoutBank !== '' && splitTotal !== winnerInHand;
+                  return (
+                    <div style={{ padding:'12px 14px', background:'rgba(0,122,255,0.05)', border:'1px solid rgba(0,122,255,0.15)', borderRadius:12, marginBottom:4 }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:tokens.blue, textTransform:'uppercase', letterSpacing:'.05em', marginBottom:4 }}>Winner Payout Split</div>
+                      <div style={{ fontSize:12, color:tokens.textSub, marginBottom:10 }}>Winner receives <strong>{fmt(winnerInHand)}</strong> total — split how it's actually handed over.</div>
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+                        <FormField label="Cash in Hand (₹)">
+                          <Input type="number" step="1" value={aForm.payoutCash}
+                            onChange={e => setAForm(f => ({ ...f, payoutCash: e.target.value }))}
+                            prefix="₹" placeholder={String(winnerInHand)} />
+                        </FormField>
+                        <FormField label="Bank / Account (₹)">
+                          <Input type="number" step="1" value={aForm.payoutBank}
+                            onChange={e => setAForm(f => ({ ...f, payoutBank: e.target.value }))}
+                            prefix="₹" placeholder="0" />
+                        </FormField>
+                      </div>
+                      {mismatch && (
+                        <div style={{ marginTop:8, fontSize:11.5, color:tokens.red, fontWeight:600 }}>
+                          ⚠ Cash + Bank ({fmt(splitTotal)}) doesn't match the winner's payout ({fmt(winnerInHand)}).
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 <FormField label="Notes (optional)">
                   <Textarea value={aForm.notes} onChange={e => setAForm(f => ({ ...f, notes: e.target.value }))} placeholder="Any notes about this auction…" style={{ minHeight: 52 }} />
