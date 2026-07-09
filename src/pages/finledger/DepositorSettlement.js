@@ -152,13 +152,14 @@ export default function DepositorSettlement(){
   const totalDue=depositors.reduce((s,d)=>s+Math.round(calcPeriodInt(d)),0);
   const totalPaid=depositors.reduce((s,d)=>{
     const slots=genSlots(d.startDate,d.interestTenure);
-    return s+slots.filter(sl=>payments[`${d.id}_${sl.month}`]?.status==='Paid').reduce((a,sl)=>a+(payments[`${d.id}_${sl.month}`]?.totalPayout||payments[`${d.id}_${sl.month}`]?.amountPaid||0),0);
+    return s+slots.filter(sl=>{const pp=payments[`${d.id}_${sl.month}`];return pp?.status==='Paid'||pp?.addedToDeposit;}).reduce((a,sl)=>{const pp=payments[`${d.id}_${sl.month}`];return a+(pp?.addedToDeposit?(pp.addedAmount||0):(pp?.totalPayout||pp?.amountPaid||0));},0);
   },0);
   const monthPaid=depositors.reduce((s,d)=>{
     const slots=genSlots(d.startDate,d.interestTenure);
     const moSlot=slots.find(sl=>sl.month===month);
     if(!moSlot)return s;
-    return s+(payments[`${d.id}_${moSlot.month}`]?.status==='Paid'?(payments[`${d.id}_${moSlot.month}`]?.totalPayout||payments[`${d.id}_${moSlot.month}`]?.amountPaid||0):0);
+    const mp=payments[`${d.id}_${moSlot.month}`];
+    return s+((mp?.status==='Paid'||mp?.addedToDeposit)?(mp?.addedToDeposit?(mp.addedAmount||0):(mp?.totalPayout||mp?.amountPaid||0)):0);
   },0);
   const filtered=depositors.filter(d=>{
     const s=search.trim().toLowerCase();
@@ -202,9 +203,9 @@ export default function DepositorSettlement(){
         {filtered.map(dep=>{
           const slots=genSlots(dep.startDate,dep.interestTenure);
           const isOpen=selected===dep.id;
-          const paidCount=slots.filter(sl=>payments[`${dep.id}_${sl.month}`]?.status==='Paid').length;
+          const paidCount=slots.filter(sl=>{const pp=payments[`${dep.id}_${sl.month}`];return pp?.status==='Paid'||pp?.addedToDeposit;}).length;
           const totalColl=slots.reduce((s,sl)=>s+(payments[`${dep.id}_${sl.month}`]?.totalPayout||payments[`${dep.id}_${sl.month}`]?.amountPaid||0),0);
-          const pendingSlots=slots.filter(sl=>payments[`${dep.id}_${sl.month}`]?.status!=='Paid');
+          const pendingSlots=slots.filter(sl=>{const pp=payments[`${dep.id}_${sl.month}`];return !(pp?.status==='Paid'||pp?.addedToDeposit);});
           const periodInt=calcPeriodInt(dep);
           const t=parseInt(dep.interestTenure)||1;
           const tenureLabel=t===1?'Monthly':t===3?'Quarterly':t===6?'Half-Yearly':t===12?'Yearly':`Every ${t}mo`;

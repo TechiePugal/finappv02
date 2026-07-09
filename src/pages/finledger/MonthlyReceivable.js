@@ -101,7 +101,7 @@ export default function MonthlyReceivable() {
         const moSnap = await getDocs(query(collection(db,'borrower_interest_payments'), where('month','==',mo)));
         const moDepSnap = await getDocs(query(collection(db,'deposit_payments'), where('month','==',mo)));
         const rec = moSnap.docs.filter(d=>d.data().status==='Paid').reduce((s,d)=>s+(d.data().amountPaid||0),0);
-        const pay = moDepSnap.docs.filter(d=>d.data().status==='Paid').reduce((s,d)=>s+(d.data().amountPaid||0),0);
+        const pay = moDepSnap.docs.filter(d=>d.data().status==='Paid'||d.data().addedToDeposit).reduce((s,d)=>s+(d.data().addedToDeposit?(d.data().addedAmount||0):(d.data().amountPaid||0)),0);
         trend.push({ month: dt.toLocaleDateString('en-IN',{month:'short'}), receivable:Math.round(rec)||Math.round(totalReceivable*(0.7+Math.random()*0.5)), payable:Math.round(pay)||Math.round(totalPayable*(0.7+Math.random()*0.5)) });
       }
       trend[5] = { ...trend[5], receivable:Math.round(totalCollected)||Math.round(totalReceivable), payable:Math.round(totalPaidOut)||Math.round(totalPayable) };
@@ -290,7 +290,7 @@ export default function MonthlyReceivable() {
                       </td>
                       <td style={{padding:'11px 14px',fontSize:13,fontWeight:600}} className="num">{formatCurrency(dep.depositAmount)}</td>
                       <td style={{padding:'11px 14px',fontSize:13,fontWeight:700,color:'var(--orange)'}} className="num">{formatCurrency(Math.round(dep.correctInterest||0))}</td>
-                      <td style={{padding:'11px 14px',fontSize:13,color:'var(--text-secondary)'}} className="num">{dep.payment?.status==='Paid' ? formatCurrency(dep.payment.amountPaid||0) : '—'}</td>
+                      <td style={{padding:'11px 14px',fontSize:13,color:'var(--text-secondary)'}} className="num">{(dep.payment?.status==='Paid'||dep.payment?.addedToDeposit) ? formatCurrency(dep.payment.addedToDeposit?(dep.payment.addedAmount||0):(dep.payment.amountPaid||0)) : '—'}</td>
                       <td style={{padding:'11px 14px'}}><Badge label={dep.payment?.status||'Pending'} type={(dep.payment?.status||'pending').toLowerCase()}/></td>
                     </tr>
                   ))

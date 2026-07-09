@@ -67,7 +67,7 @@ export default function Dashboard(){
 
       // Current month actuals
       const curMonthCollected = paySnap.docs.filter(d=>['Paid','Partial'].includes(d.data().status)&&d.data().month===curMo).reduce((s,d)=>s+(d.data().amountPaid||0),0);
-      const curMonthSettled   = setSnap.docs.filter(d=>d.data().status==='Paid').reduce((s,d)=>s+(d.data().amountPaid||0),0);
+      const curMonthSettled   = setSnap.docs.filter(d=>d.data().status==='Paid'||d.data().addedToDeposit).reduce((s,d)=>s+(d.data().addedToDeposit?(d.data().addedAmount||0):(d.data().amountPaid||0)),0);
 
       const secVal = bors.reduce((s,b)=>s+(b.securityValue||0),0);
       // Genuinely overdue = Unpaid records from PREVIOUS months (not current month)

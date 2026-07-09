@@ -209,13 +209,17 @@ export function printBorrowerReport(borrower, repayments, interestPayments){
 // ── DEPOSITOR REPORT ───────────────────────────────────────────────────────
 export function printDepositorReport(depositor, payments){
   const pays = (payments||[]).sort((a,b)=>(b.month||'').localeCompare(a.month||''));
-  const totalPaid = pays.filter(p=>p.status==='Paid').reduce((s,p)=>s+(p.totalPayout||p.amountPaid||0),0);
+  // IMPORTANT: when interest is reinvested (added to deposit) rather than taken in cash,
+  // the record's status is stored as 'Unpaid' by design (it wasn't collected as cash) —
+  // but the period IS settled. A period counts as SETTLED if status==='Paid' OR addedToDeposit===true.
+  const isSettled = p => p.status==='Paid' || p.addedToDeposit===true;
+  const settledPeriods = pays.filter(isSettled);
+  const totalPaid = settledPeriods.reduce((s,p)=>s+(p.addedToDeposit?(p.addedAmount||0):(p.totalPayout||p.amountPaid||0)),0);
   const totalDue  = pays.reduce((s,p)=>s+(p.amountDue||0),0);
-  const pending   = pays.filter(p=>p.status!=='Paid').length;
+  const pending   = pays.filter(p=>!isSettled(p)).length;
   // Split settled interest by how it was actually settled: taken in hand vs reinvested into principal
-  const paidPeriods     = pays.filter(p=>p.status==='Paid');
-  const reinvested      = paidPeriods.filter(p=>p.addedToDeposit);
-  const takenInHand     = paidPeriods.filter(p=>!p.addedToDeposit);
+  const reinvested      = settledPeriods.filter(p=>p.addedToDeposit);
+  const takenInHand     = settledPeriods.filter(p=>!p.addedToDeposit);
   const totalReinvested = reinvested.reduce((s,p)=>s+(p.addedAmount||p.totalPayout||p.amountPaid||0),0);
   const totalInHand     = takenInHand.reduce((s,p)=>s+(p.totalPayout||p.amountPaid||0),0);
   const t = parseInt(depositor.interestTenure)||1;
@@ -281,18 +285,21 @@ export function printDepositorReport(depositor, payments){
     <table>
       <thead><tr><th>#</th><th>Period</th><th>Amount Due</th><th>Amount Settled</th><th>Fine</th><th>Status</th><th>Settlement</th><th>Payment Date</th><th>Mode</th></tr></thead>
       <tbody>
-        ${pays.map((p,i)=>`
+        ${pays.map((p,i)=>{
+          const settled = isSettled(p);
+          const displayAmt = p.addedToDeposit ? (p.addedAmount||0) : (p.totalPayout||p.amountPaid||0);
+          return `
         <tr>
           <td>${i+1}</td>
           <td style="font-weight:600;">${p.month||'—'}</td>
           <td>${INR(p.amountDue||0)}</td>
-          <td class="${p.status==='Paid'?'text-green':'text-red'}">${INR(p.totalPayout||p.amountPaid||0)}</td>
+          <td class="${settled?'text-green':'text-red'}">${INR(displayAmt)}</td>
           <td>${(p.fine||0)>0?INR(p.fine):'—'}</td>
-          <td><span class="badge ${p.status==='Paid'?'badge-green':'badge-amber'}">${p.status||'Pending'}</span></td>
-          <td>${p.status!=='Paid'?'—':(p.addedToDeposit?`<span class="badge badge-blue">🔄 Added to Deposit${p.addedAmount?' ('+INR(p.addedAmount)+')':''}</span>`:`<span class="badge badge-green">💰 Taken in Hand</span>`)}</td>
+          <td><span class="badge ${settled?'badge-green':'badge-amber'}">${settled?'Settled':(p.status||'Pending')}</span></td>
+          <td>${!settled?'—':(p.addedToDeposit?`<span class="badge badge-blue">🔄 Added to Deposit (${INR(p.addedAmount||0)})</span>`:`<span class="badge badge-green">💰 Taken in Hand</span>`)}</td>
           <td>${fmtDate(p.paymentDate)}</td>
           <td>${p.paymentMode||'—'}</td>
-        </tr>`).join('')}
+        </tr>`;}).join('')}
         <tr class="total-row">
           <td colspan="3"><strong>Total</strong></td>
           <td class="text-green">${INR(totalPaid)}</td>

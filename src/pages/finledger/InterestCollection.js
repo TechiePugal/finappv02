@@ -242,16 +242,18 @@ export default function InterestCollection(){
           <div style={{overflowX:'auto'}}>
             <table style={{width:'100%',borderCollapse:'collapse'}}>
               <thead><tr style={{background:'rgba(118,118,128,0.06)'}}>
-                {['Borrower','Outstanding','Rate','Due','Days OD','Fine','Status','Action'].map(h=>(
+                {['Borrower','Outstanding','Uncollected Interest','Rate','Due','Days OD','Fine','Status','Action'].map(h=>(
                   <th key={h} style={{padding:'10px 14px',textAlign:'left',fontSize:11,fontWeight:600,color:'var(--text-secondary)',textTransform:'uppercase',letterSpacing:'0.05em',borderBottom:'1px solid var(--divider)',whiteSpace:'nowrap'}}>{h}</th>
                 ))}
               </tr></thead>
               <tbody>
-                {filtBorrowers.length===0&&<tr><td colSpan={8} style={{padding:48,textAlign:'center',color:'var(--text-secondary)'}}>No borrowers match filters</td></tr>}
+                {filtBorrowers.length===0&&<tr><td colSpan={9} style={{padding:48,textAlign:'center',color:'var(--text-secondary)'}}>No borrowers match filters</td></tr>}
                 {filtBorrowers.map(b=>{
                   const p=payments[b.id]?.[month];
                   const outstanding=getOutstanding(b);
                   const interest=calcInterest(b,outstanding);
+                  // Uncollected interest for THIS month: 0 if fully paid, remaining if partial, full amount if pending
+                  const uncollected = p?.status==='Paid' ? 0 : p?.status==='Partial' ? Math.max(0, interest-(p.amountPaid||0)) : interest;
                   const daysOD=getDaysOverdue(month);
                   const fine=daysOD>2?(daysOD-2)*DAILY_FINE:0;
                   return(
@@ -263,6 +265,7 @@ export default function InterestCollection(){
                         <div style={{fontSize:11,color:'var(--text-secondary)'}}>{b.loanId}</div>
                       </td>
                       <td style={{padding:'12px 14px',fontWeight:700,fontSize:13,color:outstanding<b.loanAmount?'#ff9500':'var(--text-primary)'}}>{formatCurrency(Math.round(outstanding))}</td>
+                      <td style={{padding:'12px 14px',fontWeight:700,fontSize:13,color:uncollected>0?'#ff3b30':'#34c759'}}>{formatCurrency(Math.round(uncollected))}</td>
                       <td style={{padding:'12px 14px',color:'#ff9500',fontWeight:500}}>{b.interestRate}%</td>
                       <td style={{padding:'12px 14px',fontWeight:700,color:'#007aff',fontSize:14}}>{formatCurrency(Math.round(interest))}</td>
                       <td style={{padding:'12px 14px',fontSize:13,fontWeight:daysOD>2?700:400,color:daysOD>2?'#ff3b30':'var(--text-secondary)'}}>{daysOD>0?`${daysOD}d`:'—'}</td>
@@ -291,6 +294,23 @@ export default function InterestCollection(){
               const outstanding=getOutstanding(b);
               const totalColl=slots.reduce((s,mo)=>s+(payments[b.id]?.[mo]?.totalCollected||payments[b.id]?.[mo]?.amountPaid||0),0);
               const paidCount=slots.filter(mo=>payments[b.id]?.[mo]?.status==='Paid').length;
+              // Total interest owed from loan START to END (now): use the STORED amountDue for months
+              // that already have a record (historically accurate for that point in time); for months
+              // never touched yet, fall back to today's estimate. Then subtract what's actually been
+              // collected — whatever's left is the true remaining interest to pay.
+              const totalInterestDue=slots.reduce((s,mo)=>{
+                const pp=payments[b.id]?.[mo];
+                const dueForMonth = pp?.amountDue!=null ? pp.amountDue : calcInterest(b,outstanding);
+                return s+dueForMonth;
+              },0);
+              const totalInterestCollected=slots.reduce((s,mo)=>{
+                const pp=payments[b.id]?.[mo];
+                if(!pp)return s;
+                if(pp.status==='Paid')return s+(pp.totalCollected||pp.amountPaid||0);
+                if(pp.status==='Partial')return s+(pp.amountPaid||0);
+                return s;
+              },0);
+              const remainingInterestToPay=Math.max(0,totalInterestDue-totalInterestCollected);
               return(
                 <div key={b.id} style={{border:'1px solid rgba(0,0,0,0.07)',borderRadius:14,overflow:'hidden'}}>
                   <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'14px 18px',cursor:'pointer'}} onClick={()=>setSelected(isOpen?null:b.id)}>
@@ -301,6 +321,11 @@ export default function InterestCollection(){
                       </div>
                       <div style={{fontSize:12,color:'var(--text-secondary)',marginTop:2}}>
                         Loan from {b.loanStartDate||'—'} · {formatCurrency(b.loanAmount)} · Outstanding: <strong style={{color:'#ff9500'}}>{formatCurrency(Math.round(outstanding))}</strong>
+                      </div>
+                      <div style={{fontSize:11.5,color:'var(--text-secondary)',marginTop:3}}>
+                        Interest — Total Due: <strong style={{color:'var(--text-primary)'}}>{formatCurrency(Math.round(totalInterestDue))}</strong>
+                        {' − '}Collected: <strong style={{color:'#34c759'}}>{formatCurrency(Math.round(totalInterestCollected))}</strong>
+                        {' = '}Remaining to Pay: <strong style={{color:remainingInterestToPay>0?'#ff3b30':'#34c759'}}>{formatCurrency(Math.round(remainingInterestToPay))}</strong>
                       </div>
                     </div>
                     <div style={{display:'flex',gap:16,alignItems:'center'}}>
