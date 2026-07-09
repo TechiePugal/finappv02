@@ -59,6 +59,7 @@ export default function BorrowerForm(){
 
   async function submit(e){
     e.preventDefault();
+    if(!isEdit&&!linkedUser) return toast.error('Select an existing User first — loans can only be created for a linked User.');
     if(!form.borrowerName||!form.phone||!form.loanAmount||!form.interestRate||!form.loanStartDate)
       return toast.error('Fill all required fields');
     if(!isEdit&&!files.check&&!existing.check) return toast.error('Check Copy is mandatory');
@@ -85,7 +86,19 @@ export default function BorrowerForm(){
       };
       let bid=id;
       if(isEdit){await updateDoc(doc(db,'borrower_master',id),data);}
-      else{data.createdAt=serverTimestamp();const ref=await addDoc(collection(db,'borrower_master'),data);bid=ref.id;}
+      else{
+        data.createdAt=serverTimestamp();
+        const ref=await addDoc(collection(db,'borrower_master'),data);
+        bid=ref.id;
+        // Milestone: Loan Created — notable lifecycle event for Journal
+        await addDoc(collection(db,'finance_ledger_entries'),{
+          type:'Milestone', category:'Loan Created',
+          description:`Loan created — ${form.borrowerName} · ${form.loanId||''}`.trim(),
+          amount:parseFloat(form.loanAmount)||0, date:form.loanStartDate||new Date().toISOString().split('T')[0],
+          borrowerName:form.borrowerName, borrowerId:bid, loanId:form.loanId||bid,
+          createdAt:serverTimestamp()
+        });
+      }
       await saveBorrowerDocs(bid,{check:cu,bond:bu,agreement:au,land:lu});
       toast.success(isEdit?'Borrower updated!':'Borrower added!');
       nav('/fl/borrowers');

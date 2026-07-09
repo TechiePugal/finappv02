@@ -58,6 +58,7 @@ export default function DepositorForm(){
   const [showAllPayouts,setShowAllPayouts]=useState(false);
   const [photoPreview,setPhotoPreview]=useState(null);
 
+  const[origStatus,setOrigStatus]=useState('');
   useEffect(()=>{if(isEdit)loadData();},[]);// eslint-disable-line
   useEffect(()=>{
     setSchedule(genFullSchedule(form.depositAmount,form.interestRate,form.interestTenure,form.compounding,form.startDate,form.maturityDate));
@@ -67,6 +68,7 @@ export default function DepositorForm(){
     const s=await getDoc(doc(db,'deposit_master',id));
     if(s.exists()){
       const d=s.data();
+      setOrigStatus(d.status||'Active');
       setForm({
         depositId:d.depositId||id, name:d.name||'', phone:d.phone||'', email:d.email||'',
         address:d.address||'', depositAmount:d.depositAmount||'', interestRate:d.interestRate||'',
@@ -92,6 +94,7 @@ export default function DepositorForm(){
 
   async function submit(e){
     e.preventDefault();
+    if(!isEdit&&!linkedUser) return toast.error('Select an existing User first — deposits can only be created for a linked User.');
     if(!form.name||!form.phone||!form.depositAmount||!form.interestRate||!form.startDate)
       return toast.error('Fill all required fields');
     setLoading(true);
@@ -112,6 +115,16 @@ export default function DepositorForm(){
       };
       if(isEdit){
         await updateDoc(doc(db,'deposit_master',id),data);
+        if(origStatus!=='Closed'&&form.status==='Closed'){
+          // Milestone: Deposit Closed — notable lifecycle event for Journal
+          await addDoc(collection(db,'finance_ledger_entries'),{
+            type:'Milestone', category:'Deposit Closed',
+            description:`Deposit closed — ${form.name} · ${form.depositId||id}`,
+            amount:parseFloat(form.depositAmount)||0, date:new Date().toISOString().split('T')[0],
+            borrowerName:form.name, depositorId:id, depositId:form.depositId||id,
+            createdAt:serverTimestamp()
+          });
+        }
         toast.success('Depositor updated!');
       } else {
         data.createdAt=serverTimestamp();
@@ -119,6 +132,14 @@ export default function DepositorForm(){
         // Store full schedule
         await addDoc(collection(db,'deposit_interest_schedule'),{
           depositId:r2.id, schedule:genFullSchedule(form.depositAmount,form.interestRate,tenureNum,form.compounding,form.startDate,form.maturityDate), createdAt:serverTimestamp()
+        });
+        // Milestone: Deposit Created — notable lifecycle event for Journal
+        await addDoc(collection(db,'finance_ledger_entries'),{
+          type:'Milestone', category:'Deposit Created',
+          description:`Deposit created — ${form.name} · ${form.depositId||r2.id}`,
+          amount:parseFloat(form.depositAmount)||0, date:form.startDate||new Date().toISOString().split('T')[0],
+          borrowerName:form.name, depositorId:r2.id, depositId:form.depositId||r2.id,
+          createdAt:serverTimestamp()
         });
         toast.success('Depositor added!');
       }

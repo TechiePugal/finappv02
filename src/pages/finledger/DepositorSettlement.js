@@ -2,6 +2,7 @@ import React,{useEffect,useState} from 'react';
 import {collection,onSnapshot,addDoc,updateDoc,doc,serverTimestamp} from 'firebase/firestore';
 import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
+import {printSettleInterestSummary} from '../../utils/pdfReport';
 import {PageHeader,Card,Badge,Button,StatCard,Modal,SectionHeader,formatCurrency} from '../../components/finledger/UI';
 import {PageLoader} from '../../components/Skeleton';
 
@@ -185,6 +186,7 @@ export default function DepositorSettlement(){
             </select>
             <input type="month" value={month} onChange={e=>setMonth(e.target.value)}
               style={{padding:'8px 14px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:10,fontSize:14,color:'var(--text-primary)',outline:'none',fontFamily:'inherit'}}/>
+            <Button variant="secondary" onClick={()=>printSettleInterestSummary(depositors, payments, month)}>Export PDF</Button>
           </div>
         }/>
 

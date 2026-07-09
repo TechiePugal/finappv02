@@ -212,6 +212,12 @@ export function printDepositorReport(depositor, payments){
   const totalPaid = pays.filter(p=>p.status==='Paid').reduce((s,p)=>s+(p.totalPayout||p.amountPaid||0),0);
   const totalDue  = pays.reduce((s,p)=>s+(p.amountDue||0),0);
   const pending   = pays.filter(p=>p.status!=='Paid').length;
+  // Split settled interest by how it was actually settled: taken in hand vs reinvested into principal
+  const paidPeriods     = pays.filter(p=>p.status==='Paid');
+  const reinvested      = paidPeriods.filter(p=>p.addedToDeposit);
+  const takenInHand     = paidPeriods.filter(p=>!p.addedToDeposit);
+  const totalReinvested = reinvested.reduce((s,p)=>s+(p.addedAmount||p.totalPayout||p.amountPaid||0),0);
+  const totalInHand     = takenInHand.reduce((s,p)=>s+(p.totalPayout||p.amountPaid||0),0);
   const t = parseInt(depositor.interestTenure)||1;
   const tenureLabel = t===1?'Monthly':t===3?'Quarterly':t===6?'Half-Yearly':t===12?'Yearly':`Every ${t} months`;
   const periodInt = (depositor.depositAmount||0)*(depositor.interestRate||0)/100/12*t;
@@ -245,6 +251,11 @@ export function printDepositorReport(depositor, payments){
       <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${INR(totalPaid)}</div><div class="kpi-lbl">Total Settled</div></div>
       <div class="kpi" style="border-left-color:#ef4444;"><div class="kpi-val" style="color:#b91c1c;">${pending}</div><div class="kpi-lbl">Pending Periods</div></div>
     </div>
+    <div class="kpi-grid" style="margin-top:-14px;">
+      <div class="kpi" style="border-left-color:#0ea5e9;"><div class="kpi-val" style="color:#0369a1;">${INR(totalInHand)}</div><div class="kpi-lbl">💰 Taken in Hand</div><div class="kpi-sub">${takenInHand.length} period${takenInHand.length!==1?'s':''}</div></div>
+      <div class="kpi" style="border-left-color:#8b5cf6;"><div class="kpi-val" style="color:#7c3aed;">${INR(totalReinvested)}</div><div class="kpi-lbl">🔄 Added to Deposit</div><div class="kpi-sub">${reinvested.length} period${reinvested.length!==1?'s':''}</div></div>
+      <div class="kpi" style="grid-column:span 2;"><div class="kpi-val" style="font-size:14px;">${depositor.compounding?'Compound Interest — reinvested amounts grow the principal for future periods':'Simple Interest — each period calculated on the original principal'}</div><div class="kpi-lbl">Interest Type</div></div>
+    </div>
 
     <h2>Deposit Details</h2>
     <div class="info-grid">
@@ -265,9 +276,10 @@ export function printDepositorReport(depositor, payments){
     </div>
 
     <h2>Interest Payout History (${pays.length} periods)</h2>
+    <p style="font-size:11px;color:#6b7280;margin:-6px 0 10px;">"Settlement" shows whether the depositor received the interest in hand, or it was reinvested (added) into the deposit principal.</p>
     ${pays.length===0?'<p style="color:#9ca3af;font-size:12px;margin-bottom:16px;">No payout records yet.</p>':`
     <table>
-      <thead><tr><th>#</th><th>Period</th><th>Amount Due</th><th>Amount Settled</th><th>Fine</th><th>Status</th><th>Payment Date</th><th>Mode</th></tr></thead>
+      <thead><tr><th>#</th><th>Period</th><th>Amount Due</th><th>Amount Settled</th><th>Fine</th><th>Status</th><th>Settlement</th><th>Payment Date</th><th>Mode</th></tr></thead>
       <tbody>
         ${pays.map((p,i)=>`
         <tr>
@@ -276,14 +288,17 @@ export function printDepositorReport(depositor, payments){
           <td>${INR(p.amountDue||0)}</td>
           <td class="${p.status==='Paid'?'text-green':'text-red'}">${INR(p.totalPayout||p.amountPaid||0)}</td>
           <td>${(p.fine||0)>0?INR(p.fine):'—'}</td>
-          <td><span class="badge ${p.status==='Paid'?'badge-green':p.addedToDeposit?'badge-blue':'badge-amber'}">${p.addedToDeposit?'Added to Principal':p.status||'Pending'}</span></td>
+          <td><span class="badge ${p.status==='Paid'?'badge-green':'badge-amber'}">${p.status||'Pending'}</span></td>
+          <td>${p.status!=='Paid'?'—':(p.addedToDeposit?`<span class="badge badge-blue">🔄 Added to Deposit${p.addedAmount?' ('+INR(p.addedAmount)+')':''}</span>`:`<span class="badge badge-green">💰 Taken in Hand</span>`)}</td>
           <td>${fmtDate(p.paymentDate)}</td>
           <td>${p.paymentMode||'—'}</td>
         </tr>`).join('')}
         <tr class="total-row">
           <td colspan="3"><strong>Total</strong></td>
           <td class="text-green">${INR(totalPaid)}</td>
-          <td></td><td colspan="3"></td>
+          <td></td><td></td>
+          <td style="font-size:10px;">💰 ${INR(totalInHand)} · 🔄 ${INR(totalReinvested)}</td>
+          <td colspan="2"></td>
         </tr>
       </tbody>
     </table>`}
@@ -557,4 +572,266 @@ export function printEMIAlertsReport(list, filterLabel, collections){
   `;
 
   openPrint(`EMI Alerts — ${filterLabel||'Overdue'}`, body, '#dc2626');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PAGE SUMMARY REPORTS — one per FL list page (Depositors, Settle Interest,
+// Borrowers, Collect Interest, Loan Repayment, EMI Loans)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── DEPOSITORS SUMMARY ──────────────────────────────────────────────────────
+export function printDepositorsSummary(depositors){
+  const list = (depositors||[]).slice().sort((a,b)=>(b.depositAmount||0)-(a.depositAmount||0));
+  const active = list.filter(d=>d.status==='Active');
+  const totalDeposited = active.reduce((s,d)=>s+(d.depositAmount||0),0);
+  const totalMonthlyInterest = active.reduce((s,d)=>s+((d.depositAmount||0)*(d.interestRate||0)/100),0);
+
+  const body = `
+    <div class="header">
+      <div><div class="logo">FinSuite · Depositors Summary</div><div class="meta" style="text-align:left;margin-top:4px;">All depositor records with principal, rate and status</div></div>
+      <div class="meta">Generated: ${now()}</div>
+    </div>
+    <div class="kpi-grid">
+      <div class="kpi"><div class="kpi-val">${list.length}</div><div class="kpi-lbl">Total Depositors</div></div>
+      <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${active.length}</div><div class="kpi-lbl">Active</div></div>
+      <div class="kpi" style="border-left-color:#0ea5e9;"><div class="kpi-val" style="color:#0369a1;">${INR(totalDeposited)}</div><div class="kpi-lbl">Total Deposited (Active)</div></div>
+      <div class="kpi" style="border-left-color:#8b5cf6;"><div class="kpi-val" style="color:#7c3aed;">${INR(totalMonthlyInterest)}</div><div class="kpi-lbl">Monthly Interest Payable</div></div>
+    </div>
+    <h2>Depositor Records</h2>
+    <table>
+      <thead><tr><th>Name</th><th>Phone</th><th>Deposit ID</th><th class="text-right">Amount</th><th class="text-right">Rate</th><th>Type</th><th>Status</th></tr></thead>
+      <tbody>
+        ${list.map(d=>`<tr><td>${d.name||'—'}</td><td>${d.phone||'—'}</td><td>${d.depositId||'—'}</td><td class="text-right">${INR(d.depositAmount||0)}</td><td class="text-right">${d.interestRate||0}%/mo</td><td>${d.compounding?'Compound':'Simple'}</td><td><span class="badge ${d.status==='Active'?'badge-green':'badge-gray'}">${d.status||'—'}</span></td></tr>`).join('')}
+        <tr class="total-row"><td colspan="3">TOTAL (Active)</td><td class="text-right">${INR(totalDeposited)}</td><td colspan="3"></td></tr>
+      </tbody>
+    </table>
+    <div class="footer"><span>FinSuite Finance Ledger</span><span>Depositors Summary Report</span></div>
+  `;
+  openPrint('Depositors Summary', body, '#0ea5e9');
+}
+
+// ── SETTLE INTEREST (Depositor) SUMMARY ─────────────────────────────────────
+export function printSettleInterestSummary(depositors, payments, month){
+  const list = (depositors||[]).filter(d=>d.status==='Active');
+  const rows = list.map(d=>{
+    const p = (payments||{})[`${d.id}_${month}`];
+    const interest = (d.depositAmount||0)*(d.interestRate||0)/100;
+    return { d, p, interest, status: p?.status || 'Pending' };
+  });
+  const paid = rows.filter(r=>r.status==='Paid');
+  const pending = rows.filter(r=>r.status!=='Paid');
+  const totalDue = rows.reduce((s,r)=>s+r.interest,0);
+  const totalPaid = paid.reduce((s,r)=>s+(r.p?.totalPayout||r.p?.amountPaid||r.interest),0);
+
+  const body = `
+    <div class="header">
+      <div><div class="logo">FinSuite · Settle Interest Summary</div><div class="meta" style="text-align:left;margin-top:4px;">Month: ${month||'—'}</div></div>
+      <div class="meta">Generated: ${now()}</div>
+    </div>
+    <div class="kpi-grid">
+      <div class="kpi"><div class="kpi-val">${INR(totalDue)}</div><div class="kpi-lbl">Total Interest Due</div></div>
+      <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${INR(totalPaid)}</div><div class="kpi-lbl">Collected</div></div>
+      <div class="kpi" style="border-left-color:#ef4444;"><div class="kpi-val" style="color:#b91c1c;">${INR(totalDue-totalPaid)}</div><div class="kpi-lbl">Pending</div></div>
+      <div class="kpi"><div class="kpi-val">${paid.length} / ${rows.length}</div><div class="kpi-lbl">Settled / Total</div></div>
+    </div>
+    <h2>Settlement Status — ${month||''}</h2>
+    <table>
+      <thead><tr><th>Depositor</th><th>Deposit ID</th><th class="text-right">Interest Due</th><th>Status</th><th>Date Paid</th><th>Mode</th></tr></thead>
+      <tbody>
+        ${rows.map(r=>`<tr><td>${r.d.name||'—'}</td><td>${r.d.depositId||'—'}</td><td class="text-right">${INR(r.interest)}</td><td><span class="badge ${r.status==='Paid'?'badge-green':r.status==='Partial'?'badge-amber':'badge-red'}">${r.status}</span></td><td>${r.p?.paymentDate?fmtDate(r.p.paymentDate):'—'}</td><td>${r.p?.mode||'—'}</td></tr>`).join('')}
+        <tr class="total-row"><td colspan="2">TOTAL</td><td class="text-right">${INR(totalDue)}</td><td colspan="3"></td></tr>
+      </tbody>
+    </table>
+    <div class="footer"><span>FinSuite Finance Ledger</span><span>Settle Interest Summary — ${month||''}</span></div>
+  `;
+  openPrint(`Settle Interest — ${month||''}`, body, '#8b5cf6');
+}
+
+// ── BORROWERS SUMMARY ───────────────────────────────────────────────────────
+export function printBorrowersSummary(borrowers, repayments){
+  const list = (borrowers||[]).slice().sort((a,b)=>(b.loanAmount||0)-(a.loanAmount||0));
+  const getOut = b => {
+    const reps=(repayments&&repayments[b.id])||[];
+    const repaid = reps.reduce((s,r)=>s+(r.repaidAmount||r.amount||0),0);
+    return Math.max(0,(b.loanAmount||0)-repaid);
+  };
+  const active = list.filter(b=>b.status==='Active');
+  const totalLoan = active.reduce((s,b)=>s+(b.loanAmount||0),0);
+  const totalOutstanding = active.reduce((s,b)=>s+getOut(b),0);
+  const totalMonthlyInterest = active.reduce((s,b)=>s+(getOut(b)*(b.interestRate||0)/100),0);
+
+  const body = `
+    <div class="header">
+      <div><div class="logo">FinSuite · Borrowers Summary</div><div class="meta" style="text-align:left;margin-top:4px;">All borrower records with loan, outstanding and status</div></div>
+      <div class="meta">Generated: ${now()}</div>
+    </div>
+    <div class="kpi-grid">
+      <div class="kpi"><div class="kpi-val">${list.length}</div><div class="kpi-lbl">Total Borrowers</div></div>
+      <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${active.length}</div><div class="kpi-lbl">Active</div></div>
+      <div class="kpi" style="border-left-color:#f59e0b;"><div class="kpi-val" style="color:#b45309;">${INR(totalOutstanding)}</div><div class="kpi-lbl">Total Outstanding</div></div>
+      <div class="kpi" style="border-left-color:#8b5cf6;"><div class="kpi-val" style="color:#7c3aed;">${INR(totalMonthlyInterest)}</div><div class="kpi-lbl">Monthly Interest Due</div></div>
+    </div>
+    <h2>Borrower Records</h2>
+    <table>
+      <thead><tr><th>Name</th><th>Phone</th><th>Loan ID</th><th class="text-right">Loan Amount</th><th class="text-right">Outstanding</th><th class="text-right">Rate</th><th>Status</th></tr></thead>
+      <tbody>
+        ${list.map(b=>`<tr><td>${b.borrowerName||'—'}</td><td>${b.phone||'—'}</td><td>${b.loanId||'—'}</td><td class="text-right">${INR(b.loanAmount||0)}</td><td class="text-right">${INR(getOut(b))}</td><td class="text-right">${b.interestRate||0}%/mo</td><td><span class="badge ${b.status==='Active'?'badge-green':'badge-gray'}">${b.status||'—'}</span></td></tr>`).join('')}
+        <tr class="total-row"><td colspan="3">TOTAL (Active)</td><td class="text-right">${INR(totalLoan)}</td><td class="text-right">${INR(totalOutstanding)}</td><td colspan="2"></td></tr>
+      </tbody>
+    </table>
+    <div class="footer"><span>FinSuite Finance Ledger</span><span>Borrowers Summary Report</span></div>
+  `;
+  openPrint('Borrowers Summary', body, '#f59e0b');
+}
+
+// ── COLLECT INTEREST (Loan) SUMMARY ─────────────────────────────────────────
+export function printCollectInterestSummary(borrowers, payments, month, getOutstanding, calcInterest){
+  const list = (borrowers||[]);
+  const rows = list.map(b=>{
+    const out = getOutstanding ? getOutstanding(b) : Math.max(0,(b.loanAmount||0));
+    const interest = calcInterest ? calcInterest(b,out) : out*(b.interestRate||0)/100;
+    const p = (payments&&payments[b.id])?payments[b.id][month]:null;
+    return { b, out, interest, status: p?.status || 'Pending', p };
+  });
+  const paid = rows.filter(r=>r.status==='Paid');
+  const totalDue = rows.reduce((s,r)=>s+r.interest,0);
+  const totalCollected = paid.reduce((s,r)=>s+(r.p?.totalCollected||r.p?.amountPaid||0),0);
+
+  const body = `
+    <div class="header">
+      <div><div class="logo">FinSuite · Collect Interest Summary</div><div class="meta" style="text-align:left;margin-top:4px;">Month: ${month||'—'}</div></div>
+      <div class="meta">Generated: ${now()}</div>
+    </div>
+    <div class="kpi-grid">
+      <div class="kpi"><div class="kpi-val">${INR(totalDue)}</div><div class="kpi-lbl">Total Interest Due</div></div>
+      <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${INR(totalCollected)}</div><div class="kpi-lbl">Collected</div></div>
+      <div class="kpi" style="border-left-color:#ef4444;"><div class="kpi-val" style="color:#b91c1c;">${INR(totalDue-totalCollected)}</div><div class="kpi-lbl">Pending</div></div>
+      <div class="kpi"><div class="kpi-val">${paid.length} / ${rows.length}</div><div class="kpi-lbl">Collected / Total</div></div>
+    </div>
+    <h2>Collection Status — ${month||''}</h2>
+    <table>
+      <thead><tr><th>Borrower</th><th>Loan ID</th><th class="text-right">Outstanding</th><th class="text-right">Interest Due</th><th>Status</th><th>Fine</th></tr></thead>
+      <tbody>
+        ${rows.map(r=>`<tr><td>${r.b.borrowerName||'—'}</td><td>${r.b.loanId||'—'}</td><td class="text-right">${INR(r.out)}</td><td class="text-right">${INR(r.interest)}</td><td><span class="badge ${r.status==='Paid'?'badge-green':r.status==='Partial'?'badge-amber':'badge-red'}">${r.status}</span></td><td class="text-right">${r.p?.fine?INR(r.p.fine):'—'}</td></tr>`).join('')}
+        <tr class="total-row"><td colspan="3">TOTAL</td><td class="text-right">${INR(totalDue)}</td><td colspan="2"></td></tr>
+      </tbody>
+    </table>
+    <div class="footer"><span>FinSuite Finance Ledger</span><span>Collect Interest Summary — ${month||''}</span></div>
+  `;
+  openPrint(`Collect Interest — ${month||''}`, body, '#f97316');
+}
+
+// ── LOAN REPAYMENT SUMMARY ───────────────────────────────────────────────────
+export function printLoanRepaymentSummary(borrowers, getRepaid, getBalance){
+  const list = (borrowers||[]);
+  const rows = list.map(b=>({ b, repaid: getRepaid?getRepaid(b):0, balance: getBalance?getBalance(b):(b.loanAmount||0) }));
+  const totalOriginal = list.reduce((s,b)=>s+(b.loanAmount||0),0);
+  const totalRepaid = rows.reduce((s,r)=>s+r.repaid,0);
+  const totalBalance = rows.reduce((s,r)=>s+r.balance,0);
+  const closed = rows.filter(r=>r.balance<=0);
+
+  const body = `
+    <div class="header">
+      <div><div class="logo">FinSuite · Loan Repayment Summary</div><div class="meta" style="text-align:left;margin-top:4px;">Principal repayment progress across all borrowers</div></div>
+      <div class="meta">Generated: ${now()}</div>
+    </div>
+    <div class="kpi-grid">
+      <div class="kpi"><div class="kpi-val">${INR(totalOriginal)}</div><div class="kpi-lbl">Total Loans Issued</div></div>
+      <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${INR(totalRepaid)}</div><div class="kpi-lbl">Total Repaid</div></div>
+      <div class="kpi" style="border-left-color:#f59e0b;"><div class="kpi-val" style="color:#b45309;">${INR(totalBalance)}</div><div class="kpi-lbl">Outstanding Balance</div></div>
+      <div class="kpi"><div class="kpi-val">${closed.length} / ${rows.length}</div><div class="kpi-lbl">Fully Closed</div></div>
+    </div>
+    <h2>Repayment Progress</h2>
+    <table>
+      <thead><tr><th>Borrower</th><th>Loan ID</th><th class="text-right">Original</th><th class="text-right">Repaid</th><th class="text-right">Balance</th><th>Status</th></tr></thead>
+      <tbody>
+        ${rows.map(r=>`<tr><td>${r.b.borrowerName||'—'}</td><td>${r.b.loanId||'—'}</td><td class="text-right">${INR(r.b.loanAmount||0)}</td><td class="text-right text-green">${INR(r.repaid)}</td><td class="text-right ${r.balance>0?'text-amber':'text-green'}">${INR(r.balance)}</td><td><span class="badge ${r.balance<=0?'badge-green':'badge-amber'}">${r.balance<=0?'Closed':'Active'}</span></td></tr>`).join('')}
+        <tr class="total-row"><td colspan="2">TOTAL</td><td class="text-right">${INR(totalOriginal)}</td><td class="text-right">${INR(totalRepaid)}</td><td class="text-right">${INR(totalBalance)}</td><td></td></tr>
+      </tbody>
+    </table>
+    <div class="footer"><span>FinSuite Finance Ledger</span><span>Loan Repayment Summary Report</span></div>
+  `;
+  openPrint('Loan Repayment Summary', body, '#22c55e');
+}
+
+// ── EMI LOANS SUMMARY ────────────────────────────────────────────────────────
+export function printEMILoansSummary(loans){
+  const list = (loans||[]).slice().sort((a,b)=>(b.loanAmount||0)-(a.loanAmount||0));
+  const active = list.filter(l=>l.status==='Active');
+  const closed = list.filter(l=>l.status==='Closed');
+  const totalLoan = list.reduce((s,l)=>s+(l.loanAmount||0),0);
+  const totalEMI = active.reduce((s,l)=>s+(l.emiAmount||0),0);
+
+  const body = `
+    <div class="header">
+      <div><div class="logo">FinSuite · EMI Loans Summary</div><div class="meta" style="text-align:left;margin-top:4px;">All EMI loans with progress and monthly EMI</div></div>
+      <div class="meta">Generated: ${now()}</div>
+    </div>
+    <div class="kpi-grid">
+      <div class="kpi"><div class="kpi-val">${list.length}</div><div class="kpi-lbl">Total EMI Loans</div></div>
+      <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${active.length}</div><div class="kpi-lbl">Active</div></div>
+      <div class="kpi" style="border-left-color:#8b5cf6;"><div class="kpi-val" style="color:#7c3aed;">${closed.length}</div><div class="kpi-lbl">Closed</div></div>
+      <div class="kpi" style="border-left-color:#0ea5e9;"><div class="kpi-val" style="color:#0369a1;">${INR(totalEMI)}</div><div class="kpi-lbl">Total Monthly EMI (Active)</div></div>
+    </div>
+    <h2>EMI Loan Records</h2>
+    <table>
+      <thead><tr><th>Borrower</th><th>EMI ID</th><th class="text-right">Loan Amount</th><th class="text-right">EMI/Period</th><th>Paid / Total</th><th>Status</th></tr></thead>
+      <tbody>
+        ${list.map(l=>`<tr><td>${l.borrowerName||'—'}</td><td>${l.emiId||'—'}</td><td class="text-right">${INR(l.loanAmount||0)}</td><td class="text-right">${INR(l.emiAmount||0)}</td><td>${l.paidPeriods||0} / ${l.totalPeriods||0}</td><td><span class="badge ${l.status==='Active'?'badge-green':'badge-gray'}">${l.status||'—'}</span></td></tr>`).join('')}
+        <tr class="total-row"><td colspan="2">TOTAL</td><td class="text-right">${INR(totalLoan)}</td><td class="text-right">${INR(totalEMI)}</td><td colspan="2"></td></tr>
+      </tbody>
+    </table>
+    <div class="footer"><span>FinSuite Finance Ledger</span><span>EMI Loans Summary Report</span></div>
+  `;
+  openPrint('EMI Loans Summary', body, '#6366f1');
+}
+
+// ── JOURNAL PRINT (full history, all transaction types) ────────────────────
+export function printJournalReport(entries, fromDate, toDate){
+  const list = (entries||[]).slice().sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+  const milestones = list.filter(e=>e.type==='Milestone');
+  const txns = list.filter(e=>e.type!=='Milestone');
+  const credit = txns.filter(e=>e.type==='Credit').reduce((s,e)=>s+(e.amount||0),0);
+  const debit = txns.filter(e=>e.type==='Debit').reduce((s,e)=>s+(e.amount||0),0);
+  const byCat = {};
+  txns.forEach(e=>{const k=e.category||'Other';if(!byCat[k])byCat[k]={credit:0,debit:0};if(e.type==='Credit')byCat[k].credit+=(e.amount||0);else byCat[k].debit+=(e.amount||0);});
+
+  const body = `
+    <div class="header">
+      <div><div class="logo">FinSuite · Journal — Full Transaction History</div><div class="meta" style="text-align:left;margin-top:4px;">Period: ${fmtDate(fromDate)} → ${fmtDate(toDate)}</div></div>
+      <div class="meta">Generated: ${now()}</div>
+    </div>
+    <div class="kpi-grid">
+      <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${INR(credit)}</div><div class="kpi-lbl">Total Income</div></div>
+      <div class="kpi" style="border-left-color:#ef4444;"><div class="kpi-val" style="color:#b91c1c;">${INR(debit)}</div><div class="kpi-lbl">Total Expense</div></div>
+      <div class="kpi" style="border-left-color:${(credit-debit)>=0?'#22c55e':'#ef4444'};"><div class="kpi-val" style="color:${(credit-debit)>=0?'#15803d':'#b91c1c'};">${INR(credit-debit)}</div><div class="kpi-lbl">Net P&amp;L</div></div>
+      <div class="kpi"><div class="kpi-val">${list.length}</div><div class="kpi-lbl">Total Entries</div></div>
+    </div>
+    ${milestones.length>0?`
+    <h2>Lifecycle Events — Created &amp; Closed Accounts</h2>
+    <p style="font-size:11px;color:#6b7280;margin:-6px 0 10px;">Loans, deposits and EMI accounts opened or closed in this period. Shown separately — not counted in Income/Expense totals below.</p>
+    <table>
+      <thead><tr><th>Date</th><th>Time</th><th>Event</th><th>Description</th><th class="text-right">Amount</th></tr></thead>
+      <tbody>
+        ${milestones.map(m=>`<tr><td>${fmtDate(m.date)}</td><td>${m.time||'—'}</td><td><span class="badge ${m.category?.includes('Closed')?'badge-amber':'badge-blue'}">${m.category}</span></td><td>${m.description||'—'}</td><td class="text-right">${INR(m.amount)}</td></tr>`).join('')}
+      </tbody>
+    </table>`:''}
+    <h2>Profit &amp; Loss by Category</h2>
+    <p style="font-size:11px;color:#6b7280;margin:-6px 0 10px;">Interest, EMI, repayments and expenses only — lifecycle events above are excluded to avoid double-counting.</p>
+    <table>
+      <thead><tr><th>Category</th><th class="text-right">Income</th><th class="text-right">Expense</th><th class="text-right">Net</th></tr></thead>
+      <tbody>
+        ${Object.entries(byCat).map(([k,v])=>`<tr><td>${k}</td><td class="text-right text-green">${INR(v.credit)}</td><td class="text-right text-red">${INR(v.debit)}</td><td class="text-right ${(v.credit-v.debit)>=0?'text-green':'text-red'}">${INR(v.credit-v.debit)}</td></tr>`).join('')}
+      </tbody>
+    </table>
+    <h2>Transaction Journal</h2>
+    <table>
+      <thead><tr><th>Date</th><th>Time</th><th>Type</th><th>Category</th><th>Description</th><th class="text-right">Amount</th></tr></thead>
+      <tbody>
+        ${txns.map(e=>`<tr><td>${fmtDate(e.date)}</td><td>${e.time||'—'}</td><td><span class="badge ${e.type==='Credit'?'badge-green':'badge-red'}">${e.type}</span></td><td>${e.category||'—'}</td><td>${e.description||'—'}</td><td class="text-right ${e.type==='Credit'?'text-green':'text-red'}">${e.type==='Credit'?'+':'-'}${INR(e.amount)}</td></tr>`).join('')}
+      </tbody>
+    </table>
+    <div class="footer"><span>FinSuite Finance Ledger</span><span>Journal — Full Transaction History</span></div>
+  `;
+  openPrint('Journal Report', body, '#1a56db');
 }

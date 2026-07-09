@@ -7,6 +7,7 @@ import {
 import { db } from '../../firebase/config';
 import { uploadDocumentFile } from '../../utils/fileStore';
 import toast from 'react-hot-toast';
+import {printEMILoansSummary} from '../../utils/pdfReport';
 import {
   PageHeader, Card, StatCard, Button, Modal, FormField, Input, Select,
   SectionHeader, Badge, FilterTabs, SearchBar, formatCurrency, Divider
@@ -459,6 +460,7 @@ export default function EMILoans() {
 
   // ── Save loan ──────────────────────────────────────────────────────────
   async function saveLoan(isEdit) {
+    if (!isEdit && !form.customerId) return toast.error('Select an existing User first — EMI loans can only be created for a linked User.');
     if (!form.borrowerName || !form.phone || !form.loanAmount || !form.interestRate || !form.totalPeriods || !form.loanDate || !form.emiStartDate)
       return toast.error('Fill all required fields (Name, Phone, Amount, Rate, Periods, Dates)');
     setSaving(true);
@@ -480,7 +482,15 @@ export default function EMILoans() {
       } else {
         data.paidPeriods = 0;
         data.createdAt = serverTimestamp();
-        await addDoc(collection(db, 'emi_loans'), data);
+        const ref = await addDoc(collection(db, 'emi_loans'), data);
+        // Milestone: EMI Loan Created — notable lifecycle event for Journal
+        await addDoc(collection(db, 'finance_ledger_entries'), {
+          type: 'Milestone', category: 'EMI Loan Created',
+          description: `EMI loan created — ${form.borrowerName} · ${form.emiId||ref.id}`,
+          amount: parseFloat(form.loanAmount) || 0, date: form.loanDate || new Date().toISOString().split('T')[0],
+          borrowerName: form.borrowerName, loanId: ref.id, emiId: form.emiId || ref.id,
+          createdAt: serverTimestamp(),
+        });
         toast.success('EMI Loan created!');
         setAddOpen(false);
       }
@@ -601,6 +611,16 @@ export default function EMILoans() {
       await updateDoc(doc(db, 'emi_loans', loan.id), {
         paidPeriods: cpf.earlyClose ? loan.totalPeriods : paidPeriods, status: fullyPaid ? 'Closed' : 'Active', closedEarly: cpf.earlyClose || false, updatedAt: serverTimestamp(),
       });
+      if (fullyPaid) {
+        // Milestone: EMI Loan Closed — notable lifecycle event for Journal
+        await addDoc(collection(db, 'finance_ledger_entries'), {
+          type: 'Milestone', category: 'EMI Loan Closed',
+          description: `EMI loan closed${cpf.earlyClose ? ' (early settlement)' : ''} — ${loan.borrowerName} · ${loan.emiId || loan.id}`,
+          amount: loan.loanAmount || 0, date: cpf.date || new Date().toISOString().split('T')[0],
+          borrowerName: loan.borrowerName, loanId: loan.id, emiId: loan.emiId || loan.id,
+          createdAt: serverTimestamp(),
+        });
+      }
 
       toast.success(fullyPaid
         ? (cpf.earlyClose ? '✓ Loan closed early — fully settled.' : `🎉 All ${loan.totalPeriods} EMIs collected! Loan closed.`)
@@ -647,7 +667,10 @@ export default function EMILoans() {
       {photoPopup && <PhotoPopup src={photoPopup.src} name={photoPopup.name} onClose={() => setPhotoPopup(null)} />}
 
       <PageHeader title="EMI Loans" subtitle="Daily, weekly and monthly instalment loan management"
-        action={<Button onClick={openAdd}>+ New EMI Loan</Button>} />
+        action={<div style={{ display: 'flex', gap: 8 }}>
+          <Button variant="secondary" onClick={() => printEMILoansSummary(loans)}>Export PDF</Button>
+          <Button onClick={openAdd}>+ New EMI Loan</Button>
+        </div>} />
 
       {/* Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14, marginBottom: 20 }}>

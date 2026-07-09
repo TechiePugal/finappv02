@@ -2,6 +2,7 @@ import React,{useEffect,useState} from 'react';
 import {collection,onSnapshot,addDoc,updateDoc,doc,query,orderBy,serverTimestamp} from 'firebase/firestore';
 import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
+import {printLoanRepaymentSummary} from '../../utils/pdfReport';
 import {PageHeader,Card,Badge,Button,StatCard,Modal,SectionHeader,InfoRow,formatCurrency,Loader,Divider,FilterTabs,SearchBar} from '../../components/finledger/UI';
 import {PageLoader} from '../../components/Skeleton';
 
@@ -88,6 +89,17 @@ export default function LoanRepayment(){
         :{outstandingBalance:newBalance,updatedAt:serverTimestamp()};
       await updateDoc(doc(db,'borrower_master',modal.id),upd);
 
+      if(isFullClose){
+        // Milestone: Loan Closed — notable lifecycle event for Journal
+        await addDoc(collection(db,'finance_ledger_entries'),{
+          type:'Milestone', category:'Loan Closed',
+          description:`Loan fully closed — ${modal.borrowerName} · ${modal.loanId||modal.id}`,
+          amount:modal.loanAmount||0, date:pf.date,
+          borrowerName:modal.borrowerName, borrowerId:modal.id, loanId:modal.loanId||modal.id,
+          createdAt:serverTimestamp()
+        });
+      }
+
       toast.success(isFullClose
         ?`✓ Loan fully closed! ${modal.borrowerName}'s account settled.`
         :`✓ ₹${amount.toLocaleString('en-IN')} recorded. Outstanding: ${formatCurrency(Math.round(newBalance))}`
@@ -129,7 +141,8 @@ export default function LoanRepayment(){
 
   return(
     <div className="page-enter">
-      <PageHeader title="Loan Repayment" subtitle="Track principal repayments and loan closures"/>
+      <PageHeader title="Loan Repayment" subtitle="Track principal repayments and loan closures"
+        action={<Button variant="secondary" onClick={()=>printLoanRepaymentSummary(borrowers, getRepaid, getBalance)}>Export PDF</Button>}/>
 
       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>
         <StatCard label="Original Loans" value={formatCurrency(totalOriginal)} sub={`${allActive.length} active`} color="#007aff"/>

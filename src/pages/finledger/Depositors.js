@@ -4,7 +4,7 @@ import {collection,onSnapshot,getDocs,deleteDoc,doc,query,orderBy} from 'firebas
 import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
 import {PageHeader,Card,Badge,Button,StatCard,SearchBar,FilterTabs,formatCurrency,formatDate,Loader} from '../../components/finledger/UI';
-import {printDepositorReport} from '../../utils/pdfReport';
+import {printDepositorReport, printDepositorsSummary} from '../../utils/pdfReport';
 import { PageLoader } from '../../components/Skeleton';
 
 export default function Depositors(){
@@ -49,7 +49,10 @@ export default function Depositors(){
   return(
     <div className="page-enter">
       <PageHeader title="Depositors" subtitle="Manage investor deposits and interest liabilities"
-        action={<Button onClick={()=>nav('/fl/depositors/new')}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Depositor</Button>}/>
+        action={<div style={{display:'flex',gap:8}}>
+          <Button variant="secondary" onClick={()=>printDepositorsSummary(data)}>Export PDF</Button>
+          <Button onClick={()=>nav('/fl/depositors/new')}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Depositor</Button>
+        </div>}/>
 
       <div className="grid-3" style={{marginBottom:20}}>
         <StatCard label="Total Depositors" value={data.length} sub={`${active.length} active`} color="#bf5af2"
@@ -93,6 +96,10 @@ export default function Depositors(){
                     <td style={{padding:'12px 16px'}}><Badge label={dep.status||'Active'} type={(dep.status||'active').toLowerCase()}/></td>
                     <td style={{padding:'12px 16px'}} onClick={e=>e.stopPropagation()}>
                       <div style={{display:'flex',gap:6}}>
+                        <button onClick={e=>{e.stopPropagation();printDepositorReport(dep, depPays[dep.id]||[]);}} title="Download PDF Report"
+                          style={{width:28,height:28,borderRadius:7,border:'1px solid rgba(220,38,38,.2)',background:'rgba(220,38,38,.04)',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',color:'#dc2626'}}>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="12" y2="18"/><line x1="15" y1="15" x2="12" y2="18"/></svg>
+                        </button>
                         <Button size="sm" variant="secondary" onClick={()=>nav(`/fl/depositors/edit/${dep.id}`)}>Edit</Button>
                         <Button size="sm" variant="danger" onClick={e=>del(dep.id,e)}>Delete</Button>
                       </div>

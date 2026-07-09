@@ -2,6 +2,7 @@ import React,{useEffect,useState} from 'react';
 import {collection,onSnapshot,addDoc,serverTimestamp,doc,updateDoc} from 'firebase/firestore';
 import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
+import {printCollectInterestSummary} from '../../utils/pdfReport';
 import {PageHeader,Badge,Button,Card,StatCard,Modal,formatCurrency,SectionHeader,Divider} from '../../components/finledger/UI';
 import {PageLoader} from '../../components/Skeleton';
 
@@ -195,6 +196,7 @@ export default function InterestCollection(){
             </div>
             <input type="month" value={month} onChange={e=>setMonth(e.target.value)}
               style={{padding:'8px 14px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:10,fontSize:14,color:'var(--text-primary)',outline:'none',fontFamily:'inherit'}}/>
+            <Button variant="secondary" onClick={()=>printCollectInterestSummary(borrowers, payments, month, getOutstanding, calcInterest)}>Export PDF</Button>
           </div>
         }/>
 

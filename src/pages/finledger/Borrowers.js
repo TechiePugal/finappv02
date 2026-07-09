@@ -4,7 +4,7 @@ import {collection,onSnapshot,deleteDoc,doc,query,orderBy} from 'firebase/firest
 import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
 import {PageHeader,Card,Badge,Button,StatCard,SearchBar,FilterTabs,formatCurrency} from '../../components/finledger/UI';
-import {printBorrowerReport} from '../../utils/pdfReport';
+import {printBorrowerReport, printBorrowersSummary} from '../../utils/pdfReport';
 import {PageLoader} from '../../components/Skeleton';
 
 export default function Borrowers(){
@@ -107,7 +107,10 @@ export default function Borrowers(){
         </div>
       )}
       <PageHeader title="Borrowers" subtitle="Loan accounts — interest calculated on outstanding balance after repayments"
-        action={<Button onClick={()=>nav('/fl/borrowers/new')}>+ Add Borrower</Button>}/>
+        action={<div style={{display:'flex',gap:8}}>
+          <Button variant="secondary" onClick={()=>printBorrowersSummary(data, reps)}>Export PDF</Button>
+          <Button onClick={()=>nav('/fl/borrowers/new')}>+ Add Borrower</Button>
+        </div>}/>
 
       {nonActive.length>0&&(
         <div style={{marginBottom:16,padding:'12px 16px',background:'rgba(255,69,58,0.06)',border:'1px solid rgba(255,69,58,0.18)',borderRadius:12,display:'flex',alignItems:'center',gap:12}}>
