@@ -476,9 +476,16 @@ export async function processAuction(chitId, auctionScheduleId, auctionData, use
 
 // ─── UPDATE PAYMENT STATUS ────────────────────────────────────────────────
 
-export async function updatePaymentStatus(paymentId, status, userId, paymentMode) {
+export async function updatePaymentStatus(paymentId, status, userId, extra) {
   const upd = { paymentStatus: status, updatedAt: serverTimestamp(), updatedBy: userId };
-  if (paymentMode) upd.paymentMode = paymentMode; // 'Cash' | 'Bank' — how this member's contribution was actually collected
+  if (typeof extra === 'string') {
+    upd.paymentMode = extra; // backward-compat: old callers passed a plain 'Cash'/'Bank' string
+  } else if (extra && typeof extra === 'object') {
+    if (extra.paymentMode != null) upd.paymentMode = extra.paymentMode;
+    if (extra.cashAmount != null) upd.cashAmount = extra.cashAmount;
+    if (extra.accountAmount != null) upd.accountAmount = extra.accountAmount;
+    if (extra.remarks != null) upd.remarks = extra.remarks;
+  }
   await updateDoc(doc(db, 'chit_member_payments', paymentId), upd);
   await writeAuditLog('UPDATE', 'payment', paymentId, { paymentStatus: status }, userId);
   cacheDeletePattern('payments');
@@ -687,3 +694,96 @@ export async function updateOtherChitPayment(paymentId, data) {
   await updateDoc(doc(db,'chit_others_payments',paymentId),{...data,updatedAt:serverTimestamp()});
 }
 
+
+// ─── WINNER PAYOUT (gated behind full collection) ──────────────────────────
+// Fetch the auction result for a specific round — used to check/display payout status
+export async function getAuctionResultByRound(chitId, auctionNumber) {
+  const q = query(collection(db, 'chit_auction_results'), where('chitId', '==', chitId), where('auctionNumber', '==', auctionNumber));
+  const snap = await getDocs(q);
+  if (snap.empty) return null;
+  return { id: snap.docs[0].id, ...snap.docs[0].data() };
+}
+
+// Actually hand over the winner's prize — only meant to be called once all member
+// contributions for that round have been collected (enforced in the UI, not here,
+// so the organiser retains final judgement, but the button is disabled until then).
+export async function giveWinnerPayout(resultId, { cashAmount, accountAmount, remarks }, userId) {
+  await updateDoc(doc(db, 'chit_auction_results', resultId), {
+    payoutGiven: true, payoutCash: cashAmount || 0, payoutBank: accountAmount || 0,
+    payoutRemarks: remarks || '', payoutGivenAt: serverTimestamp(), payoutGivenBy: userId,
+  });
+  await writeAuditLog('UPDATE', 'auction_result', resultId, { payoutGiven: true }, userId);
+}
+
+export async function revertWinnerPayout(resultId, userId) {
+  await updateDoc(doc(db, 'chit_auction_results', resultId), {
+    payoutGiven: false, payoutCash: 0, payoutBank: 0, payoutRemarks: '',
+    payoutGivenAt: null, payoutGivenBy: null,
+  });
+  await writeAuditLog('UPDATE', 'auction_result', resultId, { payoutGiven: false }, userId);
+}
+
+// Fetch ALL auction results for a chit (for the Bidding Notes "Previous Winners" list)
+export async function getAllAuctionResults(chitId) {
+  const q = query(collection(db, 'chit_auction_results'), where('chitId', '==', chitId));
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.auctionNumber||0) - (b.auctionNumber||0));
+}
+
+// ─── PERSON DIRECTORY (chit_persons) — shared member enrollment across chits ──
+// A "Person" is a real human who can appear as a chit_members entry in MULTIPLE
+// chits. This lets us build a single cross-chit history report for one person,
+// and offer autocomplete when adding them to a new chit — instead of re-typing
+// their details fresh (and disconnected) every single time.
+
+export async function createPerson(data, userId) {
+  const ref = await addDoc(collection(db, 'chit_persons'), {
+    ...data, createdBy: userId, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+  });
+  return ref.id;
+}
+
+export async function updatePerson(personId, data, userId) {
+  await updateDoc(doc(db, 'chit_persons', personId), { ...data, updatedAt: serverTimestamp() });
+}
+
+export async function getPersons(userId) {
+  const q = query(collection(db, 'chit_persons'), where('createdBy', '==', userId));
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+}
+
+export async function getPerson(personId) {
+  const s = await getDoc(doc(db, 'chit_persons', personId));
+  return s.exists() ? { id: s.id, ...s.data() } : null;
+}
+
+export async function deletePerson(personId) {
+  await deleteDoc(doc(db, 'chit_persons', personId));
+}
+
+// Cross-chit history for one person — every chit_members entry that references
+// this person, joined with the parent chit and their payment records.
+export async function getPersonChitHistory(personId, userId) {
+  const memQ = query(collection(db, 'chit_members'), where('personId', '==', personId));
+  const memSnap = await getDocs(memQ);
+  const memberRows = memSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  const chitIds = [...new Set(memberRows.map(m => m.chitId))];
+  const chits = await Promise.all(chitIds.map(cid => getChit(cid).catch(() => null)));
+  const chitMap = Object.fromEntries(chits.filter(Boolean).map(c => [c.id, c]));
+
+  // Payment history for this person across all their chit memberships
+  const payPromises = memberRows.map(async m => {
+    const pq = query(collection(db, 'chit_member_payments'), where('memberId', '==', m.id));
+    const pSnap = await getDocs(pq);
+    return pSnap.docs.map(d => ({ id: d.id, chitId: m.chitId, ...d.data() }));
+  });
+  const payments = (await Promise.all(payPromises)).flat();
+
+  return memberRows.map(m => ({
+    ...m,
+    chit: chitMap[m.chitId] || null,
+    payments: payments.filter(p => p.chitId === m.chitId && p.memberId === m.id),
+  }));
+}

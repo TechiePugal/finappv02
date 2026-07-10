@@ -6,7 +6,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import {
-  getDashboardData, getAuctionPayments, updatePaymentStatus, deleteAuction
+  getDashboardData, getAuctionPayments, updatePaymentStatus, deleteAuction,
+  getAuctionResultByRound, giveWinnerPayout, revertWinnerPayout
 } from '../../utils/cf_firestore';
 import { formatCurrency, formatMonthYear } from '../../utils/cf_format';
 import {
@@ -35,7 +36,7 @@ function IBtn({ icon: Icon, onClick, title, danger, disabled }) {
 }
 
 // ── CollectBtn: toggle paid/pending per member ────────────────────────────────
-function CollectBtn({ isPaid, loading, onClick }) {
+export function CollectBtn({ isPaid, loading, onClick }) {
   return (
     <button onClick={e => { e.stopPropagation(); onClick(); }} disabled={loading}
       style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 99, border: 'none', cursor: loading ? 'wait' : 'pointer', fontFamily: 'inherit', fontSize: 11.5, fontWeight: 700, transition: 'all 0.15s', background: isPaid ? '#D1FAE5' : '#FEF3C7', color: isPaid ? '#065F46' : '#92400E', minWidth: 90, justifyContent: 'center' }}>
@@ -46,18 +47,124 @@ function CollectBtn({ isPaid, loading, onClick }) {
   );
 }
 
+// ── Settlement Popup — Cash/Account split + remarks, opens when marking a member Paid ──
+export function SettlementPopup({ payment, onClose, onConfirm, onMarkUnpaid }) {
+  const netPayable = payment?.netPayable || 0;
+  const alreadyPaid = payment?.paymentStatus === 'Paid';
+  const [cashAmt, setCashAmt] = useState(String(netPayable));
+  const [acctAmt, setAcctAmt] = useState('0');
+  const [remarks, setRemarks] = useState('');
+  const [saving, setSaving] = useState(false);
+  if (!payment) return null;
+  const cashV = parseFloat(cashAmt) || 0, acctV = parseFloat(acctAmt) || 0;
+  const splitTotal = cashV + acctV;
+  const mismatch = Math.round(splitTotal) !== Math.round(netPayable);
+  async function confirm() {
+    setSaving(true);
+    await onConfirm({ cashAmount: cashV, accountAmount: acctV, remarks });
+    setSaving(false);
+  }
+  async function markUnpaid() {
+    setSaving(true);
+    await onMarkUnpaid();
+    setSaving(false);
+  }
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(15,23,42,.7)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 18, width: '100%', maxWidth: 420, boxShadow: '0 28px 72px rgba(0,0,0,.25)', overflow: 'hidden' }}>
+        <div style={{ padding: '18px 22px', background: `linear-gradient(135deg,${tokens.blue},#6366f1)` }}>
+          <div style={{ fontSize: 11, color: 'rgba(255,255,255,.65)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 4 }}>Settle Payment</div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: '#fff' }}>{payment.memberName}</div>
+          <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,.75)', marginTop: 2 }}>Net payable: <strong style={{ color: '#fff' }}>{fmt(netPayable)}</strong></div>
+        </div>
+        <div style={{ padding: 20 }}>
+          {alreadyPaid ? (
+            <>
+              <div style={{ fontSize: 12.5, color: tokens.textSub, marginBottom: 14 }}>This payment is already marked <strong style={{ color: tokens.green }}>Paid</strong>. Here's how it was recorded:</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+                <div style={{ padding: '10px 12px', borderRadius: 9, background: tokens.slateLight }}>
+                  <div style={{ fontSize: 10.5, color: tokens.textMuted, fontWeight: 700, textTransform: 'uppercase' }}>💵 Cash</div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: tokens.text }}>{fmt(payment.cashAmount || 0)}</div>
+                </div>
+                <div style={{ padding: '10px 12px', borderRadius: 9, background: tokens.slateLight }}>
+                  <div style={{ fontSize: 10.5, color: tokens.textMuted, fontWeight: 700, textTransform: 'uppercase' }}>🏦 Account</div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: tokens.text }}>{fmt(payment.accountAmount || 0)}</div>
+                </div>
+              </div>
+              {payment.remarks && (
+                <div style={{ marginBottom: 16, fontSize: 12.5, color: tokens.textSub, fontStyle: 'italic', padding: '10px 12px', background: tokens.slateLight, borderRadius: 9 }}>"{payment.remarks}"</div>
+              )}
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button onClick={markUnpaid} disabled={saving}
+                  style={{ flex: 1, padding: '11px', borderRadius: 10, border: 'none', background: tokens.red, color: '#fff', fontSize: 13.5, fontWeight: 700, cursor: saving ? 'wait' : 'pointer', fontFamily: 'inherit' }}>
+                  {saving ? 'Reverting…' : '↩ Mark Unpaid'}
+                </button>
+                <button onClick={onClose} disabled={saving}
+                  style={{ padding: '11px 18px', borderRadius: 10, border: `1px solid ${tokens.border}`, background: '#fff', color: tokens.textSub, fontSize: 13.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+                  Close
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+          <div style={{ fontSize: 11.5, color: tokens.textSub, marginBottom: 12 }}>Split how this amount was actually handled — cash in hand vs bank/account — for your own records.</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+            <div>
+              <label style={{ fontSize: 11.5, fontWeight: 700, color: tokens.textSub, display: 'block', marginBottom: 5 }}>💵 Cash Amount</label>
+              <input type="number" value={cashAmt} onChange={e => setCashAmt(e.target.value)}
+                style={{ width: '100%', boxSizing: 'border-box', height: 38, padding: '0 12px', borderRadius: 9, border: `1.5px solid ${tokens.border}`, fontSize: 14, fontFamily: 'inherit', outline: 'none' }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 11.5, fontWeight: 700, color: tokens.textSub, display: 'block', marginBottom: 5 }}>🏦 Account Amount</label>
+              <input type="number" value={acctAmt} onChange={e => setAcctAmt(e.target.value)}
+                style={{ width: '100%', boxSizing: 'border-box', height: 38, padding: '0 12px', borderRadius: 9, border: `1.5px solid ${tokens.border}`, fontSize: 14, fontFamily: 'inherit', outline: 'none' }} />
+            </div>
+          </div>
+          {mismatch && (
+            <div style={{ marginBottom: 14, fontSize: 11.5, color: tokens.amber, background: `${tokens.amberLight}`, padding: '8px 12px', borderRadius: 9 }}>
+              ⚠ Cash + Account ({fmt(splitTotal)}) doesn't match the net payable ({fmt(netPayable)}). You can still save if this is intentional.
+            </div>
+          )}
+          <label style={{ fontSize: 11.5, fontWeight: 700, color: tokens.textSub, display: 'block', marginBottom: 5 }}>Remarks <span style={{ fontWeight: 400, color: tokens.textMuted }}>(optional)</span></label>
+          <textarea value={remarks} onChange={e => setRemarks(e.target.value)} rows={2} placeholder="Any note about this settlement…"
+            style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: 9, border: `1.5px solid ${tokens.border}`, fontSize: 13, fontFamily: 'inherit', outline: 'none', resize: 'vertical', marginBottom: 16 }} />
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button onClick={confirm} disabled={saving}
+              style={{ flex: 1, padding: '11px', borderRadius: 10, border: 'none', background: tokens.blue, color: '#fff', fontSize: 13.5, fontWeight: 700, cursor: saving ? 'wait' : 'pointer', fontFamily: 'inherit' }}>
+              {saving ? 'Saving…' : '✓ Confirm Settlement'}
+            </button>
+            <button onClick={onClose} disabled={saving}
+              style={{ padding: '11px 18px', borderRadius: 10, border: `1px solid ${tokens.border}`, background: '#fff', color: tokens.textSub, fontSize: 13.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+              Cancel
+            </button>
+          </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Payment Collection Modal ──────────────────────────────────────────────────
-function PaymentModal({ open, onClose, auction }) {
+export function PaymentModal({ open, onClose, auction }) {
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(false);
   const [updatingId, setUpdatingId] = useState(null);
+  const [settleTarget, setSettleTarget] = useState(null); // payment record being settled via popup
+  const [auctionResult, setAuctionResult] = useState(null); // chit_auction_results doc — tracks payoutGiven
+  const [payoutPopupOpen, setPayoutPopupOpen] = useState(false);
+  const [payoutSaving, setPayoutSaving] = useState(false);
 
   useEffect(() => {
     if (!open || !auction) return;
     setPayments([]);
+    setAuctionResult(null);
     setLoading(true);
-    getAuctionPayments(auction.chitId, auction.auctionNumber)
-      .then(p => { setPayments(p); setLoading(false); });
+    Promise.all([
+      getAuctionPayments(auction.chitId, auction.auctionNumber),
+      getAuctionResultByRound(auction.chitId, auction.auctionNumber),
+    ]).then(([p, ar]) => { setPayments(p); setAuctionResult(ar); setLoading(false); });
   }, [open, auction]);
 
   async function togglePayment(payId, currentStatus, mode) {
@@ -70,6 +177,38 @@ function PaymentModal({ open, onClose, auction }) {
   async function setMode(payId, mode) {
     setPayments(prev => prev.map(p => p.id === payId ? { ...p, paymentMode: mode } : p));
     await updatePaymentStatus(payId, payments.find(p=>p.id===payId)?.paymentStatus || 'Pending', null, mode);
+  }
+  async function confirmSettlement(extra) {
+    const p = settleTarget;
+    setUpdatingId(p.id);
+    await updatePaymentStatus(p.id, 'Paid', null, extra);
+    setPayments(prev => prev.map(x => x.id === p.id ? { ...x, paymentStatus: 'Paid', ...extra } : x));
+    setUpdatingId(null);
+    setSettleTarget(null);
+  }
+  async function confirmUnpaid() {
+    const p = settleTarget;
+    setUpdatingId(p.id);
+    await updatePaymentStatus(p.id, 'Pending', null, { cashAmount: null, accountAmount: null, remarks: '' });
+    setPayments(prev => prev.map(x => x.id === p.id ? { ...x, paymentStatus: 'Pending', cashAmount: null, accountAmount: null, remarks: '' } : x));
+    setUpdatingId(null);
+    setSettleTarget(null);
+  }
+
+  async function confirmPayout(extra) {
+    if (!auctionResult) return;
+    setPayoutSaving(true);
+    await giveWinnerPayout(auctionResult.id, extra, null);
+    setAuctionResult(prev => ({ ...prev, payoutGiven: true, payoutCash: extra.cashAmount, payoutBank: extra.accountAmount, payoutRemarks: extra.remarks }));
+    setPayoutSaving(false);
+    setPayoutPopupOpen(false);
+  }
+  async function undoPayout() {
+    if (!auctionResult) return;
+    setPayoutSaving(true);
+    await revertWinnerPayout(auctionResult.id, null);
+    setAuctionResult(prev => ({ ...prev, payoutGiven: false, payoutCash: 0, payoutBank: 0, payoutRemarks: '' }));
+    setPayoutSaving(false);
   }
 
   async function markAll(status) {
@@ -138,6 +277,42 @@ function PaymentModal({ open, onClose, auction }) {
           </div>
         </div>
 
+        {/* Winner payout — gated behind full collection */}
+        {auctionResult && (
+          <div style={{ padding: '14px 24px', borderBottom: `1px solid ${tokens.border}`, background: auctionResult.payoutGiven ? 'rgba(52,199,89,0.05)' : pendingCount === 0 ? 'rgba(88,86,214,0.05)' : tokens.slateLight, flexShrink: 0 }}>
+            {auctionResult.payoutGiven ? (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, color: tokens.green }}>✓ Payout given to {auction.winnerName || 'Company'}</div>
+                  <div style={{ fontSize: 11.5, color: tokens.textSub, marginTop: 2 }}>
+                    💵 {fmt(auctionResult.payoutCash)} · 🏦 {fmt(auctionResult.payoutBank)}
+                    {auctionResult.payoutRemarks && ` · "${auctionResult.payoutRemarks}"`}
+                  </div>
+                </div>
+                <button onClick={undoPayout} disabled={payoutSaving}
+                  style={{ padding: '6px 14px', borderRadius: 8, border: `1px solid ${tokens.border}`, background: '#fff', color: tokens.red, fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                  ↩ Undo
+                </button>
+              </div>
+            ) : pendingCount === 0 ? (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, color: tokens.purple }}>All contributions collected — ready to pay {auction.winnerName || 'Company'}</div>
+                  <div style={{ fontSize: 11.5, color: tokens.textSub, marginTop: 2 }}>Prize: <strong>{fmt(payments.find(p => p.isWinner)?.winnerPayout || 0)}</strong></div>
+                </div>
+                <button onClick={() => setPayoutPopupOpen(true)}
+                  style={{ padding: '8px 16px', borderRadius: 9, border: 'none', background: tokens.purple, color: '#fff', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                  🏆 Give Payout to Winner
+                </button>
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: tokens.textSub }}>
+                ⏳ Winner's payout is on hold until all {pendingCount} pending contribution{pendingCount !== 1 ? 's are' : ' is'} collected.
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Bulk actions */}
         <div style={{ padding: '10px 24px', borderBottom: `1px solid ${tokens.border}`, display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
           <button onClick={() => markAll('Paid')}
@@ -193,14 +368,15 @@ function PaymentModal({ open, onClose, auction }) {
                   <div style={{ fontSize: 10.5, color: tokens.textMuted }}>net payable</div>
                 </div>
                 {/* Collect toggle */}
-                <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-                  <CollectBtn isPaid={isPaid} loading={isUpdating} onClick={() => togglePayment(p.id, p.paymentStatus, p.paymentMode || 'Cash')} />
-                  {isPaid && (
-                    <select value={p.paymentMode || 'Cash'} onChange={e => setMode(p.id, e.target.value)}
-                      style={{ fontSize:10.5, padding:'3px 6px', borderRadius:6, border:`1px solid ${tokens.border}`, background:'#fff', color:tokens.textSub, fontFamily:'inherit', cursor:'pointer' }}>
-                      <option value="Cash">💵 Cash</option>
-                      <option value="Bank">🏦 Bank</option>
-                    </select>
+                <div style={{ display:'flex', flexDirection: 'column', alignItems:'flex-end', gap:4 }}>
+                  <CollectBtn isPaid={isPaid} loading={isUpdating} onClick={() => setSettleTarget(p)} />
+                  {isPaid && (p.cashAmount != null || p.accountAmount != null) && (
+                    <div style={{ fontSize: 9.5, color: tokens.textMuted, textAlign: 'right' }}>
+                      {p.cashAmount > 0 && `💵 ${fmt(p.cashAmount)}`}{p.cashAmount > 0 && p.accountAmount > 0 && ' · '}{p.accountAmount > 0 && `🏦 ${fmt(p.accountAmount)}`}
+                    </div>
+                  )}
+                  {isPaid && p.remarks && (
+                    <div style={{ fontSize: 9.5, color: tokens.textMuted, fontStyle: 'italic', textAlign: 'right', maxWidth: 140 }}>"{p.remarks}"</div>
                   )}
                 </div>
               </div>
@@ -208,6 +384,15 @@ function PaymentModal({ open, onClose, auction }) {
           })}
         </div>
       </div>
+      {settleTarget && <SettlementPopup payment={settleTarget} onClose={() => setSettleTarget(null)} onConfirm={confirmSettlement} onMarkUnpaid={confirmUnpaid} />}
+      {payoutPopupOpen && (
+        <SettlementPopup
+          payment={{ memberName: auction.winnerName || 'Company', netPayable: payments.find(p => p.isWinner)?.winnerPayout || 0, paymentStatus: 'Pending' }}
+          onClose={() => setPayoutPopupOpen(false)}
+          onConfirm={confirmPayout}
+        />
+      )}
+
     </div>
   );
 }
@@ -278,69 +463,59 @@ function DeleteAuctionModal({ open, onClose, auction, onDeleted }) {
   );
 }
 
-// ── Auction Row ───────────────────────────────────────────────────────────────
-function AuctionRow({ auction, onPaymentClick, onDeleteClick, nav, isLast }) {
+// ── Auction Card — compact box-grid style ───────────────────────────────────
+function AuctionRow({ auction, onPaymentClick, onDeleteClick, nav }) {
   const now = new Date();
   const d = auction.auctionDate?.seconds ? new Date(auction.auctionDate.seconds * 1000) : new Date(auction.auctionDate);
   const daysAway = Math.floor((d - now) / 86400000);
   const isCompleted = auction.status === 'Completed';
   const isUrgent = !isCompleted && daysAway >= 0 && daysAway <= 2;
   const isOverdue = !isCompleted && daysAway < 0;
-  const dotColor = isCompleted ? tokens.green : isUrgent ? tokens.red : isOverdue ? tokens.amber : tokens.textMuted;
+  const accent = isCompleted ? tokens.green : isUrgent ? tokens.red : isOverdue ? tokens.amber : tokens.textMuted;
+  const bg = isCompleted ? 'rgba(52,199,89,0.05)' : isUrgent ? 'rgba(255,59,48,0.05)' : isOverdue ? 'rgba(255,149,0,0.05)' : '#fff';
+  const border = isCompleted ? 'rgba(52,199,89,0.25)' : isUrgent ? 'rgba(255,59,48,0.3)' : isOverdue ? 'rgba(255,149,0,0.3)' : tokens.border;
 
   return (
     <div
       onClick={() => isCompleted ? onPaymentClick(auction) : nav(`/cf/chits/${auction.chitId}`)}
-      style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 20px', borderBottom: isLast ? 'none' : `1px solid ${tokens.border}`, cursor: 'pointer', background: isUrgent ? '#FFF7ED' : isOverdue ? '#FFFBEB' : 'transparent', transition: 'background 0.15s' }}
-      onMouseEnter={e => { if (!isUrgent && !isOverdue) e.currentTarget.style.background = '#F8FAFC'; }}
-      onMouseLeave={e => { e.currentTarget.style.background = isUrgent ? '#FFF7ED' : isOverdue ? '#FFFBEB' : 'transparent'; }}>
+      style={{ position: 'relative', padding: '12px 14px', borderRadius: 12, cursor: 'pointer', background: bg, border: `1.5px solid ${border}`, transition: 'transform 0.12s' }}
+      onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
+      onMouseLeave={e => e.currentTarget.style.transform = 'none'}>
 
-      {/* Round badge */}
-      <div style={{ width: 38, height: 38, borderRadius: 11, flexShrink: 0, background: isCompleted ? '#D1FAE5' : isUrgent ? '#FEE2E2' : isOverdue ? '#FEF3C7' : '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1.5px solid ${dotColor}30` }}>
-        <span style={{ fontSize: 11.5, fontWeight: 800, color: dotColor }}>#{auction.auctionNumber}</span>
-      </div>
+      {isCompleted && (
+        <button title="Delete this auction" onClick={e => { e.stopPropagation(); onDeleteClick(auction); }}
+          style={{ position: 'absolute', top: 8, right: 8, width: 22, height: 22, borderRadius: 6, border: 'none', background: 'rgba(0,0,0,0.04)', color: tokens.red, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Trash2 size={11} />
+        </button>
+      )}
 
-      {/* Info */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 3 }}>
-          <span style={{ fontSize: 14, fontWeight: 700, color: tokens.text }}>{auction.chitName}</span>
-          <Badge status={auction.status} />
-          {auction.takenByCompany && (
-            <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 99, background: '#EDE9FE', color: '#5B21B6' }}>COMPANY</span>
-          )}
-          {isUrgent && <span style={{ fontSize: 10, fontWeight: 800, color: tokens.red }}>⚡ {daysAway === 0 ? 'TODAY!' : 'TOMORROW!'}</span>}
-          {isOverdue && <span style={{ fontSize: 10, fontWeight: 800, color: tokens.amber }}>⚠ {Math.abs(daysAway)}d overdue</span>}
-        </div>
-        <div style={{ fontSize: 11.5, color: tokens.textSub }}>
-          {fmtDate(auction.auctionDate)} · {auction.totalMembers} members · Per Head: {fmt(auction.perHead)}
-          {isCompleted && <span style={{ color: tokens.green }}> · Winner: <strong>{auction.winnerName}</strong> · Bid: {fmt(auction.bidAmount)}</span>}
-        </div>
-      </div>
+      <div style={{ fontSize: 12, fontWeight: 700, color: accent, marginBottom: 3 }}>Round #{auction.auctionNumber}</div>
+      <div style={{ fontSize: 12.5, fontWeight: 700, color: tokens.text, marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{auction.chitName}</div>
+      <div style={{ fontSize: 10.5, color: tokens.textSub, marginBottom: 8 }}>{fmtDate(auction.auctionDate)}</div>
 
-      {/* Right-side action */}
-      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-        {isCompleted ? (
-          <>
-            <div style={{ textAlign: 'right', marginRight: 8 }}>
-              <div style={{ fontSize: 12.5, color: tokens.textSub, marginBottom: 1 }}>Prize</div>
-              <div style={{ fontSize: 14, fontWeight: 800, color: tokens.blue }}>{fmt((auction.perHead * auction.totalMembers) - auction.bidAmount)}</div>
-            </div>
-            <button
-              title="View payments & collect"
-              onClick={e => { e.stopPropagation(); onPaymentClick(auction); }}
-              style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', borderRadius: 8, border: `1px solid ${tokens.blue}30`, background: tokens.blueLight, color: tokens.blue, fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}>
-              <Users size={12} /> Collect
-            </button>
-            <IBtn icon={Trash2} onClick={() => onDeleteClick(auction)} title="Delete this auction" danger />
-          </>
-        ) : (
+      {isCompleted ? (
+        <>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#1a7a34' }}>{auction.winnerName}</div>
+          <div style={{ fontSize: 10.5, color: tokens.textSub, marginBottom: 8 }}>Bid: {fmt(auction.bidAmount)} · Prize: {fmt((auction.perHead * auction.totalMembers) - auction.bidAmount)}</div>
+          <button
+            title="View payments & collect"
+            onClick={e => { e.stopPropagation(); onPaymentClick(auction); }}
+            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '6px 0', borderRadius: 8, border: `1px solid ${tokens.blue}30`, background: tokens.blueLight, color: tokens.blue, fontSize: 11.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+            <Users size={11} /> Collect
+          </button>
+        </>
+      ) : (
+        <>
+          <div style={{ fontSize: 11.5, fontWeight: 700, color: accent, marginBottom: 8 }}>
+            {isUrgent ? `⚡ ${daysAway === 0 ? 'Today!' : 'Tomorrow!'}` : isOverdue ? `⚠ ${Math.abs(daysAway)}d overdue` : 'Not taken'}
+          </div>
           <button
             onClick={e => { e.stopPropagation(); nav(`/cf/chits/${auction.chitId}`); }}
-            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '7px 14px', borderRadius: 8, border: 'none', background: isUrgent ? tokens.red : tokens.amber, color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}>
-            <Gavel size={12} /> Process
+            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '6px 0', borderRadius: 8, border: 'none', background: isUrgent ? tokens.red : tokens.amber, color: '#fff', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+            <Gavel size={11} /> Process
           </button>
-        )}
-      </div>
+        </>
+      )}
     </div>
   );
 }
@@ -398,19 +573,20 @@ function MonthGroup({ group, onPaymentClick, onDeleteClick, nav, defaultOpen }) 
         </div>
       </div>
 
-      {/* Auction rows */}
+      {/* Auction cards — box grid */}
       {open && (
-        <div style={{ borderTop: `1px solid ${tokens.border}` }}>
-          {group.auctions.map((a, i) => (
-            <AuctionRow
-              key={a.id || i}
-              auction={a}
-              onPaymentClick={onPaymentClick}
-              onDeleteClick={onDeleteClick}
-              nav={nav}
-              isLast={i === group.auctions.length - 1}
-            />
-          ))}
+        <div style={{ borderTop: `1px solid ${tokens.border}`, padding: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(170px,1fr))', gap: 10 }}>
+            {group.auctions.map((a, i) => (
+              <AuctionRow
+                key={a.id || i}
+                auction={a}
+                onPaymentClick={onPaymentClick}
+                onDeleteClick={onDeleteClick}
+                nav={nav}
+              />
+            ))}
+          </div>
         </div>
       )}
     </div>

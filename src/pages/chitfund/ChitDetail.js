@@ -6,6 +6,7 @@ import {
   ArrowLeft, BarChart3, Edit2, X
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
+import { PaymentModal } from './Auctions';
 import {
   getChit, getAuctionSchedule, getMembers, addMember, updateMember,
   deleteMember, processAuction, getAuctionPayments, updatePaymentStatus,
@@ -111,10 +112,7 @@ export default function ChitDetail() {
   const [delAuctionLoading, setDelAuctionLoading] = useState(false);
 
   // Payment detail modal
-  const [payModal, setPayModal] = useState(null); // auction
-  const [payments, setPayments] = useState([]);
-  const [payLoading, setPayLoading] = useState(false);
-  const [updatingPay, setUpdatingPay] = useState(null);
+  const [payModal, setPayModal] = useState(null); // auction row selected for the shared Payment Collection modal
 
   // Edit chit modal (for phase ranges + basic settings)
   const [editChitModal, setEditChitModal] = useState(false);
@@ -168,6 +166,12 @@ export default function ChitDetail() {
   // ── Member actions ──────────────────────────────────────────────────────────
   async function handleSaveMember() {
     if (!memberForm.name.trim()) return setError('Name is required.');
+    // Prevent adding the same person twice into this chit
+    if (memberModal === 'add') {
+      const nameKey = memberForm.name.trim().toLowerCase();
+      const dup = members.some(m => (m.name || '').trim().toLowerCase() === nameKey);
+      if (dup) return setError(`"${memberForm.name.trim()}" is already a member of this chit — each person can only join once.`);
+    }
     setMemberSaving(true);
     try {
       if (memberModal === 'add') {
@@ -233,29 +237,9 @@ export default function ChitDetail() {
   }
 
   // ── Payment collection ──────────────────────────────────────────────────────
-  async function openPayments(auction) {
+  function openPayments(auction) {
     if (auction.status !== 'Completed') return;
-    setPayModal(auction); setPayLoading(true); setPayments([]);
-    const p = await getAuctionPayments(id, auction.auctionNumber);
-    setPayments(p); setPayLoading(false);
-  }
-
-  async function togglePayment(payId, current) {
-    setUpdatingPay(payId);
-    const next = current === 'Paid' ? 'Pending' : 'Paid';
-    await updatePaymentStatus(payId, next, user.uid);
-    setPayments(prev => prev.map(p => p.id === payId ? { ...p, paymentStatus: next } : p));
-    setUpdatingPay(null);
-  }
-
-  async function markAllPayments(status) {
-    const toUpdate = payments.filter(p => p.paymentStatus !== status);
-    for (const p of toUpdate) {
-      setUpdatingPay(p.id);
-      await updatePaymentStatus(p.id, status, user.uid);
-    }
-    setPayments(prev => prev.map(p => ({ ...p, paymentStatus: status })));
-    setUpdatingPay(null);
+    setPayModal({ ...auction, chitId: auction.chitId || id, chitName: chit?.companyName });
   }
 
   // ── Edit chit (phase ranges) ────────────────────────────────────────────────
@@ -677,33 +661,15 @@ export default function ChitDetail() {
                     prefix="₹" placeholder={String(Math.round(chit.perHeadValue * 0.85))} />
                 </FormField>
 
-                {/* Winner payout split — how the money actually leaves: cash-in-hand vs bank/account */}
+                {/* Simple auto-calculated prize preview — payout itself now happens LATER, once all
+                    member contributions are collected (see Payment Collection). This just previews
+                    what the winner will receive, so you're recording the bid, not disbursing money. */}
                 {aForm.bidAmount !== '' && (() => {
                   const winnerInHand = Math.round((chit.totalChitValue||0) - (parseFloat(aForm.bidAmount)||0));
-                  const cashV = parseFloat(aForm.payoutCash)||0, bankV = parseFloat(aForm.payoutBank)||0;
-                  const splitTotal = cashV + bankV;
-                  const mismatch = aForm.payoutCash !== '' && aForm.payoutBank !== '' && splitTotal !== winnerInHand;
                   return (
-                    <div style={{ padding:'12px 14px', background:'rgba(0,122,255,0.05)', border:'1px solid rgba(0,122,255,0.15)', borderRadius:12, marginBottom:4 }}>
-                      <div style={{ fontSize:11, fontWeight:700, color:tokens.blue, textTransform:'uppercase', letterSpacing:'.05em', marginBottom:4 }}>Winner Payout Split</div>
-                      <div style={{ fontSize:12, color:tokens.textSub, marginBottom:10 }}>Winner receives <strong>{fmt(winnerInHand)}</strong> total — split how it's actually handed over.</div>
-                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
-                        <FormField label="Cash in Hand (₹)">
-                          <Input type="number" step="1" value={aForm.payoutCash}
-                            onChange={e => setAForm(f => ({ ...f, payoutCash: e.target.value }))}
-                            prefix="₹" placeholder={String(winnerInHand)} />
-                        </FormField>
-                        <FormField label="Bank / Account (₹)">
-                          <Input type="number" step="1" value={aForm.payoutBank}
-                            onChange={e => setAForm(f => ({ ...f, payoutBank: e.target.value }))}
-                            prefix="₹" placeholder="0" />
-                        </FormField>
-                      </div>
-                      {mismatch && (
-                        <div style={{ marginTop:8, fontSize:11.5, color:tokens.red, fontWeight:600 }}>
-                          ⚠ Cash + Bank ({fmt(splitTotal)}) doesn't match the winner's payout ({fmt(winnerInHand)}).
-                        </div>
-                      )}
+                    <div style={{ padding:'12px 14px', background:'rgba(52,199,89,0.06)', border:'1px solid rgba(52,199,89,0.2)', borderRadius:12, marginBottom:4, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                      <span style={{ fontSize:12.5, color:tokens.textSub }}>Winner will receive (paid out later, once collection is complete)</span>
+                      <strong style={{ fontSize:17, color:tokens.green }}>{fmt(winnerInHand)}</strong>
                     </div>
                   );
                 })()}
@@ -711,37 +677,6 @@ export default function ChitDetail() {
                 <FormField label="Notes (optional)">
                   <Textarea value={aForm.notes} onChange={e => setAForm(f => ({ ...f, notes: e.target.value }))} placeholder="Any notes about this auction…" style={{ minHeight: 52 }} />
                 </FormField>
-
-                {/* Commission preview — using correct spec formula */}
-                {commPreview && (
-                  <div style={{ padding: '12px 14px', background: '#ECFDF5', border: `1px solid #D1FAE5`, borderRadius: 10 }}>
-                    <div style={{ fontSize: 10.5, fontWeight: 700, color: tokens.green, textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 8 }}>
-                      Commission Breakdown Preview ({chit.commissionType})
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 12.5 }}>
-                      {[
-                        ['Organiser Amount',          fmt(commPreview.managerCommission)],
-                        ['Pool (Bid − Org)',           fmt(commPreview.commissionPool)],
-                        ['Eligible Members',           commPreview.eligibleMembers],
-                        ['Commission per Member',      fmt(commPreview.memberCommission)],
-                        chit.commissionType === 'Single'
-                          ? ['Non-cashed Net Payable', fmt(String(Math.round((chit.perHeadValue||0) - (commPreview.memberCommission||0))))]
-                          : ['Every Member Pays',      fmt(String(Math.round((chit.perHeadValue||0) - (commPreview.memberCommission||0))))],
-                        ['Winner In-Hand Prize',       fmt(String(Math.round((chit.totalChitValue||0) - (parseFloat(aForm.bidAmount)||0))))],  // total - bid
-                      ].map(([lbl, val], i) => (
-                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                          <span style={{ color: tokens.textSub }}>{lbl}:</span>
-                          <strong style={{ color: tokens.green }}>{val}</strong>
-                        </div>
-                      ))}
-                    </div>
-                    {chit.commissionType === 'Single' && takenCount > 0 && (
-                      <div style={{ marginTop: 8, fontSize: 11.5, color: tokens.amber, fontWeight: 600 }}>
-                        ⚠ {takenCount} cashed member{takenCount > 1 ? 's' : ''} pay FULL subscription ({fmt(subscription)}) — no commission deduction
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
 
               <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
@@ -756,83 +691,8 @@ export default function ChitDetail() {
         </div>
       )}
 
-      {/* Payment Collection Modal */}
-      {payModal && (
-        <div onClick={() => setPayModal(null)} style={{ position: 'fixed', inset: 0, zIndex: 900, background: 'rgba(15,23,42,.65)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 20, width: '100%', maxWidth: 740, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 28px 72px rgba(0,0,0,.22)', overflow: 'hidden' }}>
-            <div style={{ padding: '18px 22px', background: `linear-gradient(135deg,${tokens.blue},#6366f1)`, flexShrink: 0 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <div>
-                  <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,.6)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 4 }}>Payment Collection — Auction #{payModal.auctionNumber}</div>
-                  <div style={{ fontSize: 18, fontWeight: 900, color: '#fff' }}>{chit.companyName}</div>
-                  <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,.7)', marginTop: 3 }}>
-                    {fmtDate(payModal.auctionDate)} · Winner: <strong style={{ color: '#fff' }}>{payModal.winnerName || '—'}</strong> · Bid: {fmt(payModal.bidAmount)}
-                  </div>
-                </div>
-                <button onClick={() => setPayModal(null)} style={{ width: 30, height: 30, borderRadius: 8, background: 'rgba(255,255,255,.18)', border: 'none', cursor: 'pointer', color: '#fff', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
-              </div>
-            </div>
-
-            {/* Progress */}
-            {!payLoading && payments.length > 0 && (() => {
-              const paidC = payments.filter(p => p.paymentStatus === 'Paid').length;
-              const pct = Math.round((paidC / payments.length) * 100);
-              return (
-                <div style={{ padding: '12px 22px', borderBottom: `1px solid ${tokens.border}`, flexShrink: 0 }}>
-                  <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginBottom: 10 }}>
-                    {[['Members', payments.length, tokens.blue], ['Collected', paidC, tokens.green], ['Pending', payments.length - paidC, tokens.amber],
-                      ['Amt Collected', fmt(payments.filter(p => p.paymentStatus === 'Paid').reduce((s, p) => s + (p.netPayable || 0), 0)), tokens.purple]].map(([l, v, c], i) => (
-                      <div key={i}><div style={{ fontSize: 9.5, color: tokens.textMuted, textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 2 }}>{l}</div><div style={{ fontSize: 15, fontWeight: 800, color: c }}>{v}</div></div>
-                    ))}
-                  </div>
-                  <div style={{ height: 6, background: '#E5E7EB', borderRadius: 3, overflow: 'hidden' }}>
-                    <div style={{ width: `${pct}%`, height: '100%', background: pct === 100 ? tokens.green : `linear-gradient(90deg,${tokens.blue},#6366f1)`, borderRadius: 3, transition: 'width .5s' }} />
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                    <button onClick={() => markAllPayments('Paid')} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 12px', borderRadius: 7, border: '1px solid #D1FAE5', background: '#ECFDF5', color: '#065F46', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
-                      <CheckCircle size={11} /> Mark All Paid
-                    </button>
-                    <button onClick={() => markAllPayments('Pending')} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 12px', borderRadius: 7, border: '1px solid #FEF3C7', background: '#FFFBEB', color: '#92400E', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
-                      <Clock size={11} /> Reset All
-                    </button>
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* Member list */}
-            <div style={{ flex: 1, overflowY: 'auto' }}>
-              {payLoading ? <div style={{ padding: '48px', textAlign: 'center', color: tokens.textMuted }}>Loading payments…</div>
-                : payments.map((p, i) => (
-                <div key={p.id || i} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 22px', borderBottom: i < payments.length - 1 ? `1px solid ${tokens.border}` : 'none', background: p.paymentStatus === 'Paid' ? 'rgba(5,150,105,0.025)' : 'transparent' }}>
-                  <div style={{ width: 36, height: 36, borderRadius: '50%', flexShrink: 0, background: p.isWinner ? '#EDE9FE' : p.paymentStatus === 'Paid' ? '#D1FAE5' : '#DBEAFE', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 800, color: p.isWinner ? '#5B21B6' : p.paymentStatus === 'Paid' ? '#065F46' : tokens.blue }}>
-                    {(p.memberName || '?')[0].toUpperCase()}
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 3, flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: 13.5, fontWeight: 700 }}>{p.memberName}</span>
-                      {p.isWinner && <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 99, background: '#5B21B6', color: '#fff' }}>WINNER</span>}
-                      {p.commissionReceived > 0 && !p.isWinner && <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 99, background: '#D1FAE5', color: '#065F46' }}>ELIGIBLE</span>}
-                    </div>
-                    <div style={{ fontSize: 11.5, color: tokens.textSub }}>
-                      Contribution: {fmt(p.contributionAmount)}
-                      {p.commissionReceived > 0 && <span style={{ color: tokens.green }}> · Commission back: {fmt(p.commissionReceived)}</span>}
-                      {p.isWinner && p.winnerPayout > 0 && <span style={{ color: '#5B21B6' }}> · Prize: {fmt(p.winnerPayout)}</span>}
-                    </div>
-                  </div>
-                  <div style={{ textAlign: 'right', marginRight: 12, flexShrink: 0 }}>
-                    <div style={{ fontSize: 15, fontWeight: 800, color: tokens.text }}>{fmt(p.netPayable)}</div>
-                    <div style={{ fontSize: 10.5, color: tokens.textMuted }}>net payable</div>
-                  </div>
-                  {updatingPay === p.id
-                    ? <div style={{ width: 80, display: 'flex', justifyContent: 'center' }}><Spinner /></div>
-                    : <PayToggle status={p.paymentStatus} onToggle={() => togglePayment(p.id, p.paymentStatus)} />}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Payment Collection Modal — SHARED with All Auctions page (same component, same behavior everywhere) */}
+      <PaymentModal open={!!payModal} onClose={() => setPayModal(null)} auction={payModal} />
 
       {/* Delete Auction */}
       {delAuction && (

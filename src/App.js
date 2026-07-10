@@ -17,9 +17,10 @@ import REApp from './pages/realestate/REApp';
 import CFLayout from './components/chitfund/Layout';
 import CFDashboard from './pages/chitfund/Dashboard';
 import CFChitList from './pages/chitfund/ChitList';
+import CFBiddingNotes from './pages/chitfund/BiddingNotes';
+import CFMembers from './pages/chitfund/Members';
 import CFChitDetail from './pages/chitfund/ChitDetail';
 import CFAuctions from './pages/chitfund/Auctions';
-import CFMembers from './pages/chitfund/Members';
 import CFCalendar from './pages/chitfund/Calendar';
 import CFProjection from './pages/chitfund/Projection';
 import CFLedger from './pages/chitfund/Ledger';
@@ -142,9 +143,10 @@ function AppRouter() {
           <Route path="/cf" element={<CFLayout />}>
             <Route index element={<CFDashboard />} />
             <Route path="chits" element={<CFChitList />} />
+            <Route path="bidding-notes" element={<CFBiddingNotes />} />
+            <Route path="members" element={<CFMembers />} />
             <Route path="chits/:id" element={<CFChitDetail />} />
             <Route path="auctions" element={<CFAuctions />} />
-            <Route path="members" element={<CFMembers />} />
             <Route path="calendar" element={<CFCalendar />} />
             <Route path="projection" element={<CFProjection />} />
             <Route path="ledger" element={<CFLedger />} />

@@ -17,7 +17,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Edit2, Trash2, X, AlertTriangle, Search, Eye, Building2, Users, ChevronRight } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import { getChits, createChit, updateChit, deleteChit, addMember, getDashboardData } from '../../utils/cf_firestore';
+import { getChits, createChit, updateChit, deleteChit, addMember, getDashboardData, getPersons } from '../../utils/cf_firestore';
 import { calcPerHeadValue, calcPhases, getExpectedPayable } from '../../utils/cf_engine';
 import { formatCurrency } from '../../utils/cf_format';
 import { PageLoader } from '../../components/Skeleton';
@@ -157,6 +157,8 @@ export default function ChitList() {
   const [form,       setForm]       = useState(BLANK);
   const [step,       setStep]       = useState(1);
   const [members,    setMembers]    = useState([{ name:'', phone:'' }]);
+  const [persons, setPersons] = useState([]); // shared member directory — for autocomplete
+  useEffect(() => { if (user) getPersons(user.uid).then(setPersons).catch(() => {}); }, [user]);
   const [saving,     setSaving]     = useState(false);
   const [formErr,    setFormErr]    = useState('');
   const [delTarget,  setDelTarget]  = useState(null);
@@ -229,6 +231,23 @@ export default function ChitList() {
   }
 
   async function handleSave() {
+    // Prevent the same person (or same typed name) being added twice to one chit
+    if (!editTarget) {
+      const named = members.filter(m => m.name.trim());
+      const seenPersonIds = new Set();
+      const seenNames = new Set();
+      for (const m of named) {
+        const nameKey = m.name.trim().toLowerCase();
+        if (m.personId && seenPersonIds.has(m.personId)) {
+          return setFormErr(`"${m.name}" is already added to this chit — a member can only join once.`);
+        }
+        if (!m.personId && seenNames.has(nameKey)) {
+          return setFormErr(`"${m.name}" appears more than once — each member can only be added once per chit.`);
+        }
+        if (m.personId) seenPersonIds.add(m.personId);
+        seenNames.add(nameKey);
+      }
+    }
     setSaving(true);
     try {
       const _orgModeFirstFree = form.companyIncluded && form.organiserCommissionMode === 'first_free';
@@ -680,16 +699,50 @@ export default function ChitList() {
                   </div>
                   <div style={{ maxHeight:300, overflowY:'auto' }}>
                     {members.map((m,i) => (
-                      <div key={i} style={{ display:'grid', gridTemplateColumns:'28px 1fr 1fr 30px', gap:8, alignItems:'center', marginBottom:7 }}>
+                      <div key={i} style={{ marginBottom:7 }}>
+                      <div style={{ display:'grid', gridTemplateColumns:'28px 1fr 1fr 30px', gap:8, alignItems:'center' }}>
                         <span style={{ fontSize:12, color:T.text4, textAlign:'center', fontWeight:500 }}>{i+1}</span>
-                        <Inp value={m.name} onChange={e=>setMembers(ms=>ms.map((r,j)=>j===i?{...r,name:e.target.value}:r))} placeholder={`Member ${i+1}`} style={{ height:38, fontSize:13.5 }}/>
+                        <Inp value={m.name} list="cf-person-directory"
+                          onChange={e=>{
+                            const val=e.target.value;
+                            const match=persons.find(p=>p.name.toLowerCase()===val.toLowerCase());
+                            setMembers(ms=>ms.map((r,j)=>j===i?{...r,name:val,phone:match?match.phone:r.phone,personId:match?match.id:null}:r));
+                          }}
+                          placeholder={`Member ${i+1} — type to search enrolled members`} style={{ height:38, fontSize:13.5 }}/>
                         <Inp value={m.phone} onChange={e=>setMembers(ms=>ms.map((r,j)=>j===i?{...r,phone:e.target.value}:r))} placeholder="Phone" style={{ height:38, fontSize:13.5 }}/>
                         <button onClick={()=>setMembers(ms=>ms.filter((_,j)=>j!==i))} disabled={members.length<=1}
                           style={{ width:30, height:30, borderRadius:8, border:`1px solid ${members.length>1?T.red+'30':T.border}`, background:members.length>1?'#FFF0EF':T.surface2, cursor:members.length>1?'pointer':'not-allowed', display:'flex', alignItems:'center', justifyContent:'center', opacity:members.length>1?1:.35 }}>
                           <X size={12} color={T.red}/>
                         </button>
                       </div>
+                      {m.name.trim() && (
+                        <div style={{ marginLeft:36, marginTop:3, fontSize:11, color:m.personId?T.green:T.text4, display:'flex', alignItems:'center', gap:4 }}>
+                          {m.personId ? <>✓ Linked to enrolled member</> : <>New name — not in your Members directory yet</>}
+                        </div>
+                      )}
+                      </div>
                     ))}
+                    <datalist id="cf-person-directory">
+                      {persons.map(p => <option key={p.id} value={p.name} />)}
+                    </datalist>
+                  </div>
+
+                  {/* Live preview — makes it unmistakable which members have actually been entered so far */}
+                  <div style={{ marginTop:12, padding:'12px 14px', background:T.surface2, borderRadius:11, border:`1px solid ${T.border}` }}>
+                    <div style={{ fontSize:11, fontWeight:700, color:T.text4, textTransform:'uppercase', letterSpacing:'.05em', marginBottom:8 }}>
+                      Members Added So Far ({members.filter(m=>m.name.trim()).length})
+                    </div>
+                    {members.filter(m=>m.name.trim()).length===0 ? (
+                      <div style={{ fontSize:12.5, color:T.text4 }}>No members entered yet — start typing above.</div>
+                    ) : (
+                      <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
+                        {members.filter(m=>m.name.trim()).map((m,i) => (
+                          <span key={i} style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:12.5, fontWeight:600, padding:'5px 11px', borderRadius:99, background:m.personId?'#EBF9EF':'#fff', color:m.personId?T.green:T.text, border:`1px solid ${m.personId?T.green+'40':T.border}` }}>
+                            {m.personId && '✓ '}{m.name.trim()}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   {members.length < externalSlots && (
                     <button onClick={()=>setMembers(ms=>[...ms,{name:'',phone:''}])}
