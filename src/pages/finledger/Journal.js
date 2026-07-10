@@ -74,7 +74,7 @@ export default function Journal(){
   return(
     <div>
       <PageHeader title="Journal" subtitle="Complete transaction history, expenses and Profit &amp; Loss — all in one place"
-        action={<div style={{display:'flex',gap:8}}><Button variant="secondary" onClick={exportCsv}>Export CSV</Button><Button onClick={()=>printJournalReport(filtered, fromDate, toDate)}>🖨 Export PDF</Button></div>}/>
+        action={<div style={{display:'flex',gap:8,flexWrap:'wrap'}}><Button variant="secondary" onClick={exportCsv}>Export CSV</Button><Button onClick={()=>printJournalReport(filtered, fromDate, toDate)}>🖨 Export PDF</Button></div>}/>
 
       <div className="grid-4" style={{marginBottom:14}}>
         <StatCard label="Total Income" value={formatCurrency(Math.round(totalCredit))} color="#34c759"/>

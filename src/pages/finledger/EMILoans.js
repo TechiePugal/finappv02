@@ -7,7 +7,7 @@ import {
 import { db } from '../../firebase/config';
 import { uploadDocumentFile } from '../../utils/fileStore';
 import toast from 'react-hot-toast';
-import {printEMILoansSummary} from '../../utils/pdfReport';
+import {printEMILoansSummary, printEMILoanReport} from '../../utils/pdfReport';
 import {
   PageHeader, Card, StatCard, Button, Modal, FormField, Input, Select,
   SectionHeader, Badge, FilterTabs, SearchBar, formatCurrency, Divider
@@ -368,7 +368,7 @@ export default function EMILoans() {
   const [addOpen, setAddOpen] = useState(false);
   const [editLoan, setEditLoan] = useState(null);
   const [collectLoan, setCollectLoan] = useState(null);
-  const [calLoan, setCalLoan] = useState(null);
+  const [expandedLoan, setExpandedLoan] = useState(null);
   const [histLoan, setHistLoan] = useState(null);
   const [delLoan, setDelLoan] = useState(null);
   const [photoPopup, setPhotoPopup] = useState(null); // {src, name}
@@ -380,24 +380,6 @@ export default function EMILoans() {
   // Collect form
   const [cpf, setCpf] = useState({ amount: '', fine: '0', date: today(), mode: 'Cash', remarks: '', collectFine: false, dueDate: '', daysOverdue: 0, periodNo: 1, earlyClose: false, editingId: null, editingLedgerId: null });
   const [saving, setSaving] = useState(false);
-  const [expandedLoan, setExpandedLoan] = useState(null);
-
-  function selectSlotForCollect(loan, slot) {
-    const fine = calcFine(slot.dueDate, loan.dailyFineRate || 50);
-    setCollectLoan(loan);
-    setCpf({
-      amount: String(loan.emiAmount || ''),
-      fine: String(fine),
-      date: today(),
-      mode: 'Cash',
-      remarks: '',
-      collectFine: fine > 0,
-      dueDate: slot.dueDate,
-      daysOverdue: getDaysOverdue(slot.dueDate),
-      periodNo: slot.periodNo,
-    });
-  }
-
   // List controls
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('active');
@@ -514,9 +496,15 @@ export default function EMILoans() {
   // ── Collect EMI ────────────────────────────────────────────────────────
   function openCollect(loan) {
     const cols = collections[loan.id] || [];
+    // Only 'Paid' periods count toward how many are actually done — a reverted 'Unpaid'
+    // record still exists (history) but must be offered again as the next one to collect.
+    const paidCount = cols.filter(c => c.status === 'Paid').length;
     const schedule = buildSchedule(loan);
-    const nextSlot = schedule[cols.length];
+    const nextSlot = schedule[paidCount];
     const fine = nextSlot ? calcFine(nextSlot.dueDate, loan.dailyFineRate || 50) : 0;
+    // A collection record may already exist for this period number (e.g. previously reverted
+    // to Unpaid) — if so, edit it in place instead of creating a duplicate.
+    const existingForSlot = cols.find(c => c.periodNo === paidCount + 1);
     setCollectLoan(loan);
     setCpf({
       amount: String(loan.emiAmount || ''),
@@ -527,9 +515,35 @@ export default function EMILoans() {
       collectFine: fine > 0,
       dueDate: nextSlot?.dueDate || '',
       daysOverdue: nextSlot ? getDaysOverdue(nextSlot.dueDate) : 0,
-      periodNo: cols.length + 1,
-      editingId: null, editingLedgerId: null,
+      periodNo: paidCount + 1,
+      editingId: existingForSlot?.id || null, editingLedgerId: existingForSlot?.ledgerEntryId || null,
     });
+  }
+
+  // Unified schedule-dropdown handler: pick any period → collect (if unpaid) or edit/mark-unpaid (if already collected)
+  function handleScheduleSelect(loan, periodIdx) {
+    if (periodIdx === '' || periodIdx == null) return;
+    const sched = getScheduleWithStatus(loan);
+    const slot = sched[+periodIdx];
+    if (!slot) return;
+    if (slot.col) {
+      editCollection(loan, slot.col); // already collected — opens Edit (Partial / Paid / Mark Unpaid)
+    } else {
+      const fine = calcFine(slot.dueDate, loan.dailyFineRate || 50);
+      setCollectLoan(loan);
+      setCpf({
+        amount: String(loan.emiAmount || ''),
+        fine: String(fine),
+        date: today(),
+        mode: 'Cash',
+        remarks: '',
+        collectFine: fine > 0,
+        dueDate: slot.dueDate || '',
+        daysOverdue: getDaysOverdue(slot.dueDate),
+        periodNo: +periodIdx + 1,
+        editingId: null, editingLedgerId: null,
+      });
+    }
   }
 
   // Edit an ALREADY-collected period — updates in place, does not duplicate
@@ -552,7 +566,7 @@ export default function EMILoans() {
 
   async function saveCollection(statusSel='Paid') {
     const isPartial=statusSel==='Partial';
-    if (!cpf.amount || parseFloat(cpf.amount) <= 0) return toast.error('Enter valid amount');
+    if (statusSel !== 'Unpaid' && (!cpf.amount || parseFloat(cpf.amount) <= 0)) return toast.error('Enter valid amount');
     setSaving(true);
     try {
       const loan = collectLoan;
@@ -566,26 +580,30 @@ export default function EMILoans() {
       const effectivePeriodNo = isEditing ? cpf.periodNo : paidPeriods;
 
       if (isEditing) {
-        // Update the EXISTING collection record in place — no duplicate
+        const isUnpaid = statusSel === 'Unpaid';
+        // Update the EXISTING collection record in place — no duplicate.
+        // Reverting to Unpaid zeroes out the amounts (undoes the collection) rather than deleting the record.
         await updateDoc(doc(db, 'emi_collections', cpf.editingId), {
-          amount: parseFloat(cpf.amount), fine, totalCollected,
-          date: cpf.date, mode: cpf.mode, remarks: cpf.remarks,
+          amount: isUnpaid ? 0 : parseFloat(cpf.amount), fine: isUnpaid ? 0 : fine, totalCollected: isUnpaid ? 0 : totalCollected,
+          date: cpf.date, mode: cpf.mode, remarks: isUnpaid ? 'Reverted to unpaid' : cpf.remarks,
           status: statusSel, updatedAt: serverTimestamp(),
         });
         if (cpf.editingLedgerId) {
           await updateDoc(doc(db, 'finance_ledger_entries', cpf.editingLedgerId), {
-            description: `EMI #${effectivePeriodNo} from ${loan.borrowerName}${fine > 0 ? ` + Fine ${formatCurrency(fine)}` : ''}${statusSel==='Partial'?' (partial)':''}`,
-            amount: totalCollected, paymentMode: cpf.mode, date: cpf.date, updatedAt: serverTimestamp(),
+            description: isUnpaid
+              ? `EMI #${effectivePeriodNo} from ${loan.borrowerName} — reverted to unpaid`
+              : `EMI #${effectivePeriodNo} from ${loan.borrowerName}${fine > 0 ? ` + Fine ${formatCurrency(fine)}` : ''}${statusSel==='Partial'?' (partial)':''}`,
+            amount: isUnpaid ? 0 : totalCollected, paymentMode: cpf.mode, date: cpf.date, updatedAt: serverTimestamp(),
           });
         }
-        // Recompute paidPeriods from the FULL collection set (this edit may have changed Paid<->Partial)
+        // Recompute paidPeriods — ONLY status==='Paid' counts as fully paid (not Partial, not Unpaid)
         const updatedCols = cols.map(x => x.id === cpf.editingId ? { ...x, status: statusSel } : x);
-        const recount = updatedCols.filter(x => x.status !== 'Partial').length;
+        const recount = updatedCols.filter(x => x.status === 'Paid').length;
         const fullyPaidEdit = recount >= loan.totalPeriods;
         await updateDoc(doc(db, 'emi_loans', loan.id), {
           paidPeriods: recount, status: fullyPaidEdit ? 'Closed' : 'Active', updatedAt: serverTimestamp(),
         });
-        toast.success(`✓ EMI #${effectivePeriodNo} updated to ${statusSel}.`);
+        toast.success(isUnpaid ? `↩ EMI #${effectivePeriodNo} reverted to unpaid.` : `✓ EMI #${effectivePeriodNo} updated to ${statusSel}.`);
         setCollectLoan(null);
         setSaving(false);
         return;
@@ -643,7 +661,7 @@ export default function EMILoans() {
       const col = cols.find(c => c.periodNo === i + 1);
       const overdue = getDaysOverdue(slot.dueDate);
       const fine = calcFine(slot.dueDate, loan.dailyFineRate || 50);
-      return { ...slot, col, overdue, fine, status: col ? (col.status==='Partial' ? 'Partial' : 'Paid') : overdue > 0 ? 'Overdue' : 'Pending' };
+      return { ...slot, col, overdue, fine, status: col ? (col.status==='Partial' ? 'Partial' : col.status==='Unpaid' ? (overdue > 0 ? 'Overdue' : 'Pending') : 'Paid') : overdue > 0 ? 'Overdue' : 'Pending' };
     });
   }
 
@@ -667,8 +685,8 @@ export default function EMILoans() {
       {photoPopup && <PhotoPopup src={photoPopup.src} name={photoPopup.name} onClose={() => setPhotoPopup(null)} />}
 
       <PageHeader title="EMI Loans" subtitle="Daily, weekly and monthly instalment loan management"
-        action={<div style={{ display: 'flex', gap: 8 }}>
-          <Button variant="secondary" onClick={() => printEMILoansSummary(loans)}>Export PDF</Button>
+        action={<div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Button variant="secondary" onClick={() => printEMILoansSummary(filtered)}>Export PDF{filter!=='all' ? ` (${filter==='active'?'Active':'Closed'})` : ''}</Button>
           <Button onClick={openAdd}>+ New EMI Loan</Button>
         </div>} />
 
@@ -714,7 +732,9 @@ export default function EMILoans() {
               <tbody>
                 {filtered.map(l => {
                   const cols = collections[l.id] || [];
-                  const paid = cols.length;
+                  // Only count records with status==='Paid' — a reverted 'Unpaid' record still exists
+                  // (to preserve history) but must NOT count toward progress.
+                  const paid = cols.filter(c => c.status === 'Paid').length;
                   const remaining = Math.max(0, (l.totalPeriods || 0) - paid);
                   const pct = l.totalPeriods > 0 ? Math.round((paid / l.totalPeriods) * 100) : 0;
                   const schedule = buildSchedule(l);
@@ -801,10 +821,15 @@ export default function EMILoans() {
                             <Button size="sm" onClick={() => openCollect(l)}>Collect</Button>
                           )}
                           <button
-                            title="EMI Schedule Calendar"
-                            onClick={() => setCalLoan(l)}
-                            style={{ height: 28, padding: '0 8px', borderRadius: 7, border: '1px solid rgba(0,0,0,.1)', background: 'transparent', cursor: 'pointer', fontSize: 13 }}>
-                            📅
+                            title={expandedLoan===l.id?'Collapse':'View full EMI schedule'}
+                            onClick={() => setExpandedLoan(expandedLoan===l.id?null:l.id)}
+                            style={{padding:'7px 10px',background:expandedLoan===l.id?'rgba(0,122,255,0.08)':'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:9,fontSize:12.5,color:expandedLoan===l.id?'var(--accent)':'var(--text-primary)',outline:'none',fontFamily:'inherit',cursor:'pointer',display:'flex',alignItems:'center',gap:5,fontWeight:600}}>
+                            {expandedLoan===l.id?'Close':'Schedule'}
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{transform:expandedLoan===l.id?'rotate(180deg)':'none',transition:'transform 0.2s'}}><polyline points="6 9 12 15 18 9"/></svg>
+                          </button>
+                          <button onClick={() => printEMILoanReport(l, getScheduleWithStatus(l))} title="Download PDF Report"
+                            style={{width:28,height:28,borderRadius:7,border:'1px solid rgba(220,38,38,.2)',background:'rgba(220,38,38,.04)',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',color:'#dc2626'}}>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="12" y2="18"/><line x1="15" y1="15" x2="12" y2="18"/></svg>
                           </button>
                           {cols.length > 0 && (
                             <button
@@ -826,26 +851,52 @@ export default function EMILoans() {
                             style={{ width: 28, height: 28, borderRadius: 7, border: '1px solid rgba(255,59,48,.25)', background: 'rgba(255,59,48,0.04)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ff3b30' }}>
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg>
                           </button>
-                        <button
-                            title={expandedLoan===l.id?"Collapse":"Expand to see EMI schedule"}
-                            onClick={() => setExpandedLoan(expandedLoan===l.id?null:l.id)}
-                            style={{height:28,padding:'0 8px',borderRadius:7,border:'1px solid rgba(0,0,0,.1)',background:expandedLoan===l.id?'rgba(0,122,255,0.08)':'transparent',cursor:'pointer',fontSize:11,fontWeight:600,color:expandedLoan===l.id?'var(--accent)':'var(--text-secondary)',display:'flex',alignItems:'center',gap:4}}>
-                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{transform:expandedLoan===l.id?'rotate(180deg)':'none',transition:'transform 0.2s'}}><polyline points="6 9 12 15 18 9"/></svg>
-                            {expandedLoan===l.id?'Close':'Schedule'}
-                          </button>
                         </div>
                       </td>
                     </tr>
-                    {expandedLoan === l.id && (
-                      <EMIScheduleRow
-                        key={l.id+'-sched'}
-                        loan={l}
-                        sched={getScheduleWithStatus(l)}
-                        cols={collections[l.id]||[]}
-                        outstanding={getOutstanding(l)}
-                        onSelectSlot={(slot,isFuture)=>selectSlotForCollect(l,slot,isFuture)}
-                      />
-                    )}
+                    {expandedLoan === l.id && (() => {
+                      const sched = getScheduleWithStatus(l);
+                      const paidAmt = cols.filter(x => x.status === 'Paid').reduce((s, x) => s + (x.totalCollected || x.amount || 0), 0);
+                      return (
+                        <tr>
+                          <td colSpan={10} style={{ padding: 0, background: '#fafafa', borderTop: '1px solid rgba(0,0,0,0.06)' }}>
+                            <div style={{ padding: 16 }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+                                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+                                  Full EMI Schedule from Loan Start
+                                  <span style={{ fontWeight: 400, color: 'var(--text-secondary)', fontSize: 12 }}> · Click any unpaid slot to collect it, or an already-paid one to edit / mark unpaid</span>
+                                </div>
+                                <div style={{ textAlign: 'right' }}>
+                                  <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{paid}/{l.totalPeriods} PAID</div>
+                                  <div style={{ fontSize: 15, fontWeight: 700, color: '#34c759' }}>{formatCurrency(Math.round(paidAmt))}</div>
+                                </div>
+                              </div>
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(140px,1fr))', gap: 8 }}>
+                                {sched.map((slot, i) => {
+                                  const isPaid = slot.status === 'Paid';
+                                  const isPartial = slot.status === 'Partial';
+                                  const isOverdue = slot.status === 'Overdue';
+                                  const isNext = i === paid && !isPaid;
+                                  const label = new Date(slot.dueDate).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+                                  const bg = isPaid ? 'rgba(52,199,89,0.04)' : isPartial ? 'rgba(88,86,214,0.05)' : isOverdue ? 'rgba(255,59,48,0.04)' : isNext ? 'rgba(0,122,255,0.04)' : '#fff';
+                                  const border = isPaid ? 'rgba(52,199,89,0.25)' : isPartial ? 'rgba(88,86,214,0.25)' : isOverdue ? 'rgba(255,59,48,0.25)' : isNext ? 'rgba(0,122,255,0.3)' : 'rgba(0,0,0,0.07)';
+                                  const textCol = isPaid ? '#1a7a34' : isPartial ? '#5856d6' : isOverdue ? '#c0392b' : isNext ? '#007aff' : 'var(--text-primary)';
+                                  return (
+                                    <div key={i} onClick={() => handleScheduleSelect(l, i)}
+                                      style={{ padding: '10px 12px', borderRadius: 10, border: `1px solid ${border}`, background: bg, cursor: 'pointer' }}>
+                                      <div style={{ fontSize: 12, fontWeight: 600, color: textCol, marginBottom: 4 }}>{label}</div>
+                                      <div style={{ fontSize: 13, fontWeight: 700, color: isPaid ? '#34c759' : isPartial ? '#5856d6' : isOverdue ? '#ff3b30' : 'var(--text-secondary)' }}>
+                                        {isPaid ? formatCurrency(slot.col.totalCollected || slot.col.amount) : isPartial ? `${formatCurrency(slot.col.amount)} (partial)` : isOverdue ? `${slot.overdue}d overdue` : 'Pending'}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })()}
                     </React.Fragment>
                   );
                 })}
@@ -890,7 +941,10 @@ export default function EMILoans() {
       {/* ── COLLECT EMI MODAL ── */}
       <Modal open={!!collectLoan} onClose={() => setCollectLoan(null)} title={cpf.editingId ? `Edit EMI #${cpf.periodNo} — Change Status` : "Collect EMI Payment"} width={500}
         footer={collectLoan&&(
-          <div style={{ display: 'flex', gap: 10, width: '100%' }}>
+          <div style={{ display: 'flex', gap: 10, width: '100%', flexWrap: 'wrap' }}>
+            {cpf.editingId && (
+              <Button variant="danger" onClick={() => saveCollection('Unpaid')} disabled={saving}>↩ Mark Unpaid</Button>
+            )}
             <Button variant="secondary" onClick={() => saveCollection('Partial')} disabled={saving}>Partial</Button>
             <Button onClick={() => saveCollection('Paid')} disabled={saving} style={{ flex: 1, justifyContent: 'center' }}>
               {saving ? 'Saving…' : `✓ Collect ${cpf.collectFine && parseFloat(cpf.fine) > 0 ? formatCurrency((parseFloat(cpf.amount) || 0) + (parseFloat(cpf.fine) || 0)) : formatCurrency(parseFloat(cpf.amount) || 0)}`}
@@ -1025,94 +1079,6 @@ export default function EMILoans() {
       </Modal>
 
       {/* ── SCHEDULE / CALENDAR MODAL ── */}
-      <Modal open={!!calLoan} onClose={() => setCalLoan(null)} title={`EMI Schedule — ${calLoan?.borrowerName || ''}`} width={620}
-        footer={calLoan&&<Button full onClick={() => setCalLoan(null)}>Close</Button>}>
-        {calLoan && (() => {
-          const sched = getScheduleWithStatus(calLoan);
-          const paidCount = sched.filter(s => s.col).length;
-          const overdueCount = sched.filter(s => !s.col && s.overdue > 0).length;
-          const pendingCount = sched.filter(s => !s.col && s.overdue === 0).length;
-          const totalFinesDue = sched.filter(s => !s.col && s.fine > 0).reduce((a, s) => a + s.fine, 0);
-          const totalCollected = (collections[calLoan.id] || []).reduce((s, c) => s + (c.totalCollected || c.amount || 0), 0);
-
-          return (
-            <>
-              {/* Borrower info */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, padding: '10px 14px', background: 'rgba(118,118,128,0.05)', borderRadius: 10 }}>
-                <PhotoAvatar
-                  src={calLoan.photo} name={calLoan.borrowerName} size={44}
-                  onClick={calLoan.photo ? () => setPhotoPopup({ src: calLoan.photo, name: calLoan.borrowerName }) : undefined}
-                />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 700, fontSize: 14 }}>{calLoan.borrowerName}</div>
-                  <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                    {formatCurrency(calLoan.loanAmount)} · {formatCurrency(calLoan.emiAmount)}/{FREQ_LABEL[calLoan.frequency]} · {calLoan.totalPeriods} payments
-                  </div>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Collected</div>
-                  <div style={{ fontSize: 16, fontWeight: 700, color: '#34c759' }}>{formatCurrency(Math.round(totalCollected))}</div>
-                </div>
-              </div>
-
-              {/* Summary pills */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, marginBottom: 16 }}>
-                {[
-                  { label: 'Paid', val: paidCount, color: '#34c759', bg: 'rgba(52,199,89,0.08)' },
-                  { label: 'Overdue', val: overdueCount, color: '#ff3b30', bg: 'rgba(255,59,48,0.08)' },
-                  { label: 'Pending', val: pendingCount, color: '#ff9500', bg: 'rgba(255,149,0,0.08)' },
-                  { label: 'Fines Due', val: formatCurrency(totalFinesDue), color: '#c0392b', bg: 'rgba(192,57,43,0.07)' },
-                ].map((c, i) => (
-                  <div key={i} style={{ textAlign: 'center', padding: '10px 8px', borderRadius: 10, background: c.bg }}>
-                    <div style={{ fontSize: 18, fontWeight: 800, color: c.color }}>{c.val}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>{c.label}</div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Schedule list */}
-              <div style={{ maxHeight: 380, overflowY: 'auto', paddingRight: 4 }}>
-                {sched.map((slot, i) => {
-                  const sColor = { Paid: '#34c759', Partial: '#5856d6', Overdue: '#ff3b30', Pending: '#ff9500' }[slot.status] || '#aaa';
-                  return (
-                    <div key={i} onClick={slot.col ? () => editCollection(calLoan, slot.col) : undefined}
-                      style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 10, marginBottom: 5, cursor: slot.col ? 'pointer' : 'default', background: slot.status === 'Paid' ? 'rgba(52,199,89,0.04)' : slot.status === 'Partial' ? 'rgba(88,86,214,0.05)' : slot.status === 'Overdue' ? 'rgba(255,59,48,0.04)' : 'rgba(118,118,128,0.03)', border: `1px solid ${slot.status === 'Paid' ? 'rgba(52,199,89,0.18)' : slot.status === 'Overdue' ? 'rgba(255,59,48,0.18)' : 'rgba(0,0,0,0.06)'}` }}>
-                      {/* Period number badge */}
-                      <div style={{ width: 30, height: 30, borderRadius: 8, background: sColor + '18', border: `1.5px solid ${sColor + '35'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800, color: sColor, flexShrink: 0 }}>
-                        {slot.periodNo}
-                      </div>
-
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 500 }}>Due: {fmtDate(slot.dueDate)}</div>
-                        {slot.col ? (
-                          <div style={{ fontSize: 11, color: slot.col.status === 'Partial' ? '#5856d6' : '#34c759', marginTop: 2 }}>
-                            {slot.col.status === 'Partial' ? '◐ Partial' : '✓ Paid'} {fmtDate(slot.col.date)} · {formatCurrency(slot.col.amount)}
-                            {slot.col.fine > 0 && ` + Fine ${formatCurrency(slot.col.fine)}`}
-                            {slot.col.mode && ` · ${slot.col.mode}`}
-                            <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}> · tap to edit</span>
-                          </div>
-                        ) : slot.overdue > 0 ? (
-                          <div style={{ fontSize: 11, color: '#ff3b30', marginTop: 2 }}>
-                            {slot.overdue} days overdue
-                            {slot.fine > 0 && ` · Fine: ${formatCurrency(slot.fine)}`}
-                          </div>
-                        ) : (
-                          <div style={{ fontSize: 11, color: '#ff9500', marginTop: 2 }}>Upcoming</div>
-                        )}
-                      </div>
-
-                      <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: sColor }}>{formatCurrency(calLoan.emiAmount || 0)}</div>
-                        <div style={{ fontSize: 10, fontWeight: 600, color: sColor, marginTop: 2 }}>{slot.status}</div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          );
-        })()}
-      </Modal>
 
       {/* ── HISTORY MODAL ── */}
       <Modal open={!!histLoan} onClose={() => setHistLoan(null)} title={`Payment History — ${histLoan?.loan?.borrowerName || ''}`} width={540}

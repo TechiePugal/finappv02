@@ -107,7 +107,7 @@ export default function Borrowers(){
         </div>
       )}
       <PageHeader title="Borrowers" subtitle="Loan accounts — interest calculated on outstanding balance after repayments"
-        action={<div style={{display:'flex',gap:8}}>
+        action={<div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
           <Button variant="secondary" onClick={()=>printBorrowersSummary(data, reps)}>Export PDF</Button>
           <Button onClick={()=>nav('/fl/borrowers/new')}>+ Add Borrower</Button>
         </div>}/>

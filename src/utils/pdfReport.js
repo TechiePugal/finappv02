@@ -842,3 +842,104 @@ export function printJournalReport(entries, fromDate, toDate){
   `;
   openPrint('Journal Report', body, '#1a56db');
 }
+
+// ── EMI LOAN — Detailed Report (per-loan, matches Borrower/Depositor report style) ──
+export function printEMILoanReport(loan, sched){
+  const rows = (sched||[]).slice().reverse(); // most recent period first
+  const paidRows = rows.filter(r=>r.status==='Paid');
+  const totalCollected = paidRows.reduce((s,r)=>s+(r.col?.totalCollected||r.col?.amount||0),0);
+  const totalFine = rows.reduce((s,r)=>s+(r.col?.fine||0),0);
+  const outstanding = Math.max(0, (loan.loanAmount||0) - paidRows.reduce((s,r)=>s+((loan.loanAmount||0)/(loan.totalPeriods||1)),0));
+  const overdueCount = rows.filter(r=>r.status==='Overdue').length;
+  const badgeSt = s => {
+    if(s==='Active')return'<span class="badge badge-green">Active</span>';
+    if(s==='Closed')return'<span class="badge badge-gray">Closed</span>';
+    return`<span class="badge badge-amber">${s||'—'}</span>`;
+  };
+  const rowBadge = status => {
+    if(status==='Paid')return'<span class="badge badge-green">Paid</span>';
+    if(status==='Partial')return'<span class="badge badge-blue">Partial</span>';
+    if(status==='Overdue')return'<span class="badge badge-red">Overdue</span>';
+    return'<span class="badge badge-amber">Pending</span>';
+  };
+
+  const body = `
+    <div class="header">
+      <div>
+        <div class="logo">FinSuite · EMI Loan Report</div>
+        <div class="meta" style="text-align:left;margin-top:4px;">Generated: ${now()}</div>
+      </div>
+      <div class="meta">CONFIDENTIAL<br/>EMI ID: ${loan.emiId||loan.id?.slice(-8)||'—'}</div>
+    </div>
+
+    <div class="section-photo">
+      <div class="photo-circle">
+        ${loan.photo?`<img src="${loan.photo}" alt=""/>`:(loan.borrowerName||'B')[0].toUpperCase()}
+      </div>
+      <div>
+        <div style="font-size:20px;font-weight:800;color:#1a1a2e;">${loan.borrowerName||'—'}</div>
+        <div style="font-size:12px;color:#6b7280;margin-top:3px;">
+          ${loan.phone||''} ${badgeSt(loan.status)}
+        </div>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi"><div class="kpi-val">${INR(loan.loanAmount)}</div><div class="kpi-lbl">Loan Amount</div></div>
+      <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${INR(totalCollected)}</div><div class="kpi-lbl">Total Collected</div></div>
+      <div class="kpi" style="border-left-color:#f59e0b;"><div class="kpi-val" style="color:#b45309;">${INR(outstanding)}</div><div class="kpi-lbl">Outstanding Balance</div></div>
+      <div class="kpi" style="border-left-color:#ef4444;"><div class="kpi-val" style="color:#b91c1c;">${overdueCount}</div><div class="kpi-lbl">Overdue Periods</div></div>
+    </div>
+
+    <h2>Loan Details</h2>
+    <div class="info-grid">
+      <div>
+        <div class="info-row"><span class="info-lbl">EMI ID</span><span class="info-val" style="font-family:monospace;">${loan.emiId||'—'}</span></div>
+        <div class="info-row"><span class="info-lbl">Loan Amount</span><span class="info-val">${INR(loan.loanAmount)}</span></div>
+        <div class="info-row"><span class="info-lbl">EMI per Period</span><span class="info-val text-blue">${INR(loan.emiAmount)}</span></div>
+        <div class="info-row"><span class="info-lbl">Interest Rate</span><span class="info-val">${loan.interestRate||0}% per month</span></div>
+        <div class="info-row"><span class="info-lbl">Frequency</span><span class="info-val">${loan.frequency||'Monthly'}</span></div>
+      </div>
+      <div>
+        <div class="info-row"><span class="info-lbl">Loan Date</span><span class="info-val">${fmtDate(loan.loanDate)}</span></div>
+        <div class="info-row"><span class="info-lbl">EMI Start Date</span><span class="info-val">${fmtDate(loan.emiStartDate)}</span></div>
+        <div class="info-row"><span class="info-lbl">Total Periods</span><span class="info-val">${loan.totalPeriods||0}</span></div>
+        <div class="info-row"><span class="info-lbl">Periods Paid</span><span class="info-val text-green">${paidRows.length} / ${loan.totalPeriods||0}</span></div>
+        <div class="info-row"><span class="info-lbl">Outstanding Balance</span><span class="info-val ${outstanding>0?'text-amber':'text-green'}">${INR(outstanding)}</span></div>
+      </div>
+    </div>
+
+    <h2>EMI Collection History (${rows.length} periods)</h2>
+    <p style="font-size:11px;color:#6b7280;margin:-6px 0 10px;">Each row shows the period's due date, how many days late it was paid (delay), the amount actually paid, and the exact payment date — a clear before/after view of every instalment.</p>
+    ${rows.length===0?'<p style="color:#9ca3af;font-size:12px;margin-bottom:16px;">No schedule data available.</p>':`
+    <table>
+      <thead><tr><th>#</th><th>Due Date</th><th>Delay</th><th>Status</th><th>Amount Paid</th><th>Fine</th><th>Payment Date</th><th>Mode</th></tr></thead>
+      <tbody>
+        ${rows.map((r,i)=>{
+          const periodNo = rows.length-i;
+          const delay = r.status==='Paid'
+            ? (r.col?.date && r.dueDate ? Math.max(0, Math.round((new Date(r.col.date)-new Date(r.dueDate))/86400000))+'d' : 'On time')
+            : r.status==='Overdue' ? `${r.overdue}d late` : '—';
+          return `
+        <tr>
+          <td>${periodNo}</td>
+          <td style="font-weight:600;">${fmtDate(r.dueDate)}</td>
+          <td class="${r.status==='Overdue'?'text-red':'text-green'}">${delay}</td>
+          <td>${rowBadge(r.status)}</td>
+          <td class="${r.status==='Paid'?'text-green':'text-red'}">${r.col?INR(r.col.totalCollected||r.col.amount||0):'—'}</td>
+          <td>${(r.col?.fine||0)>0?INR(r.col.fine):'—'}</td>
+          <td>${r.col?.date?fmtDate(r.col.date):'—'}</td>
+          <td>${r.col?.mode||'—'}</td>
+        </tr>`;}).join('')}
+        <tr class="total-row">
+          <td colspan="4"><strong>Total</strong></td>
+          <td class="text-green">${INR(totalCollected)}</td>
+          <td>${totalFine>0?INR(totalFine):'—'}</td>
+          <td colspan="2"></td>
+        </tr>
+      </tbody>
+    </table>`}
+    <div class="footer"><span>FinSuite Finance Ledger · Confidential</span><span>${now()}</span></div>
+  `;
+  openPrint(`EMI Loan Report — ${loan.borrowerName}`, body, '#6366f1');
+}

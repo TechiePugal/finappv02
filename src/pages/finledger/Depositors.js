@@ -49,7 +49,7 @@ export default function Depositors(){
   return(
     <div className="page-enter">
       <PageHeader title="Depositors" subtitle="Manage investor deposits and interest liabilities"
-        action={<div style={{display:'flex',gap:8}}>
+        action={<div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
           <Button variant="secondary" onClick={()=>printDepositorsSummary(data)}>Export PDF</Button>
           <Button onClick={()=>nav('/fl/depositors/new')}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Depositor</Button>
         </div>}/>
