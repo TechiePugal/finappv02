@@ -3,6 +3,7 @@ import {useNavigate,useParams} from 'react-router-dom';
 import {collection,addDoc,doc,getDoc,updateDoc,serverTimestamp,getDocs} from 'firebase/firestore';
 import {db} from '../../firebase/config';
 import {uploadDocumentFile,openDocument} from '../../utils/fileStore';
+import {saveDepositorDocs,getDepositorDocs} from '../../utils/depositorFiles';
 import toast from 'react-hot-toast';
 import {Button,FormField,Input,Select,Card,PageHeader,Toggle,formatCurrency,SectionHeader,InfoRow,Divider} from '../../components/finledger/UI';
 
@@ -75,7 +76,8 @@ export default function DepositorForm(){
         interestTenure:String(d.interestTenure||'1'), compounding:d.compounding||false,
         startDate:d.startDate||'', maturityDate:d.maturityDate||'', status:d.status||'Active', notes:d.notes||''
       });
-      setExisting({check:d.checkCopyUrl,bond:d.bondCopyUrl});
+      const fileDocs = await getDepositorDocs(id);
+      setExisting({check:fileDocs.check||d.checkCopyUrl,bond:fileDocs.bond||d.bondCopyUrl});
     }
   }
 
@@ -109,10 +111,13 @@ export default function DepositorForm(){
       const data={
         ...form, depositAmount:parseFloat(form.depositAmount),
         interestRate:parseFloat(form.interestRate), interestTenure:tenureNum,
-        compounding:!!form.compounding, checkCopyUrl:checkUrl, bondCopyUrl:bondUrl,
+        compounding:!!form.compounding,
+        hasCheck:!!checkUrl, hasBond:!!bondUrl,
+        checkCopyUrl:null, bondCopyUrl:null, // no longer stored inline — see depositor_files collection
         monthlyInterest: calcPeriodInterest(form.depositAmount,form.interestRate,1,form.compounding),
         periodInterest, updatedAt:serverTimestamp()
       };
+      let depId=id;
       if(isEdit){
         await updateDoc(doc(db,'deposit_master',id),data);
         if(origStatus!=='Closed'&&form.status==='Closed'){
@@ -129,6 +134,7 @@ export default function DepositorForm(){
       } else {
         data.createdAt=serverTimestamp();
         const r2=await addDoc(collection(db,'deposit_master'),data);
+        depId=r2.id;
         // Store full schedule
         await addDoc(collection(db,'deposit_interest_schedule'),{
           depositId:r2.id, schedule:genFullSchedule(form.depositAmount,form.interestRate,tenureNum,form.compounding,form.startDate,form.maturityDate), createdAt:serverTimestamp()
@@ -143,6 +149,7 @@ export default function DepositorForm(){
         });
         toast.success('Depositor added!');
       }
+      await saveDepositorDocs(depId,{check:checkUrl,bond:bondUrl});
       nav('/fl/depositors');
     }catch(e){toast.error('Failed: '+e.message);}finally{setLoading(false);}
   }

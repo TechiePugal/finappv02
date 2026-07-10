@@ -159,12 +159,16 @@ export default function Alerts(){
     return months>=2&&(bal/loan)>=0.8; // 2+ months old, 80%+ still owed
   });
 
+  // Missing mandatory security documents (Check / Bond / Agreement) — flags active borrowers only
+  const missingDocs=active.filter(b=>!b.hasCheck||!b.hasBond||!b.hasAgreement);
+
   const tabOpts=[
     {value:'overdue',label:'Principal Overdue',count:principalOverdue.length},
     {value:'interest',label:'Interest Overdue',count:interestOverdue.length},
     {value:'expiring',label:'Agreement Expiring',count:agreementExpiring.length},
     {value:'expired',label:'Agreement Expired',count:agreementExpired.length},
     {value:'high',label:'High Outstanding',count:highOutstanding.length},
+    {value:'docs',label:'Missing Documents',count:missingDocs.length},
   ];
 
   let list=[];
@@ -173,6 +177,7 @@ export default function Alerts(){
   else if(tab==='expiring')list=agreementExpiring;
   else if(tab==='expired')list=agreementExpired;
   else if(tab==='high')list=highOutstanding;
+  else if(tab==='docs')list=missingDocs;
 
   const filtered=list.filter(b=>{
     if(!search)return true;
@@ -196,13 +201,14 @@ export default function Alerts(){
       <PageHeader title="Alerts" subtitle="Overdue payments, interest dues and agreement expirations"/>
 
       {/* Summary cards */}
-      <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12,marginBottom:20}}>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:12,marginBottom:20}}>
         {[
           {label:'Principal Overdue',val:principalOverdue.length,color:'#ff3b30',icon:'⚠️'},
           {label:'Interest Overdue',val:interestOverdue.length,color:'#ff9500',icon:'💰'},
           {label:'Agr. Expiring (30d)',val:agreementExpiring.length,color:'#ff9500',icon:'📋'},
           {label:'Agr. Expired',val:agreementExpired.length,color:'#ff3b30',icon:'❌'},
           {label:'High Outstanding',val:highOutstanding.length,color:'#5856d6',icon:'📈'},
+          {label:'Missing Documents',val:missingDocs.length,color:'#af52de',icon:'📁'},
         ].map((c,i)=>(
           <button key={i} onClick={()=>setTab(tabOpts[i].value)}
             style={{background:'#fff',borderRadius:14,border:`2px solid ${tab===tabOpts[i].value?c.color:'rgba(0,0,0,0.07)'}`,padding:'14px 16px',boxShadow:'0 1px 3px rgba(0,0,0,.04)',borderLeft:`4px solid ${c.color}`,textAlign:'left',cursor:'pointer',transition:'all 0.15s',fontFamily:'inherit'}}>

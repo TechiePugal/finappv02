@@ -8,6 +8,7 @@ import { db } from '../../firebase/config';
 import { uploadDocumentFile } from '../../utils/fileStore';
 import toast from 'react-hot-toast';
 import {printEMILoansSummary, printEMILoanReport} from '../../utils/pdfReport';
+import {saveEmiDocs, getEmiDocs} from '../../utils/emiFiles';
 import {
   PageHeader, Card, StatCard, Button, Modal, FormField, Input, Select,
   SectionHeader, Badge, FilterTabs, SearchBar, formatCurrency, Divider
@@ -201,7 +202,7 @@ function PhotoPopup({ src, name, onClose }) {
 // ── LoanForm — defined OUTSIDE the main component (critical fix) ──────────
 // This prevents remounting on every parent re-render, which was causing
 // the modal to close when typing.
-function LoanForm({ form, setForm, photoPreview, onPhotoChange, onPhotoRemove }) {
+function LoanForm({ form, setForm, photoPreview, onPhotoChange, onPhotoRemove, docFiles, setDocFiles, existingDocs }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const [custs, setCusts] = useState([]);
   const [custQ, setCustQ] = useState('');
@@ -237,6 +238,23 @@ function LoanForm({ form, setForm, photoPreview, onPhotoChange, onPhotoRemove })
         </div>
       </div>
 
+      {/* Optional documents — Check / Bond / Agreement copies (not mandatory for EMI loans) */}
+      <div style={{ marginBottom: 20, padding: '14px 16px', background: 'rgba(118,118,128,0.04)', borderRadius: 12, border: '1px solid rgba(0,0,0,0.06)' }}>
+        <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 3 }}>Security Documents <span style={{ fontWeight: 400, color: 'var(--text-secondary)' }}>(optional)</span></p>
+        <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10 }}>Upload check/bond/agreement copies if collected for this EMI loan.</p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 8 }}>
+          {[['check','Check Copy'],['bond','Bond Copy'],['agreement','Agreement']].map(([key,label]) => {
+            const has = docFiles?.[key] || existingDocs?.[key];
+            return (
+              <label key={key} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '10px 8px', borderRadius: 9, border: `1px solid ${has ? 'rgba(52,199,89,0.3)' : 'rgba(0,0,0,0.08)'}`, background: has ? 'rgba(52,199,89,0.05)' : '#fff', cursor: 'pointer', textAlign: 'center' }}>
+                <span style={{ fontSize: 11, fontWeight: 600, color: has ? '#1a7a34' : 'var(--text-secondary)' }}>{has ? `✓ ${label}` : label}</span>
+                <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>{has ? 'Uploaded' : 'Tap to upload'}</span>
+                <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={e => e.target.files[0] && setDocFiles(p => ({ ...p, [key]: e.target.files[0] }))} />
+              </label>
+            );
+          })}
+        </div>
+      </div>
 
       {/* User picker — Step 1: pick the User first */}
       <div style={{ marginBottom: 16, padding: '14px 16px', background: linkedUser ? 'rgba(52,199,89,0.06)' : 'rgba(0,122,255,0.05)', border: linkedUser ? '1.5px solid rgba(52,199,89,0.3)' : '1.5px dashed rgba(0,122,255,0.3)', borderRadius: 12 }}>
@@ -369,6 +387,8 @@ export default function EMILoans() {
   const [editLoan, setEditLoan] = useState(null);
   const [collectLoan, setCollectLoan] = useState(null);
   const [expandedLoan, setExpandedLoan] = useState(null);
+  const [docFiles, setDocFiles] = useState({});
+  const [existingDocs, setExistingDocs] = useState({});
   const [histLoan, setHistLoan] = useState(null);
   const [delLoan, setDelLoan] = useState(null);
   const [photoPopup, setPhotoPopup] = useState(null); // {src, name}
@@ -412,6 +432,7 @@ export default function EMILoans() {
   function openAdd() {
     setForm({ ...BLANK, emiId: genId() });
     setPhotoPreview(null);
+    setDocFiles({}); setExistingDocs({});
     setAddOpen(true);
   }
 
@@ -437,6 +458,8 @@ export default function EMILoans() {
       photo: loan.photo || null,
     });
     setPhotoPreview(loan.photo || null);
+    setDocFiles({});
+    getEmiDocs(loan.id).then(setExistingDocs).catch(() => setExistingDocs({}));
     setEditLoan(loan);
   }
 
@@ -457,6 +480,13 @@ export default function EMILoans() {
         dailyFineRate: parseFloat(form.dailyFineRate) || 50,
         updatedAt: serverTimestamp(),
       };
+      const toDataUrl = async (file) => { if (!file) return null; const r = await uploadDocumentFile(file); return r.dataUrl; };
+      const [checkUrl, bondUrl, agreementUrl] = await Promise.all([
+        docFiles.check ? toDataUrl(docFiles.check) : Promise.resolve(existingDocs.check || null),
+        docFiles.bond ? toDataUrl(docFiles.bond) : Promise.resolve(existingDocs.bond || null),
+        docFiles.agreement ? toDataUrl(docFiles.agreement) : Promise.resolve(existingDocs.agreement || null),
+      ]);
+      let savedLoanId = isEdit ? editLoan.id : null;
       if (isEdit) {
         await updateDoc(doc(db, 'emi_loans', editLoan.id), data);
         toast.success('EMI Loan updated!');
@@ -465,6 +495,7 @@ export default function EMILoans() {
         data.paidPeriods = 0;
         data.createdAt = serverTimestamp();
         const ref = await addDoc(collection(db, 'emi_loans'), data);
+        savedLoanId = ref.id;
         // Milestone: EMI Loan Created — notable lifecycle event for Journal
         await addDoc(collection(db, 'finance_ledger_entries'), {
           type: 'Milestone', category: 'EMI Loan Created',
@@ -476,8 +507,10 @@ export default function EMILoans() {
         toast.success('EMI Loan created!');
         setAddOpen(false);
       }
+      if (savedLoanId) await saveEmiDocs(savedLoanId, { check: checkUrl, bond: bondUrl, agreement: agreementUrl });
       setForm({ ...BLANK, emiId: genId() });
       setPhotoPreview(null);
+      setDocFiles({}); setExistingDocs({});
     } catch (e) { toast.error('Failed: ' + e.message); } finally { setSaving(false); }
   }
 
@@ -919,6 +952,7 @@ export default function EMILoans() {
           photoPreview={photoPreview}
           onPhotoChange={handlePhotoFile}
           onPhotoRemove={removePhoto}
+          docFiles={docFiles} setDocFiles={setDocFiles} existingDocs={existingDocs}
         />
       </Modal>
 
@@ -935,6 +969,7 @@ export default function EMILoans() {
           photoPreview={photoPreview}
           onPhotoChange={handlePhotoFile}
           onPhotoRemove={removePhoto}
+          docFiles={docFiles} setDocFiles={setDocFiles} existingDocs={existingDocs}
         />
       </Modal>
 
