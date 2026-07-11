@@ -7,6 +7,7 @@ import { getDashboardData } from '../../utils/cf_firestore';
 import { buildMonthProjection, calcTakeSuggestion, getExpectedPayable, getCommBreakdown, getPhaseIndex } from '../../utils/cf_engine';
 import { formatCurrency, formatMonthYear } from '../../utils/cf_format';
 import { Card, StatCard, SectionHeader, tokens, Badge } from '../../components/chitfund/UI';
+import { printFundProjection } from '../../utils/cf_pdfReport';
 import { PageLoader } from '../../components/Skeleton';
 
 const fmt = v => formatCurrency(v||0);
@@ -38,10 +39,16 @@ export default function Projection() {
 
   const now = new Date();
   const curKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
-  const next1  = projection[0]?.total || 0;
-  const next3  = projection.slice(0,3).reduce((s,m)=>s+m.total,0);
-  const next6  = projection.slice(0,6).reduce((s,m)=>s+m.total,0);
-  const next12 = projection.slice(0,12).reduce((s,m)=>s+m.total,0);
+  // FIX: projection[0] is just the EARLIEST month with any pending auction — if no chit
+  // happens to have a round due this exact calendar month, that would silently show a
+  // FUTURE month's figure mislabeled as "This Month". Find the real current-month entry
+  // explicitly instead (defaulting to ₹0 if nothing is actually due this month).
+  const curMonthEntry = projection.find(m => m.key === curKey);
+  const next1  = curMonthEntry?.total || 0;
+  const upcoming = projection.filter(m => m.key >= curKey); // only current + future, never past
+  const next3  = upcoming.slice(0,3).reduce((s,m)=>s+m.total,0);
+  const next6  = upcoming.slice(0,6).reduce((s,m)=>s+m.total,0);
+  const next12 = upcoming.slice(0,12).reduce((s,m)=>s+m.total,0);
 
   const chartData = projection.slice(0,12).map((m,i) => ({
     month: formatMonthYear(m.month),
@@ -63,9 +70,15 @@ export default function Projection() {
 
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:20 }}>
-      <div>
-        <h1 style={{ margin:0, fontSize:22, fontWeight:900, color:tokens.text }}>Fund Projection</h1>
-        <p style={{ margin:'4px 0 0', fontSize:13.5, color:tokens.textSub }}>Month-wise investment forecast · Based on slab (not taken) vs per head (taken) logic per spec §7</p>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', flexWrap:'wrap', gap:12 }}>
+        <div>
+          <h1 style={{ margin:0, fontSize:22, fontWeight:900, color:tokens.text }}>Fund Projection</h1>
+          <p style={{ margin:'4px 0 0', fontSize:13.5, color:tokens.textSub }}>Month-wise investment forecast · Based on slab (not taken) vs per head (taken) logic per spec §7</p>
+        </div>
+        <button onClick={() => printFundProjection(projection, { next1, next3, next6, next12 })}
+          style={{ padding:'9px 16px', borderRadius:10, border:`1px solid ${tokens.border}`, background:'#fff', color:tokens.text, fontSize:13, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>
+          🖨 Export PDF
+        </button>
       </div>
 
       {/* KPIs */}

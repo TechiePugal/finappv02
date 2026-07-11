@@ -6,8 +6,11 @@ import toast from 'react-hot-toast';
 import {PageHeader,Card,Badge,Button,StatCard,SearchBar,FilterTabs,formatCurrency,formatDate,Loader} from '../../components/finledger/UI';
 import {printDepositorReport, printDepositorsSummary} from '../../utils/pdfReport';
 import { PageLoader } from '../../components/Skeleton';
+import {useAuth} from '../../contexts/AuthContext';
+import {scopeToUser} from '../../utils/scopeHelper';
 
 export default function Depositors(){
+  const {user}=useAuth();
   const [data,setData]=useState([]);
   const [loading,setLoading]=useState(true);
   const [search,setSearch]=useState('');
@@ -18,12 +21,12 @@ export default function Depositors(){
   useEffect(()=>{
     const q = query(collection(db,'deposit_master'),orderBy('createdAt','desc'));
     const unsub = onSnapshot(q, snap => {
-      setData(snap.docs.map(d=>({id:d.id,...d.data()})));
+      setData(scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid));
       setLoading(false);
     }, err => { toast.error('Failed to load'); setLoading(false); });
     const pUnsub=onSnapshot(collection(db,'deposit_payments'),snap=>{
       const pm={};
-      snap.docs.forEach(d=>{const x={id:d.id,...d.data()};if(!pm[x.depositId])pm[x.depositId]=[];pm[x.depositId].push(x);});
+      scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).forEach(x=>{if(!pm[x.depositId])pm[x.depositId]=[];pm[x.depositId].push(x);});
       setDepPays(pm);
     });
     return () => { unsub(); pUnsub(); };

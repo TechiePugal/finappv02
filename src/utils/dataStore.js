@@ -1,5 +1,5 @@
 /**
- * dataStore.js — Unified reactive data layer for FinSuite
+ * dataStore.js — Unified reactive data layer for EC Fin 360
  *
  * Strategy:
  *  1. First render → return cache immediately (instant)

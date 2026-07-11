@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { PaymentModal } from './Auctions';
+import { printChitFullDocument } from '../../utils/cf_pdfReport';
+import { getAllAuctionResults } from '../../utils/cf_firestore';
 import {
   getChit, getAuctionSchedule, getMembers, addMember, updateMember,
   deleteMember, processAuction, getAuctionPayments, updatePaymentStatus,
@@ -237,6 +239,10 @@ export default function ChitDetail() {
   }
 
   // ── Payment collection ──────────────────────────────────────────────────────
+  async function exportFullDocument() {
+    const results = await getAllAuctionResults(id);
+    printChitFullDocument(chit, members, results);
+  }
   function openPayments(auction) {
     if (auction.status !== 'Completed') return;
     setPayModal({ ...auction, chitId: auction.chitId || id, chitName: chit?.companyName });
@@ -305,6 +311,10 @@ export default function ChitDetail() {
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <IBtn icon={Edit2} onClick={openEditChit} title="Edit chit fund settings" />
+            <button onClick={exportFullDocument} title="Full document — chit details, members, auction history"
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px', borderRadius: 10, border: `1px solid ${tokens.border}`, background: '#fff', color: tokens.textSub, fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+              🖨 Export PDF
+            </button>
             {nextAuction && (
               <button onClick={() => { setAuctionModal(nextAuction); openAuctionFormFor(nextAuction); setError(''); }}
                 style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', borderRadius: 10, border: 'none', background: tokens.blue, color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>

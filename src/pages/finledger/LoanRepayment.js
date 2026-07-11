@@ -4,11 +4,13 @@ import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
 import {printLoanRepaymentSummary} from '../../utils/pdfReport';
 import {PageHeader,Card,Badge,Button,StatCard,Modal,SectionHeader,InfoRow,formatCurrency,Loader,Divider,FilterTabs,SearchBar} from '../../components/finledger/UI';
+import {useAuth} from '../../contexts/AuthContext';
 import {PageLoader} from '../../components/Skeleton';
 
 const PAY_MODES=['Cash','Bank Transfer','UPI','Cheque','DD'];
 
 export default function LoanRepayment(){
+  const {user}=useAuth();
   const[borrowers,setBorrowers]=useState([]);
   const[repayments,setRepayments]=useState({});
   const[loading,setLoading]=useState(true);
@@ -69,7 +71,7 @@ export default function LoanRepayment(){
         originalLoan:modal.loanAmount, repaidAmount:amount,
         balanceAfter:newBalance, paymentMode:pf.mode,
         date:pf.date, type:isFullClose?'Full':'Partial',
-        remarks:pf.remarks, createdAt:serverTimestamp()
+        remarks:pf.remarks, createdAt:serverTimestamp(), createdBy:user?.uid||null
       };
       const repRef=await addDoc(collection(db,'loan_repayments'),repData);
 
@@ -80,7 +82,7 @@ export default function LoanRepayment(){
         amount, paymentMode:pf.mode, date:pf.date,
         borrowerName:modal.borrowerName, borrowerId:modal.id,
         loanId:modal.loanId||modal.id, linkedRepaymentId:repRef.id,
-        createdAt:serverTimestamp()
+        createdAt:serverTimestamp(), createdBy:user?.uid||null
       });
 
       // Update borrower record
@@ -96,7 +98,7 @@ export default function LoanRepayment(){
           description:`Loan fully closed — ${modal.borrowerName} · ${modal.loanId||modal.id}`,
           amount:modal.loanAmount||0, date:pf.date,
           borrowerName:modal.borrowerName, borrowerId:modal.id, loanId:modal.loanId||modal.id,
-          createdAt:serverTimestamp()
+          createdAt:serverTimestamp(), createdBy:user?.uid||null
         });
       }
 

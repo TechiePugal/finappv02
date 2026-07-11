@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { BarChart3, Zap, Shield } from 'lucide-react';
+import Logo from '../assets/ECFin360Logo.png';
 
 const ERR_MAP = {
   'auth/popup-closed-by-user':    '',
@@ -22,18 +23,8 @@ const GoogleIcon = () => (
 );
 
 const FinSuiteLogo = ({ size = 44 }) => (
-  <svg width={size} height={size} viewBox="0 0 44 44" fill="none">
-    <rect width="44" height="44" rx="12" fill="url(#fsGrad)"/>
-    <path d="M11 24 L17 15 L23 25 L28 18 L33 23" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-    <circle cx="33" cy="23" r="2.8" fill="white"/>
-    <defs>
-      <linearGradient id="fsGrad" x1="0" y1="0" x2="44" y2="44">
-        <stop stopColor="#1d4ed8"/>
-        <stop offset="0.5" stopColor="#4c1d95"/>
-        <stop offset="1" stopColor="#1e1b4b"/>
-      </linearGradient>
-    </defs>
-  </svg>
+  <img src={Logo}
+ alt="EC Fin 360" style={{ width: size, height: size, borderRadius: size * 0.27, objectFit: 'cover' }} />
 );
 
 export default function AuthPage() {
@@ -71,7 +62,7 @@ export default function AuthPage() {
           {/* Brand */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 13, marginBottom: 52 }}>
             <FinSuiteLogo size={46} />
-            <span style={{ fontSize: 28, fontWeight: 800, color: '#fff', letterSpacing: '-0.5px' }}>FinSuite</span>
+            <span style={{ fontSize: 28, fontWeight: 800, color: '#fff', letterSpacing: '-0.5px' }}>EC Fin 360</span>
           </div>
 
           <h2 style={S.heroHeading}>
@@ -136,11 +127,11 @@ export default function AuthPage() {
           {/* Mobile logo (hidden on desktop) */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 11, marginBottom: 36, justifyContent: 'center' }} className="auth-mobile-logo">
             <FinSuiteLogo size={40} />
-            <span style={{ fontSize: 24, fontWeight: 800, color: '#0f172a', letterSpacing: '-0.5px' }}>FinSuite</span>
+            <span style={{ fontSize: 24, fontWeight: 800, color: '#0f172a', letterSpacing: '-0.5px' }}>EC Fin 360</span>
           </div>
 
           {/* Heading */}
-          <h2 style={S.cardTitle}>Welcome to FinSuite</h2>
+          <h2 style={S.cardTitle}>Welcome to EC Fin 360</h2>
           <p style={S.cardSub}>Sign in with your Google account to continue</p>
 
           {/* Security badge */}

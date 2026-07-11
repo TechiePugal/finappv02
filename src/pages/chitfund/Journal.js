@@ -1,11 +1,22 @@
 import React,{useEffect,useState} from 'react';
-import {collection,onSnapshot,getDocs,query,orderBy} from 'firebase/firestore';
+import {collection,onSnapshot,getDocs,query,orderBy,where} from 'firebase/firestore';
 import {db} from '../../firebase/config';
 import {useAuth} from '../../contexts/AuthContext';
 import {Card,PageHeader,Badge,Button} from '../../components/chitfund/UI';
+import {printCfJournal} from '../../utils/cf_pdfReport';
 
 const tokens={blue:'#007AFF',green:'#34C759',red:'#FF3B30',purple:'#5856D6',amber:'#FF9500',text:'#1C1C1E',textSub:'#6B7280',textMuted:'#9CA3AF',border:'rgba(0,0,0,0.08)',slateLight:'#F9F9FB',surface:'#fff'};
 const fmt=v=>'₹'+Math.round(Math.abs(v||0)).toLocaleString('en-IN');
+// Local-safe date string — NEVER use .toISOString() for calendar dates: it converts to UTC
+// and silently shifts the day backward in timezones ahead of UTC (e.g. IST). Also normalizes
+// Firestore Timestamp objects, which were being compared directly against date STRINGS and
+// always failing (the real reason the Journal showed 0 entries for formed chits).
+function toLocalISO(d){
+  const dt = d?.seconds!=null ? new Date(d.seconds*1000) : (d instanceof Date ? d : (typeof d==='string' ? new Date(d) : null));
+  if(!dt || isNaN(dt)) return typeof d==='string' ? d : '';
+  const y=dt.getFullYear(), m=String(dt.getMonth()+1).padStart(2,'0'), day=String(dt.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
 const PRESETS=['This Month','Last Month','This Year','Custom'];
 
 export default function CFJournal(){
@@ -17,27 +28,36 @@ export default function CFJournal(){
   const[sourceF,setSourceF]=useState('All'); // All / Formed / Joined
   const[preset,setPreset]=useState('This Month');
   const now=new Date();
-  const[fromDate,setFromDate]=useState(new Date(now.getFullYear(),now.getMonth(),1).toISOString().split('T')[0]);
-  const[toDate,setToDate]=useState(new Date(now.getFullYear(),now.getMonth()+1,0).toISOString().split('T')[0]);
+  const[fromDate,setFromDate]=useState(toLocalISO(new Date(now.getFullYear(),now.getMonth(),1)));
+  const[toDate,setToDate]=useState(toLocalISO(new Date(now.getFullYear(),now.getMonth()+1,0)));
 
   useEffect(()=>{
     if(!user)return;
     let ledgerRows=[],paymentRows=[],chitNames={},otherNames={};
     async function load(){
       setLoading(true);
-      const [chitsSnap,othersSnap,ledgerSnap,paySnap]=await Promise.all([
-        getDocs(query(collection(db,'chit_master'))),
-        getDocs(query(collection(db,'chit_others'))),
-        getDocs(query(collection(db,'chit_ledger_entries'))),
-        getDocs(query(collection(db,'chit_others_payments'))),
+      // CRITICAL FIX: these queries were unscoped (no owner filter) — they were either
+      // pulling every user's data, or silently failing against Firestore security rules
+      // that require createdBy===uid. Both explain "Journal not working".
+      const [chitsSnap,othersSnap]=await Promise.all([
+        getDocs(query(collection(db,'chit_master'),where('createdBy','==',user.uid))),
+        getDocs(query(collection(db,'chit_others'),where('createdBy','==',user.uid))),
       ]);
       chitsSnap.docs.forEach(d=>{chitNames[d.id]=d.data().companyName||'Chit';});
       othersSnap.docs.forEach(d=>{otherNames[d.id]=d.data().chitName||'Joined Chit';});
+      const myChitIds=new Set(Object.keys(chitNames));
+      const myOtherIds=new Set(Object.keys(otherNames));
+      // Ledger entries / other-chit payments don't carry createdBy directly — scope them
+      // by only keeping rows whose parent chit/other belongs to this user.
+      const [ledgerSnap,paySnap]=await Promise.all([
+        getDocs(query(collection(db,'chit_ledger_entries'))),
+        getDocs(query(collection(db,'chit_others_payments'))),
+      ]);
 
-      ledgerRows=ledgerSnap.docs.map(d=>{
+      ledgerRows=ledgerSnap.docs.filter(d=>myChitIds.has(d.data().chitId)).map(d=>{
         const x=d.data();
         return{
-          id:d.id, date:x.date||(x.createdAt?.seconds?new Date(x.createdAt.seconds*1000).toISOString().split('T')[0]:''),
+          id:d.id, date:toLocalISO(x.date)||toLocalISO(x.createdAt)||'',
           type:(x.debit>0)?'Debit':'Credit', category:x.type||'Other', source:'Formed',
           chitName:chitNames[x.chitId]||'Formed Chit',
           description:`${x.type||'Entry'} — Auction #${x.auctionNumber||''}`,
@@ -46,9 +66,9 @@ export default function CFJournal(){
       });
 
       paymentRows=[];
-      paySnap.docs.forEach(d=>{
+      paySnap.docs.filter(d=>myOtherIds.has(d.data().otherId)).forEach(d=>{
         const x=d.data();
-        const dt=x.month?x.month+'-01':(x.createdAt?.seconds?new Date(x.createdAt.seconds*1000).toISOString().split('T')[0]:'');
+        const dt=x.month?x.month+'-01':toLocalISO(x.createdAt);
         const name=otherNames[x.otherId]||'Joined Chit';
         paymentRows.push({
           id:d.id+'_pay', date:dt, type:'Debit', category:'Chit Subscription (Joined)', source:'Joined',
@@ -71,9 +91,9 @@ export default function CFJournal(){
   function applyPreset(p){
     setPreset(p);
     const n=new Date();
-    if(p==='This Month'){setFromDate(new Date(n.getFullYear(),n.getMonth(),1).toISOString().split('T')[0]);setToDate(new Date(n.getFullYear(),n.getMonth()+1,0).toISOString().split('T')[0]);}
-    else if(p==='Last Month'){setFromDate(new Date(n.getFullYear(),n.getMonth()-1,1).toISOString().split('T')[0]);setToDate(new Date(n.getFullYear(),n.getMonth(),0).toISOString().split('T')[0]);}
-    else if(p==='This Year'){setFromDate(new Date(n.getFullYear(),0,1).toISOString().split('T')[0]);setToDate(new Date(n.getFullYear(),11,31).toISOString().split('T')[0]);}
+    if(p==='This Month'){setFromDate(toLocalISO(new Date(n.getFullYear(),n.getMonth(),1)));setToDate(toLocalISO(new Date(n.getFullYear(),n.getMonth()+1,0)));}
+    else if(p==='Last Month'){setFromDate(toLocalISO(new Date(n.getFullYear(),n.getMonth()-1,1)));setToDate(toLocalISO(new Date(n.getFullYear(),n.getMonth(),0)));}
+    else if(p==='This Year'){setFromDate(toLocalISO(new Date(n.getFullYear(),0,1)));setToDate(toLocalISO(new Date(n.getFullYear(),11,31)));}
   }
 
   const filtered=entries.filter(e=>{
@@ -111,7 +131,7 @@ export default function CFJournal(){
   return(
     <div>
       <PageHeader title="Journal" subtitle="Complete transaction history — formed and joined chits combined"
-        action={<Button variant="secondary" onClick={exportCsv}>Export CSV</Button>}/>
+        action={<div style={{display:'flex',gap:8,flexWrap:'wrap'}}><Button variant="secondary" onClick={exportCsv}>Export CSV</Button><Button onClick={()=>printCfJournal(filtered,fromDate,toDate)}>🖨 Export PDF</Button></div>}/>
 
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:12,marginBottom:14}}>
         {[

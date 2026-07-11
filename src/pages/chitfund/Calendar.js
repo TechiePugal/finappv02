@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Gavel, ArrowRight, X, Calendar as CalIcon, Users } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import { getDashboardData } from '../../utils/cf_firestore';
+import { getDashboardData, getOtherChits, getOtherChitPayments } from '../../utils/cf_firestore';
+import { printMonthlyCalendar } from '../../utils/cf_pdfReport';
 import { formatCurrency } from '../../utils/cf_format';
 import { getExpectedPayable, getCommBreakdown, calcPhases, getPhaseIndex } from '../../utils/cf_engine';
 import { Card, PageHeader, Badge, StatCard, SectionHeader, tokens } from '../../components/chitfund/UI';
@@ -161,6 +162,8 @@ export default function CalendarPage() {
   const { user } = useAuth();
   const nav = useNavigate();
   const [eventsByDate, setEventsByDate] = useState({});
+  const [joinedChits, setJoinedChits] = useState([]);
+  const [joinedPays, setJoinedPays] = useState({});
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState('');
   const [viewDate, setViewDate] = useState(new Date());
@@ -197,6 +200,11 @@ export default function CalendarPage() {
       setEventsByDate(ev);
       setLoading(false);
     });
+    getOtherChits(user.uid).then(async list => {
+      const pairs = await Promise.all(list.map(c => getOtherChitPayments(c.id).then(p => [c.id, p])));
+      setJoinedChits(list); setJoinedPays(Object.fromEntries(pairs));
+
+    });
   }, [user]);
 
   const yr = viewDate.getFullYear(), mo = viewDate.getMonth();
@@ -220,12 +228,29 @@ export default function CalendarPage() {
     .sort((a, b) => a.dateKey.localeCompare(b.dateKey))
     .slice(0, 8);
 
+  function exportMonth() {
+    const monthLabel = viewDate.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+    const formedRows = moEvents.map(e => ({
+      chitName: e.chitName, round: e.auctionNumber, date: e.auctionDate,
+      taken: e.status === 'Completed', amountNeeded: e.status === 'Completed' ? 0 : (e.perHeadValue || 0),
+    }));
+    const joinedRows = joinedChits.filter(c => c.myStatus !== 'Cashed').map(c => {
+      const pays = joinedPays[c.id] || [];
+      const thisMoPay = pays.find(p => p.month === moKey);
+      const taken = thisMoPay && thisMoPay.status === 'Paid';
+      const sub = (c.totalChitValue || 0) / (c.totalMembers || 1);
+      return { chitName: c.companyName, taken, amountNeeded: taken ? 0 : sub };
+    });
+    printMonthlyCalendar(monthLabel, formedRows, joinedRows);
+  }
+
   if (loading) return <PageLoader stats={3} />;
   if (loadErr) return <div style={{padding:'40px',textAlign:'center',color:'#f87171',fontSize:14}}>⚠ {loadErr}</div>;
 
   return (
     <div>
-      <PageHeader title="Auction Calendar" subtitle="Visual auction schedule — click any date to see full details" />
+      <PageHeader title="Auction Calendar" subtitle="Visual auction schedule — click any date to see full details"
+        action={<button onClick={exportMonth} style={{ padding: '9px 16px', borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: '#fff', color: '#1C1C1E', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>🖨 Export This Month (PDF)</button>} />
 
       {upcoming.length > 0 && (() => {
         const nx = upcoming[0];

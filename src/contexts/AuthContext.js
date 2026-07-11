@@ -87,6 +87,28 @@ export function AuthProvider({ children }) {
     await signOut(auth);
   };
 
+  // ── Idle-timeout auto-logout (30 minutes of no activity) ──────────────────
+  // Tracks mouse/keyboard/touch/scroll activity; if none is seen for 30 minutes
+  // while a user is signed in, they're automatically logged out for security.
+  const IDLE_LIMIT_MS = 30 * 60 * 1000;
+  useEffect(() => {
+    if (!user) return; // only run the idle timer while someone is actually logged in
+    let idleTimer;
+    const resetIdleTimer = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        logout();
+      }, IDLE_LIMIT_MS);
+    };
+    const activityEvents = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'];
+    activityEvents.forEach(evt => window.addEventListener(evt, resetIdleTimer, { passive: true }));
+    resetIdleTimer(); // start the timer as soon as someone logs in
+    return () => {
+      clearTimeout(idleTimer);
+      activityEvents.forEach(evt => window.removeEventListener(evt, resetIdleTimer));
+    };
+  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const resetPassword = (email) => sendPasswordResetEmail(auth, email);
 
   // Profile updates

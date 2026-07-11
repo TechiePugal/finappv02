@@ -61,11 +61,15 @@ function baseCSS(accent='#1a56db'){
 }
 
 function openPrint(title, htmlBody, accent='#1a56db'){
-  const win = window.open('', '_blank', 'width=1000,height=700');
-  if(!win){ alert('Allow popups to generate PDF reports.'); return; }
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title><style>${baseCSS(accent)}</style></head><body>${htmlBody}</body></html>`);
-  win.document.close();
+  // Blob URL instead of window.open('','_blank') — avoids the tab showing 'about:blank'
+  // permanently in the address bar even after content/title load.
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title><style>${baseCSS(accent)}</style></head><body>${htmlBody}</body></html>`;
+  const blob = new Blob([html], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, '_blank', 'width=1000,height=700');
+  if(!win){ alert('Allow popups to generate PDF reports.'); URL.revokeObjectURL(url); return; }
   setTimeout(()=>{ try{ win.focus(); win.print(); } catch{} }, 600);
+  setTimeout(()=>URL.revokeObjectURL(url), 60000);
 }
 
 // ── BORROWER REPORT ────────────────────────────────────────────────────────
@@ -86,7 +90,7 @@ export function printBorrowerReport(borrower, repayments, interestPayments){
   const body = `
     <div class="header">
       <div>
-        <div class="logo">FinSuite · Borrower Report</div>
+        <div class="logo">EC Fin 360 · Borrower Report</div>
         <div class="meta" style="text-align:left;margin-top:4px;">Generated: ${now()}</div>
       </div>
       <div class="meta">CONFIDENTIAL<br/>Borrower ID: ${borrower.loanId||borrower.id?.slice(-8)||'—'}</div>
@@ -198,7 +202,7 @@ export function printBorrowerReport(borrower, repayments, interestPayments){
     ${borrower.notes?`<div class="note-box"><strong>Notes:</strong> ${borrower.notes}</div>`:''}
 
     <div class="footer">
-      <span>FinSuite Finance Ledger · Confidential</span>
+      <span>EC Fin 360 Finance Ledger · Confidential</span>
       <span>${now()}</span>
     </div>
   `;
@@ -229,7 +233,7 @@ export function printDepositorReport(depositor, payments){
   const body = `
     <div class="header">
       <div>
-        <div class="logo">FinSuite · Depositor Report</div>
+        <div class="logo">EC Fin 360 · Depositor Report</div>
         <div class="meta" style="text-align:left;margin-top:4px;">Generated: ${now()}</div>
       </div>
       <div class="meta">CONFIDENTIAL<br/>Deposit ID: ${depositor.depositId||depositor.id?.slice(-8)||'—'}</div>
@@ -313,7 +317,7 @@ export function printDepositorReport(depositor, payments){
     ${depositor.notes?`<div class="note-box"><strong>Notes:</strong> ${depositor.notes}</div>`:''}
 
     <div class="footer">
-      <span>FinSuite Finance Ledger · Confidential</span>
+      <span>EC Fin 360 Finance Ledger · Confidential</span>
       <span>${now()}</span>
     </div>
   `;
@@ -354,7 +358,7 @@ export function printOverallReport({fromDate, toDate, borrowers, depositors, int
   const body = `
     <div class="header">
       <div>
-        <div class="logo">FinSuite · Financial Report</div>
+        <div class="logo">EC Fin 360 · Financial Report</div>
         <div class="meta" style="text-align:left;margin-top:4px;font-size:14px;font-weight:600;color:#374151;">${label||'Custom Period'}</div>
         <div class="meta" style="text-align:left;margin-top:2px;">Period: ${fmtDate(fromDate)} → ${fmtDate(toDate)}</div>
       </div>
@@ -441,7 +445,7 @@ export function printOverallReport({fromDate, toDate, borrowers, depositors, int
     </table>
 
     <div class="footer">
-      <span>FinSuite Finance Ledger · Confidential</span>
+      <span>EC Fin 360 Finance Ledger · Confidential</span>
       <span>${now()}</span>
     </div>
   `;
@@ -467,7 +471,7 @@ export function printAlertsReport(list, tab, repayments, interests){
   const body = `
     <div class="header">
       <div>
-        <div class="logo">FinSuite · Alerts Report</div>
+        <div class="logo">EC Fin 360 · Alerts Report</div>
         <div class="meta" style="text-align:left;margin-top:4px;font-size:15px;font-weight:700;color:#b91c1c;">${title}</div>
       </div>
       <div class="meta">Generated: ${now()}<br/>${list.length} borrower(s)</div>
@@ -510,7 +514,7 @@ export function printAlertsReport(list, tab, repayments, interests){
     </table>`}
 
     <div class="footer">
-      <span>FinSuite Finance Ledger · Confidential — Action Required</span>
+      <span>EC Fin 360 Finance Ledger · Confidential — Action Required</span>
       <span>${now()}</span>
     </div>
   `;
@@ -533,7 +537,7 @@ export function printEMIAlertsReport(list, filterLabel, collections){
   const body = `
     <div class="header">
       <div>
-        <div class="logo">FinSuite · EMI Alerts Report</div>
+        <div class="logo">EC Fin 360 · EMI Alerts Report</div>
         <div class="meta" style="text-align:left;margin-top:4px;font-size:15px;font-weight:700;color:#b91c1c;">${filterLabel||'Overdue EMIs'}</div>
       </div>
       <div class="meta">Generated: ${now()}<br/>${list.length} loan(s)</div>
@@ -573,7 +577,7 @@ export function printEMIAlertsReport(list, filterLabel, collections){
     </table>`}
 
     <div class="footer">
-      <span>FinSuite Finance Ledger · Confidential — Action Required</span>
+      <span>EC Fin 360 Finance Ledger · Confidential — Action Required</span>
       <span>${now()}</span>
     </div>
   `;
@@ -595,7 +599,7 @@ export function printDepositorsSummary(depositors){
 
   const body = `
     <div class="header">
-      <div><div class="logo">FinSuite · Depositors Summary</div><div class="meta" style="text-align:left;margin-top:4px;">All depositor records with principal, rate and status</div></div>
+      <div><div class="logo">EC Fin 360 · Depositors Summary</div><div class="meta" style="text-align:left;margin-top:4px;">All depositor records with principal, rate and status</div></div>
       <div class="meta">Generated: ${now()}</div>
     </div>
     <div class="kpi-grid">
@@ -612,7 +616,7 @@ export function printDepositorsSummary(depositors){
         <tr class="total-row"><td colspan="3">TOTAL (Active)</td><td class="text-right">${INR(totalDeposited)}</td><td colspan="3"></td></tr>
       </tbody>
     </table>
-    <div class="footer"><span>FinSuite Finance Ledger</span><span>Depositors Summary Report</span></div>
+    <div class="footer"><span>EC Fin 360 Finance Ledger</span><span>Depositors Summary Report</span></div>
   `;
   openPrint('Depositors Summary', body, '#0ea5e9');
 }
@@ -632,7 +636,7 @@ export function printSettleInterestSummary(depositors, payments, month){
 
   const body = `
     <div class="header">
-      <div><div class="logo">FinSuite · Settle Interest Summary</div><div class="meta" style="text-align:left;margin-top:4px;">Month: ${month||'—'}</div></div>
+      <div><div class="logo">EC Fin 360 · Settle Interest Summary</div><div class="meta" style="text-align:left;margin-top:4px;">Month: ${month||'—'}</div></div>
       <div class="meta">Generated: ${now()}</div>
     </div>
     <div class="kpi-grid">
@@ -649,7 +653,7 @@ export function printSettleInterestSummary(depositors, payments, month){
         <tr class="total-row"><td colspan="2">TOTAL</td><td class="text-right">${INR(totalDue)}</td><td colspan="3"></td></tr>
       </tbody>
     </table>
-    <div class="footer"><span>FinSuite Finance Ledger</span><span>Settle Interest Summary — ${month||''}</span></div>
+    <div class="footer"><span>EC Fin 360 Finance Ledger</span><span>Settle Interest Summary — ${month||''}</span></div>
   `;
   openPrint(`Settle Interest — ${month||''}`, body, '#8b5cf6');
 }
@@ -669,7 +673,7 @@ export function printBorrowersSummary(borrowers, repayments){
 
   const body = `
     <div class="header">
-      <div><div class="logo">FinSuite · Borrowers Summary</div><div class="meta" style="text-align:left;margin-top:4px;">All borrower records with loan, outstanding and status</div></div>
+      <div><div class="logo">EC Fin 360 · Borrowers Summary</div><div class="meta" style="text-align:left;margin-top:4px;">All borrower records with loan, outstanding and status</div></div>
       <div class="meta">Generated: ${now()}</div>
     </div>
     <div class="kpi-grid">
@@ -686,7 +690,7 @@ export function printBorrowersSummary(borrowers, repayments){
         <tr class="total-row"><td colspan="3">TOTAL (Active)</td><td class="text-right">${INR(totalLoan)}</td><td class="text-right">${INR(totalOutstanding)}</td><td colspan="2"></td></tr>
       </tbody>
     </table>
-    <div class="footer"><span>FinSuite Finance Ledger</span><span>Borrowers Summary Report</span></div>
+    <div class="footer"><span>EC Fin 360 Finance Ledger</span><span>Borrowers Summary Report</span></div>
   `;
   openPrint('Borrowers Summary', body, '#f59e0b');
 }
@@ -706,7 +710,7 @@ export function printCollectInterestSummary(borrowers, payments, month, getOutst
 
   const body = `
     <div class="header">
-      <div><div class="logo">FinSuite · Collect Interest Summary</div><div class="meta" style="text-align:left;margin-top:4px;">Month: ${month||'—'}</div></div>
+      <div><div class="logo">EC Fin 360 · Collect Interest Summary</div><div class="meta" style="text-align:left;margin-top:4px;">Month: ${month||'—'}</div></div>
       <div class="meta">Generated: ${now()}</div>
     </div>
     <div class="kpi-grid">
@@ -723,7 +727,7 @@ export function printCollectInterestSummary(borrowers, payments, month, getOutst
         <tr class="total-row"><td colspan="3">TOTAL</td><td class="text-right">${INR(totalDue)}</td><td colspan="2"></td></tr>
       </tbody>
     </table>
-    <div class="footer"><span>FinSuite Finance Ledger</span><span>Collect Interest Summary — ${month||''}</span></div>
+    <div class="footer"><span>EC Fin 360 Finance Ledger</span><span>Collect Interest Summary — ${month||''}</span></div>
   `;
   openPrint(`Collect Interest — ${month||''}`, body, '#f97316');
 }
@@ -739,7 +743,7 @@ export function printLoanRepaymentSummary(borrowers, getRepaid, getBalance){
 
   const body = `
     <div class="header">
-      <div><div class="logo">FinSuite · Loan Repayment Summary</div><div class="meta" style="text-align:left;margin-top:4px;">Principal repayment progress across all borrowers</div></div>
+      <div><div class="logo">EC Fin 360 · Loan Repayment Summary</div><div class="meta" style="text-align:left;margin-top:4px;">Principal repayment progress across all borrowers</div></div>
       <div class="meta">Generated: ${now()}</div>
     </div>
     <div class="kpi-grid">
@@ -756,7 +760,7 @@ export function printLoanRepaymentSummary(borrowers, getRepaid, getBalance){
         <tr class="total-row"><td colspan="2">TOTAL</td><td class="text-right">${INR(totalOriginal)}</td><td class="text-right">${INR(totalRepaid)}</td><td class="text-right">${INR(totalBalance)}</td><td></td></tr>
       </tbody>
     </table>
-    <div class="footer"><span>FinSuite Finance Ledger</span><span>Loan Repayment Summary Report</span></div>
+    <div class="footer"><span>EC Fin 360 Finance Ledger</span><span>Loan Repayment Summary Report</span></div>
   `;
   openPrint('Loan Repayment Summary', body, '#22c55e');
 }
@@ -771,7 +775,7 @@ export function printEMILoansSummary(loans){
 
   const body = `
     <div class="header">
-      <div><div class="logo">FinSuite · EMI Loans Summary</div><div class="meta" style="text-align:left;margin-top:4px;">All EMI loans with progress and monthly EMI</div></div>
+      <div><div class="logo">EC Fin 360 · EMI Loans Summary</div><div class="meta" style="text-align:left;margin-top:4px;">All EMI loans with progress and monthly EMI</div></div>
       <div class="meta">Generated: ${now()}</div>
     </div>
     <div class="kpi-grid">
@@ -788,7 +792,7 @@ export function printEMILoansSummary(loans){
         <tr class="total-row"><td colspan="2">TOTAL</td><td class="text-right">${INR(totalLoan)}</td><td class="text-right">${INR(totalEMI)}</td><td colspan="2"></td></tr>
       </tbody>
     </table>
-    <div class="footer"><span>FinSuite Finance Ledger</span><span>EMI Loans Summary Report</span></div>
+    <div class="footer"><span>EC Fin 360 Finance Ledger</span><span>EMI Loans Summary Report</span></div>
   `;
   openPrint('EMI Loans Summary', body, '#6366f1');
 }
@@ -805,7 +809,7 @@ export function printJournalReport(entries, fromDate, toDate){
 
   const body = `
     <div class="header">
-      <div><div class="logo">FinSuite · Journal — Full Transaction History</div><div class="meta" style="text-align:left;margin-top:4px;">Period: ${fmtDate(fromDate)} → ${fmtDate(toDate)}</div></div>
+      <div><div class="logo">EC Fin 360 · Journal — Full Transaction History</div><div class="meta" style="text-align:left;margin-top:4px;">Period: ${fmtDate(fromDate)} → ${fmtDate(toDate)}</div></div>
       <div class="meta">Generated: ${now()}</div>
     </div>
     <div class="kpi-grid">
@@ -838,7 +842,7 @@ export function printJournalReport(entries, fromDate, toDate){
         ${txns.map(e=>`<tr><td>${fmtDate(e.date)}</td><td>${e.time||'—'}</td><td><span class="badge ${e.type==='Credit'?'badge-green':'badge-red'}">${e.type}</span></td><td>${e.category||'—'}</td><td>${e.description||'—'}</td><td class="text-right ${e.type==='Credit'?'text-green':'text-red'}">${e.type==='Credit'?'+':'-'}${INR(e.amount)}</td></tr>`).join('')}
       </tbody>
     </table>
-    <div class="footer"><span>FinSuite Finance Ledger</span><span>Journal — Full Transaction History</span></div>
+    <div class="footer"><span>EC Fin 360 Finance Ledger</span><span>Journal — Full Transaction History</span></div>
   `;
   openPrint('Journal Report', body, '#1a56db');
 }
@@ -866,7 +870,7 @@ export function printEMILoanReport(loan, sched){
   const body = `
     <div class="header">
       <div>
-        <div class="logo">FinSuite · EMI Loan Report</div>
+        <div class="logo">EC Fin 360 · EMI Loan Report</div>
         <div class="meta" style="text-align:left;margin-top:4px;">Generated: ${now()}</div>
       </div>
       <div class="meta">CONFIDENTIAL<br/>EMI ID: ${loan.emiId||loan.id?.slice(-8)||'—'}</div>
@@ -939,7 +943,7 @@ export function printEMILoanReport(loan, sched){
         </tr>
       </tbody>
     </table>`}
-    <div class="footer"><span>FinSuite Finance Ledger · Confidential</span><span>${now()}</span></div>
+    <div class="footer"><span>EC Fin 360 Finance Ledger · Confidential</span><span>${now()}</span></div>
   `;
   openPrint(`EMI Loan Report — ${loan.borrowerName}`, body, '#6366f1');
 }

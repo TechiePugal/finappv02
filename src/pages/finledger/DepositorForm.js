@@ -6,6 +6,7 @@ import {uploadDocumentFile,openDocument} from '../../utils/fileStore';
 import {saveDepositorDocs,getDepositorDocs} from '../../utils/depositorFiles';
 import toast from 'react-hot-toast';
 import {Button,FormField,Input,Select,Card,PageHeader,Toggle,formatCurrency,SectionHeader,InfoRow,Divider} from '../../components/finledger/UI';
+import {useAuth} from '../../contexts/AuthContext';
 
 function genId(){return 'DEP-'+Date.now().toString(36).toUpperCase();}
 
@@ -46,6 +47,7 @@ function genFullSchedule(amt,rate,tenureMonths,compound,start,maturity){
 }
 
 export default function DepositorForm(){
+  const {user}=useAuth();
   const {id}=useParams(); const nav=useNavigate(); const isEdit=!!id;
   const [form,setForm]=useState({
     depositId:genId(), name:'', phone:'', email:'', address:'',
@@ -113,7 +115,7 @@ export default function DepositorForm(){
         interestRate:parseFloat(form.interestRate), interestTenure:tenureNum,
         compounding:!!form.compounding,
         hasCheck:!!checkUrl, hasBond:!!bondUrl,
-        checkCopyUrl:null, bondCopyUrl:null, // no longer stored inline — see depositor_files collection
+        checkCopyUrl:null, bondCopyUrl:null, createdBy:user?.uid||null, // no longer stored inline — see depositor_files collection
         monthlyInterest: calcPeriodInterest(form.depositAmount,form.interestRate,1,form.compounding),
         periodInterest, updatedAt:serverTimestamp()
       };
@@ -127,7 +129,7 @@ export default function DepositorForm(){
             description:`Deposit closed — ${form.name} · ${form.depositId||id}`,
             amount:parseFloat(form.depositAmount)||0, date:new Date().toISOString().split('T')[0],
             borrowerName:form.name, depositorId:id, depositId:form.depositId||id,
-            createdAt:serverTimestamp()
+            createdAt:serverTimestamp(), createdBy:user?.uid||null
           });
         }
         toast.success('Depositor updated!');
@@ -145,7 +147,7 @@ export default function DepositorForm(){
           description:`Deposit created — ${form.name} · ${form.depositId||r2.id}`,
           amount:parseFloat(form.depositAmount)||0, date:form.startDate||new Date().toISOString().split('T')[0],
           borrowerName:form.name, depositorId:r2.id, depositId:form.depositId||r2.id,
-          createdAt:serverTimestamp()
+          createdAt:serverTimestamp(), createdBy:user?.uid||null
         });
         toast.success('Depositor added!');
       }

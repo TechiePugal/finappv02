@@ -17,6 +17,15 @@ const tokens = { blue: '#007AFF', green: '#34C759', amber: '#FF9500', purple: '#
 const fmt = v => '₹' + Math.round(v || 0).toLocaleString('en-IN');
 const fmtDate = d => { if (!d) return '—'; const dt = d?.seconds ? new Date(d.seconds * 1000) : new Date(d); return dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); };
 
+// Blob URL instead of window.open('','_blank') — avoids the tab showing 'about:blank' forever.
+function openPrintBlob(html) {
+  const blob = new Blob([html], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const w = window.open(url, '_blank');
+  if (!w) { alert('Allow popups to view/print this report.'); URL.revokeObjectURL(url); return; }
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
 // Fetch a round's SAVED notes fresh from Firestore and print them — works for ANY round
 // (taken or not, currently open or not), independent of any in-memory editing state.
 async function printRoundSummary(chit, round, members) {
@@ -28,19 +37,18 @@ async function printRoundSummary(chit, round, members) {
   const finalNote = data.finalNote || '';
   const takenMembers = members.filter(m => m.status === 'Taken');
   const notTakenMembers = members.filter(m => m.status !== 'Taken');
-  const w = window.open('', '_blank');
   const takenRows = takenMembers.map(m => `<tr><td>${m.name}</td><td style="color:#1a7a34;font-weight:700;">Taken</td><td>—</td></tr>`).join('');
   const bidderRows = notTakenMembers.map(m => `<tr><td>${m.name}</td><td style="color:#b45309;font-weight:700;">Not Taken</td><td>${bids[m.id] ? '₹' + parseFloat(bids[m.id]).toLocaleString('en-IN') : '—'}</td></tr>`).join('');
-  w.document.write(`<html><head><title>Bidding Notes — ${chit.companyName} Round #${round.auctionNumber}</title>
+  const html = `<html><head><title>Bidding Notes — ${chit.companyName} Round #${round.auctionNumber}</title>
     <style>body{font-family:Arial;padding:24px;color:#111}h1{font-size:19px;margin-bottom:2px}.meta{font-size:12px;color:#666;margin-bottom:18px}table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px}td,th{padding:8px 10px;border-bottom:1px solid #eee;text-align:left}th{background:#f7f7f9}.note{margin-top:10px;padding:12px 14px;background:#EEF2FF;border-radius:8px;font-weight:700;color:#5856D6}</style>
     </head><body>
     <h1>${chit.companyName} — Bidding Notes</h1>
     <div class="meta">Round #${round.auctionNumber} · Saved ${data.updatedAt?.seconds ? new Date(data.updatedAt.seconds * 1000).toLocaleString('en-IN') : ''} · Scratchpad only — not an official record</div>
     <table><thead><tr><th>Member</th><th>Status</th><th>Bid / Notes</th></tr></thead><tbody>${takenRows}${bidderRows}</tbody></table>
     ${finalNote ? `<div class="note">${finalNote}</div>` : ''}
-    <script>window.print()</script>
-    </body></html>`);
-  w.document.close();
+    <script>window.onload=function(){window.print();}</script>
+    </body></html>`;
+  openPrintBlob(html);
 }
 
 
@@ -221,19 +229,18 @@ function LiveBiddingPanel({ chit, round, members, takenMembers }) {
   }
 
   function printSummary() {
-    const w = window.open('', '_blank');
     const takenRows = takenMembers.map(m => `<tr><td>${m.name}</td><td style="color:#1a7a34;font-weight:700;">Taken</td><td>—</td></tr>`).join('');
     const bidderRows = members.map(m => `<tr><td>${m.name}</td><td style="color:#b45309;font-weight:700;">Not Taken</td><td>${bids[m.id] ? '₹' + parseFloat(bids[m.id]).toLocaleString('en-IN') : '—'}</td></tr>`).join('');
-    w.document.write(`<html><head><title>Bidding Notes — ${chit.companyName} Round #${round.auctionNumber}</title>
+    const html = `<html><head><title>Bidding Notes — ${chit.companyName} Round #${round.auctionNumber}</title>
       <style>body{font-family:Arial;padding:24px;color:#111}h1{font-size:19px;margin-bottom:2px}.meta{font-size:12px;color:#666;margin-bottom:18px}table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px}td,th{padding:8px 10px;border-bottom:1px solid #eee;text-align:left}th{background:#f7f7f9}.note{margin-top:10px;padding:12px 14px;background:#EEF2FF;border-radius:8px;font-weight:700;color:#5856D6}</style>
       </head><body>
       <h1>${chit.companyName} — Bidding Notes</h1>
       <div class="meta">Round #${round.auctionNumber} · ${new Date().toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})} · Scratchpad only — not an official record</div>
       <table><thead><tr><th>Member</th><th>Status</th><th>Bid / Notes</th></tr></thead><tbody>${takenRows}${bidderRows}</tbody></table>
       ${finalNote ? `<div class="note">${finalNote}</div>` : ''}
-      <script>window.print()</script>
-      </body></html>`);
-    w.document.close();
+      <script>window.onload=function(){window.print();}</script>
+      </body></html>`;
+    openPrintBlob(html);
   }
 
   async function saveNotes() {

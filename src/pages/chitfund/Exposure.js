@@ -5,9 +5,10 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import { Zap, TrendingDown, TrendingUp, AlertCircle, ChevronRight } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { getDashboardData } from '../../utils/cf_firestore';
-import { calcExposure, calcFutureLiability } from '../../utils/cf_engine';
+import { calcExposure, calcFutureLiability, buildMonthProjection } from '../../utils/cf_engine';
 import { formatCurrency } from '../../utils/cf_format';
-import { Card, PageHeader, StatCard, SectionHeader, Table, Badge, Loader, EmptyState, tokens, KPIRow } from '../../components/chitfund/UI';
+import { Card, PageHeader, StatCard, SectionHeader, Table, Badge, Loader, EmptyState, tokens, KPIRow, Button } from '../../components/chitfund/UI';
+import { printExposureReport } from '../../utils/cf_pdfReport';
 import { PageLoader } from '../../components/Skeleton';
 
 const CustomTooltip = ({ active, payload, label }) => {
@@ -51,6 +52,11 @@ export default function Exposure() {
   const totalFuture = enriched.reduce((s, c) => s + c.futureLiability, 0);
   const totalRisk = enriched.reduce((s, c) => s + c.totalRisk, 0);
   const totalCommission = chits.reduce((s, c) => s + (c.totalCommissionEarned || 0), 0);
+  // Accurate "due this month" — reuses the same month-projection engine as Fund Projection,
+  // explicitly matched to the current calendar month (not just "the next pending round").
+  const monthProj = buildMonthProjection(chits, data?.schedules || {});
+  const curMoKey = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
+  const dueThisMonth = monthProj.find(m => m.key === curMoKey)?.total || 0;
 
   const chartData = enriched.slice(0, 8).map(c => ({
     name: c.companyName?.length > 10 ? c.companyName.slice(0, 10) + '…' : c.companyName,
@@ -72,9 +78,11 @@ export default function Exposure() {
 
   return (
     <div>
-      <PageHeader title="Exposure & Risk" subtitle="Monitor current exposure, future liability and total risk across all chit funds" />
+      <PageHeader title="Exposure & Risk" subtitle="Monitor current exposure, future liability and total risk across all chit funds"
+        action={<Button variant="secondary" onClick={() => printExposureReport(enriched, { totalExposure, totalFuture, totalRisk, totalCommission, dueThisMonth })}>🖨 Export PDF</Button>} />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 13, marginBottom: 20 }}>
+        <StatCard label="Due This Month" value={formatCurrency(dueThisMonth)} sub="Accurately matched to current month" icon={TrendingDown} accent="#B45309" />
         <StatCard label="Current Exposure" value={formatCurrency(totalExposure)} sub="Invested minus received" icon={Zap} accent={tokens.red} />
         <StatCard label="Future Liability" value={formatCurrency(totalFuture)} sub="Remaining auctions" icon={TrendingDown} accent={tokens.amber} />
         <StatCard label="Total Risk" value={formatCurrency(totalRisk)} sub="Exposure + Future" icon={AlertCircle} accent="#5521B5" />

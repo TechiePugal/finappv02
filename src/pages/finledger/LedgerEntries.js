@@ -3,9 +3,11 @@ import {collection,onSnapshot,addDoc,updateDoc,deleteDoc,doc,query,orderBy,serve
 import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
 import {PageHeader,Card,StatCard,Button,SearchBar,FilterTabs,Modal,formatCurrency,formatDate,Loader,SectionHeader} from '../../components/finledger/UI';
+import {useAuth} from '../../contexts/AuthContext';
 import { PageLoader } from '../../components/Skeleton';
 
 export default function LedgerEntries(){
+  const {user}=useAuth();
   const [entries,setEntries]=useState([]);
   const [loading,setLoading]=useState(true);
   const [search,setSearch]=useState('');
@@ -91,6 +93,7 @@ export default function LedgerEntries(){
         toast.success('Entry and all linked records updated!');
       } else {
         data.createdAt=serverTimestamp();
+        data.createdBy=user?.uid||null;
         await addDoc(collection(db,'finance_ledger_entries'),data);
         toast.success('Entry added!');
       }

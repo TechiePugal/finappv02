@@ -49,10 +49,10 @@ export const tokens = {
 export function Card({ children, style = {}, noPad }) {
   return (
     <div style={{
-      background: tokens.surface, borderRadius: 12,
+      background: tokens.surface, borderRadius: 16,
       border: `1px solid ${tokens.border}`,
-      boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-      padding: noPad ? 0 : '20px 24px', ...style,
+      boxShadow: '0 1px 2px rgba(0,0,0,0.03), 0 4px 14px rgba(0,0,0,0.035)',
+      padding: noPad ? 0 : '20px 24px', transition: 'box-shadow 0.2s ease', ...style,
     }}>{children}</div>
   );
 }
@@ -62,11 +62,12 @@ export function StatCard({ label, value, sub, icon: Icon, accent = tokens.blue, 
   const trendUp = trend > 0;
   const neutral = trend === 0 || trend === undefined;
   return (
-    <Card style={{ padding: '18px 20px' }}>
+    <Card style={{ padding: '18px 20px 20px', position: 'relative', overflow: 'hidden' }}>
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: accent, opacity: 0.8 }} />
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <p style={{ margin: '0 0 8px', fontSize: 11, fontWeight: 700, color: tokens.textSub, textTransform: 'uppercase', letterSpacing: '0.07em' }}>{label}</p>
-          <p style={{ margin: 0, fontSize: 22, fontWeight: 700, color: tokens.text, letterSpacing: '-0.3px', lineHeight: 1.1 }}>{value}</p>
+          <p style={{ margin: 0, fontSize: 23, fontWeight: 800, color: tokens.text, letterSpacing: '-0.4px', lineHeight: 1.1 }}>{value}</p>
           {sub && <p style={{ margin: '5px 0 0', fontSize: 12, color: tokens.textMuted }}>{sub}</p>}
           {trendLabel && (
             <div style={{ marginTop: 7, display: 'inline-flex', alignItems: 'center', gap: 3, padding: '2px 7px', borderRadius: 20, background: neutral ? tokens.slateLight : trendUp ? tokens.greenLight : tokens.redLight, color: neutral ? tokens.textSub : trendUp ? tokens.green : tokens.red }}>
@@ -76,7 +77,7 @@ export function StatCard({ label, value, sub, icon: Icon, accent = tokens.blue, 
           )}
         </div>
         {Icon && (
-          <div style={{ width: 38, height: 38, borderRadius: 10, background: `${accent}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginLeft: 10 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 12, background: `${accent}12`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginLeft: 10 }}>
             <Icon size={17} color={accent} strokeWidth={2.2} />
           </div>
         )}

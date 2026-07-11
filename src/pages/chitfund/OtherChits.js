@@ -33,6 +33,7 @@ import {
   addMonthsToYM
 } from '../../utils/cf_engine';
 import { tokens, Card, SectionHeader } from '../../components/chitfund/UI';
+import { printJoinedChitDocument } from '../../utils/cf_pdfReport';
 import { PageLoader } from '../../components/Skeleton';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -344,6 +345,10 @@ function JoinedChitCard({ chit, payments, onEdit, onDelete, onAddPayment, onTogg
           </div>
           <div style={{ display:'flex', gap:6, flexShrink:0 }}>
             <IBtn icon={Edit2} onClick={onEdit} title="Edit"/>
+            <button onClick={() => printJoinedChitDocument(chit, payments)} title="Export PDF — full document"
+              style={{ width:30, height:30, borderRadius:8, border:`1px solid ${tokens.border}`, background:'#fff', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:13 }}>
+              🖨
+            </button>
             <IBtn icon={Trash2} onClick={onDelete} title="Delete" danger/>
             <button onClick={() => setExpanded(e => !e)}
               style={{ width:30, height:30, borderRadius:8, border:`1px solid ${tokens.border}`, background:'#fff', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>

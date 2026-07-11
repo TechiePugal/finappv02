@@ -11,6 +11,7 @@ import {
   createPerson, updatePerson, getPersons, deletePerson, getPersonChitHistory,
 } from '../../utils/cf_firestore';
 import { savePersonProof, getPersonProof } from '../../utils/personFiles';
+import { printMemberHistory } from '../../utils/cf_pdfReport';
 import { uploadDocumentFile } from '../../utils/fileStore';
 import { Card, PageHeader, Button, FormField, Input, Textarea, Modal } from '../../components/chitfund/UI';
 import toast from 'react-hot-toast';
@@ -182,7 +183,10 @@ function MemberReportModal({ person, onClose }) {
 
   return (
     <Modal open onClose={onClose} title={`${person.name} — Full Chit History`} width={720}
-      footer={<Button full onClick={onClose}>Close</Button>}>
+      footer={<div style={{ display:'flex', gap:10, width:'100%' }}>
+        <Button variant="secondary" onClick={onClose} style={{ flex:1, justifyContent:'center' }}>Close</Button>
+        <Button onClick={() => printMemberHistory(person, rows || [])} disabled={!rows} style={{ flex:1, justifyContent:'center' }}>🖨 Export PDF</Button>
+      </div>}>
       {rows === null ? (
         <div style={{ padding: 30, textAlign: 'center', color: tokens.textSub }}>Loading history…</div>
       ) : (

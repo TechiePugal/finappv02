@@ -6,10 +6,12 @@ import {uploadDocumentFile,openDocument} from '../../utils/fileStore';
 import {saveBorrowerDocs,getBorrowerDocs} from '../../utils/borrowerFiles';
 import toast from 'react-hot-toast';
 import {Button,FormField,Input,Select,Card,PageHeader,SectionHeader,InfoRow,Divider,formatCurrency} from '../../components/finledger/UI';
+import {useAuth} from '../../contexts/AuthContext';
 
 function genId(){return 'LOAN-'+Date.now().toString(36).toUpperCase();}
 
 export default function BorrowerForm(){
+  const {user}=useAuth();
   const{id}=useParams();const nav=useNavigate();const isEdit=!!id;
   const[photoPreview,setPhotoPreview]=useState(null);
   const[form,setForm]=useState({photo:null,
@@ -88,6 +90,7 @@ export default function BorrowerForm(){
       if(isEdit){await updateDoc(doc(db,'borrower_master',id),data);}
       else{
         data.createdAt=serverTimestamp();
+        data.createdBy=user?.uid||null;
         const ref=await addDoc(collection(db,'borrower_master'),data);
         bid=ref.id;
         // Milestone: Loan Created — notable lifecycle event for Journal
@@ -96,7 +99,7 @@ export default function BorrowerForm(){
           description:`Loan created — ${form.borrowerName} · ${form.loanId||''}`.trim(),
           amount:parseFloat(form.loanAmount)||0, date:form.loanStartDate||new Date().toISOString().split('T')[0],
           borrowerName:form.borrowerName, borrowerId:bid, loanId:form.loanId||bid,
-          createdAt:serverTimestamp()
+          createdAt:serverTimestamp(), createdBy:user?.uid||null
         });
       }
       await saveBorrowerDocs(bid,{check:cu,bond:bu,agreement:au,land:lu});

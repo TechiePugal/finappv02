@@ -18,6 +18,7 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, Edit2, Trash2, X, AlertTriangle, Search, Eye, Building2, Users, ChevronRight } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { getChits, createChit, updateChit, deleteChit, addMember, getDashboardData, getPersons } from '../../utils/cf_firestore';
+import { printChitListSummary } from '../../utils/cf_pdfReport';
 import { calcPerHeadValue, calcPhases, getExpectedPayable } from '../../utils/cf_engine';
 import { formatCurrency } from '../../utils/cf_format';
 import { PageLoader } from '../../components/Skeleton';
@@ -335,10 +336,16 @@ export default function ChitList() {
             <h1 style={{ margin:0, fontSize:28, fontWeight:700, color:T.text, letterSpacing:'-.5px' }}>Chit Funds</h1>
             <p style={{ margin:'4px 0 0', fontSize:14, color:T.text4 }}>Manage your formed chit funds</p>
           </div>
-          <button onClick={openCreate}
-            style={{ display:'flex', alignItems:'center', gap:7, padding:'11px 20px', borderRadius:12, border:'none', background:T.accent, color:'#fff', fontSize:14.5, fontWeight:600, cursor:'pointer', fontFamily:'inherit', boxShadow:`0 4px 14px ${T.accent}40` }}>
-            <Plus size={16}/> New Chit Fund
-          </button>
+          <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+            <button onClick={()=>printChitListSummary(chits)}
+              style={{ display:'flex', alignItems:'center', gap:7, padding:'11px 18px', borderRadius:12, border:`1px solid ${T.border}`, background:T.surface, color:T.text, fontSize:14, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>
+              🖨 Export PDF
+            </button>
+            <button onClick={openCreate}
+              style={{ display:'flex', alignItems:'center', gap:7, padding:'11px 20px', borderRadius:12, border:'none', background:T.accent, color:'#fff', fontSize:14.5, fontWeight:600, cursor:'pointer', fontFamily:'inherit', boxShadow:`0 4px 14px ${T.accent}40` }}>
+              <Plus size={16}/> New Chit Fund
+            </button>
+          </div>
         </div>
 
         {/* Stats row */}

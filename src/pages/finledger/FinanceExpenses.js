@@ -3,6 +3,7 @@ import {collection,onSnapshot,addDoc,updateDoc,deleteDoc,doc,serverTimestamp,que
 import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
 import {PageHeader,Card,StatCard,Button,Modal,FormField,Input,Select,SectionHeader,Badge,FilterTabs,SearchBar,formatCurrency,Divider} from '../../components/finledger/UI';
+import {useAuth} from '../../contexts/AuthContext';
 import {PageLoader} from '../../components/Skeleton';
 
 const EXPENSE_CATS=[
@@ -20,6 +21,7 @@ function today(){return new Date().toISOString().split('T')[0];}
 function fmt(v){return new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(v||0);}
 
 export default function FinanceExpenses(){
+  const {user}=useAuth();
   const[expenses,setExpenses]=useState([]);
   const[loading,setLoading]=useState(true);
   const[modal,setModal]=useState(null);// null | 'add' | expense-obj (edit)
@@ -55,10 +57,11 @@ export default function FinanceExpenses(){
       };
       if(modal==='add'){
         data.createdAt=serverTimestamp();
+        data.createdBy=user?.uid||null;
         const r=await addDoc(collection(db,'finance_expenses'),data);
         await addDoc(collection(db,'finance_ledger_entries'),{
           type:'Debit',category:'Finance Expense',description:`${data.displayName}${form.vendor?' — '+form.vendor:''}`,
-          amount:data.amount,paymentMode:data.mode,date:data.date,expenseId:r.id,createdAt:serverTimestamp()
+          amount:data.amount,paymentMode:data.mode,date:data.date,expenseId:r.id,createdAt:serverTimestamp(),createdBy:user?.uid||null
         });
         toast.success('Expense added!');
       } else {

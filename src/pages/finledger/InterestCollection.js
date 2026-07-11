@@ -4,6 +4,7 @@ import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
 import {printCollectInterestSummary} from '../../utils/pdfReport';
 import {PageHeader,Badge,Button,Card,StatCard,Modal,formatCurrency,SectionHeader,Divider} from '../../components/finledger/UI';
+import {useAuth} from '../../contexts/AuthContext';
 import {PageLoader} from '../../components/Skeleton';
 
 // All months from startDate to now
@@ -26,6 +27,7 @@ function getDaysOverdue(monthStr){
 }
 
 export default function InterestCollection(){
+  const {user}=useAuth();
   const[borrowers,setBorrowers]=useState([]);
   const[payments,setPayments]=useState({});
   const[repayments,setRepayments]=useState({});
@@ -120,7 +122,7 @@ export default function InterestCollection(){
 
       let payId=existing?.id;
       if(existing){await updateDoc(doc(db,'borrower_interest_payments',existing.id),data);}
-      else{data.createdAt=serverTimestamp();const r=await addDoc(collection(db,'borrower_interest_payments'),data);payId=r.id;}
+      else{data.createdAt=serverTimestamp();data.createdBy=user?.uid||null;const r=await addDoc(collection(db,'borrower_interest_payments'),data);payId=r.id;}
 
       if(collected){
         // Ledger entry
@@ -129,7 +131,7 @@ export default function InterestCollection(){
           description:`Interest${isPartial?' (partial)':''} from ${modal.borrowerName} — ${month}${fine>0?` + Fine ₹${fine}`:''}`,
           amount:totalCollected,paymentMode:pf.mode,date:pf.date,
           borrowerName:modal.borrowerName,borrowerId:modal.id,
-          linkedPaymentId:payId,createdAt:serverTimestamp()
+          linkedPaymentId:payId,createdAt:serverTimestamp(),createdBy:user?.uid||null
         };
         if(existing?.ledgerEntryId){await updateDoc(doc(db,'finance_ledger_entries',existing.ledgerEntryId),{...lData,createdAt:undefined,updatedAt:serverTimestamp()});}
         else await addDoc(collection(db,'finance_ledger_entries'),lData);

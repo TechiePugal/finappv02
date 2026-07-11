@@ -9,6 +9,8 @@ import { uploadDocumentFile } from '../../utils/fileStore';
 import toast from 'react-hot-toast';
 import {printEMILoansSummary, printEMILoanReport} from '../../utils/pdfReport';
 import {saveEmiDocs, getEmiDocs} from '../../utils/emiFiles';
+import {useAuth} from '../../contexts/AuthContext';
+import {scopeToUser} from '../../utils/scopeHelper';
 import {
   PageHeader, Card, StatCard, Button, Modal, FormField, Input, Select,
   SectionHeader, Badge, FilterTabs, SearchBar, formatCurrency, Divider
@@ -378,6 +380,7 @@ function LoanForm({ form, setForm, photoPreview, onPhotoChange, onPhotoRemove, d
 
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function EMILoans() {
+  const {user} = useAuth();
   const [loans, setLoans] = useState([]);
   const [collections, setCollections] = useState({});
   const [loading, setLoading] = useState(true);
@@ -406,10 +409,10 @@ export default function EMILoans() {
 
   useEffect(() => {
     const l = onSnapshot(query(collection(db, 'emi_loans'), orderBy('createdAt', 'desc')),
-      snap => { setLoans(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setLoading(false); });
+      snap => { setLoans(scopeToUser(snap.docs.map(d => ({ id: d.id, ...d.data() })), user?.uid)); setLoading(false); });
     const c = onSnapshot(collection(db, 'emi_collections'), snap => {
       const cm = {};
-      snap.docs.forEach(d => { const x = { id: d.id, ...d.data() }; if (!cm[x.loanId]) cm[x.loanId] = []; cm[x.loanId].push(x); });
+      scopeToUser(snap.docs.map(d => ({ id: d.id, ...d.data() })), user?.uid).forEach(x => { if (!cm[x.loanId]) cm[x.loanId] = []; cm[x.loanId].push(x); });
       setCollections(cm);
     });
     return () => { l(); c(); };
@@ -494,6 +497,7 @@ export default function EMILoans() {
       } else {
         data.paidPeriods = 0;
         data.createdAt = serverTimestamp();
+        data.createdBy = user?.uid || null;
         const ref = await addDoc(collection(db, 'emi_loans'), data);
         savedLoanId = ref.id;
         // Milestone: EMI Loan Created — notable lifecycle event for Journal
@@ -502,7 +506,7 @@ export default function EMILoans() {
           description: `EMI loan created — ${form.borrowerName} · ${form.emiId||ref.id}`,
           amount: parseFloat(form.loanAmount) || 0, date: form.loanDate || new Date().toISOString().split('T')[0],
           borrowerName: form.borrowerName, loanId: ref.id, emiId: form.emiId || ref.id,
-          createdAt: serverTimestamp(),
+          createdAt: serverTimestamp(), createdBy: user?.uid || null,
         });
         toast.success('EMI Loan created!');
         setAddOpen(false);
@@ -646,7 +650,7 @@ export default function EMILoans() {
         type: 'Credit', category: 'EMI Collection',
         description: `EMI #${paidPeriods} from ${loan.borrowerName}${fine > 0 ? ` + Fine ${formatCurrency(fine)}` : ''}${isPartial?' (partial)':''}`,
         amount: totalCollected, paymentMode: cpf.mode, date: cpf.date,
-        borrowerName: loan.borrowerName, loanId: loan.id, createdAt: serverTimestamp(),
+        borrowerName: loan.borrowerName, loanId: loan.id, createdAt: serverTimestamp(), createdBy: user?.uid || null,
       });
 
       await addDoc(collection(db, 'emi_collections'), {
@@ -655,7 +659,7 @@ export default function EMILoans() {
         expectedEMI: loan.emiAmount, date: cpf.date, mode: cpf.mode,
         remarks: cpf.earlyClose ? ('Early closure settlement. '+cpf.remarks).trim() : cpf.remarks, periodNo: paidPeriods, earlyClosure: cpf.earlyClose || false, status: statusSel,
         dueDate: cpf.dueDate, daysOverdue: cpf.daysOverdue,
-        frequency: loan.frequency, ledgerEntryId: ledgerRef.id, createdAt: serverTimestamp(),
+        frequency: loan.frequency, ledgerEntryId: ledgerRef.id, createdAt: serverTimestamp(), createdBy: user?.uid || null,
       });
 
       const fullyPaid = cpf.earlyClose || paidPeriods >= loan.totalPeriods;
@@ -669,7 +673,7 @@ export default function EMILoans() {
           description: `EMI loan closed${cpf.earlyClose ? ' (early settlement)' : ''} — ${loan.borrowerName} · ${loan.emiId || loan.id}`,
           amount: loan.loanAmount || 0, date: cpf.date || new Date().toISOString().split('T')[0],
           borrowerName: loan.borrowerName, loanId: loan.id, emiId: loan.emiId || loan.id,
-          createdAt: serverTimestamp(),
+          createdAt: serverTimestamp(), createdBy: user?.uid || null,
         });
       }
 

@@ -4,6 +4,8 @@ import {db} from '../../firebase/config';
 import {AreaChart,Area,XAxis,YAxis,CartesianGrid,Tooltip,ResponsiveContainer,BarChart,Bar,Cell} from 'recharts';
 import {StatCard,Card,Badge,formatCurrency,Loader,SectionHeader,ProgressBar} from '../../components/finledger/UI';
 import { PageLoader } from '../../components/Skeleton';
+import {useAuth} from '../../contexts/AuthContext';
+import {scopeToUser} from '../../utils/scopeHelper';
 
 const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -16,6 +18,7 @@ function correctInterest(borrower, repsByBorrower){
 }
 
 export default function Dashboard(){
+  const {user}=useAuth();
   const [data,setData]=useState(null);
   const [loading,setLoading]=useState(true);
 
@@ -35,13 +38,15 @@ export default function Dashboard(){
         getDocs(collection(db,'emi_loans')),
       ]);
 
-      const deps = depSnap.docs.map(d=>({id:d.id,...d.data()}));
-      const bors = borSnap.docs.map(d=>({id:d.id,...d.data()}));
+      const deps = scopeToUser(depSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid);
+      const bors = scopeToUser(borSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid);
+      // Scoped, plain-object arrays for the collections still read as raw .docs elsewhere below
+      const payDocs = scopeToUser(paySnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid);
+      const setDocs = scopeToUser(setSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid);
 
       // Build repayment map
       const repsByBorrower = {};
-      repSnap.docs.forEach(d=>{
-        const r={id:d.id,...d.data()};
+      scopeToUser(repSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).forEach(r=>{
         if(r.deleted) return;
         if(!repsByBorrower[r.borrowerId]) repsByBorrower[r.borrowerId]=[];
         repsByBorrower[r.borrowerId].push(r);
@@ -66,15 +71,15 @@ export default function Dashboard(){
       const monthlyPay = activeDeps.reduce((s,d)=>s+((d.depositAmount||0)*(d.interestRate||0)/100),0); // monthly rate
 
       // Current month actuals
-      const curMonthCollected = paySnap.docs.filter(d=>['Paid','Partial'].includes(d.data().status)&&d.data().month===curMo).reduce((s,d)=>s+(d.data().amountPaid||0),0);
-      const curMonthSettled   = setSnap.docs.filter(d=>d.data().status==='Paid'||d.data().addedToDeposit).reduce((s,d)=>s+(d.data().addedToDeposit?(d.data().addedAmount||0):(d.data().amountPaid||0)),0);
+      const curMonthCollected = payDocs.filter(d=>['Paid','Partial'].includes(d.status)&&d.month===curMo).reduce((s,d)=>s+(d.amountPaid||0),0);
+      const curMonthSettled   = setDocs.filter(d=>d.status==='Paid'||d.addedToDeposit).reduce((s,d)=>s+(d.addedToDeposit?(d.addedAmount||0):(d.amountPaid||0)),0);
 
       const secVal = bors.reduce((s,b)=>s+(b.securityValue||0),0);
       // Genuinely overdue = Unpaid records from PREVIOUS months (not current month)
-      const overdue = paySnap.docs.filter(d=>d.data().status==='Unpaid'&&d.data().month&&d.data().month<curMo).reduce((s,d)=>s+(d.data().amountDue||0),0);
+      const overdue = payDocs.filter(d=>d.status==='Unpaid'&&d.month&&d.month<curMo).reduce((s,d)=>s+(d.amountDue||0),0);
       // Current month: only records explicitly saved this month
-      const curMonthPays = paySnap.docs.filter(d=>d.data().month===curMo);
-      const uncollectedThisMonth = curMonthPays.filter(d=>d.data().status==='Unpaid').reduce((s,d)=>s+(d.data().amountDue||0),0);
+      const curMonthPays = payDocs.filter(d=>d.month===curMo);
+      const uncollectedThisMonth = curMonthPays.filter(d=>d.status==='Unpaid').reduce((s,d)=>s+(d.amountDue||0),0);
 
       // 6-month chart data (use actual totals for current month)
       const chartData = Array.from({length:6},(_,i)=>{
@@ -88,7 +93,7 @@ export default function Dashboard(){
         };
       });
 
-      const emiLoans=emiSnap.docs.map(d=>({id:d.id,...d.data()}));
+      const emiLoans=scopeToUser(emiSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid);
       const activeEmi=emiLoans.filter(l=>l.status==='Active');
       const emiMonthlyTotal=activeEmi.reduce((s,l)=>s+(l.emiAmount||0),0);
       const emiProjData=Array.from({length:6},(_,i)=>{

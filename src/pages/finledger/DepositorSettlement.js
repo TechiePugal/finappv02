@@ -4,6 +4,7 @@ import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
 import {printSettleInterestSummary} from '../../utils/pdfReport';
 import {PageHeader,Card,Badge,Button,StatCard,Modal,SectionHeader,formatCurrency} from '../../components/finledger/UI';
+import {useAuth} from '../../contexts/AuthContext';
 import {PageLoader} from '../../components/Skeleton';
 
 function genSlots(startDate,tenureMonths){
@@ -40,6 +41,7 @@ function getDaysOverdue(dueDate){
 }
 
 export default function DepositorSettlement(){
+  const {user}=useAuth();
   const[depositors,setDepositors]=useState([]);
   const[payments,setPayments]=useState({});
   const[loading,setLoading]=useState(true);
@@ -119,7 +121,7 @@ export default function DepositorSettlement(){
 
       let payDocId=existing?.id;
       if(existing){await updateDoc(doc(db,'deposit_payments',existing.id),data);}
-      else{data.createdAt=serverTimestamp();const r=await addDoc(collection(db,'deposit_payments'),data);payDocId=r.id;}
+      else{data.createdAt=serverTimestamp();data.createdBy=user?.uid||null;const r=await addDoc(collection(db,'deposit_payments'),data);payDocId=r.id;}
 
       if(paid){
         const lData={
@@ -127,7 +129,7 @@ export default function DepositorSettlement(){
           description:`Interest payout to ${depositor.name} — ${slot.label}${fine>0?` + Fine ₹${fine}`:''}`,
           amount:totalPayout,paymentMode:pf.mode,date:pf.date,
           depositorName:depositor.name,depositId:depositor.id,
-          linkedDepositPaymentId:payDocId,createdAt:serverTimestamp()
+          linkedDepositPaymentId:payDocId,createdAt:serverTimestamp(),createdBy:user?.uid||null
         };
         if(existing?.ledgerEntryId){await updateDoc(doc(db,'finance_ledger_entries',existing.ledgerEntryId),{...lData,createdAt:undefined,updatedAt:serverTimestamp()});}
         else{await addDoc(collection(db,'finance_ledger_entries'),lData);}

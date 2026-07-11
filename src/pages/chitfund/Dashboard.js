@@ -44,7 +44,10 @@ export default function Dashboard() {
   const scheds  = data?.schedules || {};
   const active  = chits.filter(c => c.status === 'Active');
   const proj    = buildMonthProjection(chits, scheds);
-  const next1   = proj[0]?.total || 0; // formed-only (kept for existing stat cards)
+  // FIX: proj[0] is just the earliest month with ANY pending auction, not necessarily
+  // the actual current calendar month — find it explicitly so "This Month" is accurate.
+  const _curMoKey = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
+  const next1   = (proj.find(m=>m.key===_curMoKey)?.total) || 0; // formed-only (kept for existing stat cards)
   const next3   = proj.slice(0,3).reduce((s,m)=>s+m.total,0);
   const next6   = proj.slice(0,6).reduce((s,m)=>s+m.total,0);
   const totalExposure = chits.reduce((s,c)=>s+Math.max(0,(c.totalInvested||0)-(c.totalCommissionEarned||0)-(c.totalReceived||0)),0);
@@ -70,8 +73,15 @@ export default function Dashboard() {
   upcoming.sort((a,b) => a.daysAway - b.daysAway);
   const urgent = upcoming.filter(u => u.daysAway <= 1);
 
-  const chartData = proj.slice(0,8).map((m,i) => {
-    // Combined: add joined-chit subscription obligations for this month offset
+  // FIX: build 8 REAL calendar months starting from the actual current month, looking up
+  // each one's total from `proj` by key match. Previously this used proj.slice(0,8), which
+  // is just the earliest 8 months that happen to have ANY pending auction — if this month
+  // had none, the chart silently started from a future month and mislabeled it "Now".
+  const _today = new Date();
+  const chartData = Array.from({ length: 8 }, (_, i) => {
+    const d = new Date(_today.getFullYear(), _today.getMonth() + i, 1);
+    const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    const m = proj.find(p => p.key === k);
     const joinedThisMonth = joined.filter(j => j.myStatus !== 'Cashed').reduce((s,j) => {
       const pays = joinedPays[j.id] || [];
       const paidCount = pays.filter(p => p.status === 'Paid').length;
@@ -79,17 +89,33 @@ export default function Dashboard() {
       const stillOwesThisMonth = (paidCount + i) < (j.totalMembers||0);
       return s + (stillOwesThisMonth ? sub : 0);
     }, 0);
+    const formedTotal = m?.total || 0;
     return {
-      month: formatMonthYear(m.month),
-      formed: m.total,
+      month: formatMonthYear(d),
+      formed: formedTotal,
       joinedObligation: Math.round(joinedThisMonth),
-      required: m.total + Math.round(joinedThisMonth),
-      isNow: i===0,
+      required: formedTotal + Math.round(joinedThisMonth),
+      isNow: i===0, // now genuinely true — i=0 is always the real current month
     };
   });
 
   const formedValue   = chits.reduce((s,c)=>s+(c.totalChitValue||0),0);
   const formedComm    = chits.reduce((s,c)=>s+(c.totalCommissionEarned||0),0);
+
+  // ── P&L Analytics — real profit/loss, combined across formed + joined ──
+  // Formed: commission earned is pure profit (capital invested is recovered when taken, not a loss).
+  // Joined: for chits already won, realized P&L = prize received − total subscriptions paid.
+  const joinedRealized = joined.map(j => {
+    const pays = joinedPays[j.id] || [];
+    const totalPaid = pays.filter(p=>p.status==='Paid').reduce((s,p)=>s+(p.amount||0),0);
+    const totalReceived = pays.reduce((s,p)=>s+(p.iWon?(p.prizeReceived||0):0),0);
+    const hasWon = pays.some(p=>p.iWon);
+    return { chitName: j.companyName, hasWon, pl: hasWon ? (totalReceived-totalPaid) : null };
+  });
+  const joinedRealizedPL = joinedRealized.filter(r=>r.hasWon).reduce((s,r)=>s+r.pl,0);
+  const joinedWonCount = joinedRealized.filter(r=>r.hasWon).length;
+  const combinedNetPL = formedComm + joinedRealizedPL;
+
   const joinedActive  = joined.filter(j => j.status !== 'Completed' && j.status !== 'Closed');
   const joinedValue   = joined.reduce((s,j)=>s+(j.totalChitValue||0),0);
   const notTaken      = active.filter(c => c.companyTakenAuction === null || c.companyTakenAuction === undefined);
@@ -242,6 +268,27 @@ export default function Dashboard() {
           </div>
         </Card>
       )}
+
+      <Card style={{ marginBottom: 20 }}>
+        <SectionHeader title="P&amp;L Analytics" sub="Real profit and loss, combined across every chit you organise or have joined" />
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))', gap:14, marginTop:12 }}>
+          <div style={{ padding:'14px 16px', borderRadius:12, background:'rgba(52,199,89,0.06)', border:'1px solid rgba(52,199,89,0.15)' }}>
+            <div style={{ fontSize:11, color:tokens.textMuted, fontWeight:700, textTransform:'uppercase' }}>Formed — Commission Profit</div>
+            <div style={{ fontSize:19, fontWeight:900, color:tokens.green, marginTop:4 }}>+{fmt(formedComm)}</div>
+            <div style={{ fontSize:11, color:tokens.textSub, marginTop:2 }}>Capital invested is recovered when taken — not counted as a loss</div>
+          </div>
+          <div style={{ padding:'14px 16px', borderRadius:12, background: joinedRealizedPL>=0 ? 'rgba(52,199,89,0.06)' : 'rgba(255,59,48,0.06)', border:`1px solid ${joinedRealizedPL>=0?'rgba(52,199,89,0.15)':'rgba(255,59,48,0.15)'}` }}>
+            <div style={{ fontSize:11, color:tokens.textMuted, fontWeight:700, textTransform:'uppercase' }}>Joined — Realized P&amp;L</div>
+            <div style={{ fontSize:19, fontWeight:900, color: joinedRealizedPL>=0?tokens.green:tokens.red, marginTop:4 }}>{joinedRealizedPL>=0?'+':''}{fmt(joinedRealizedPL)}</div>
+            <div style={{ fontSize:11, color:tokens.textSub, marginTop:2 }}>{joinedWonCount} chit{joinedWonCount!==1?'s':''} already taken · prize received minus subscriptions paid</div>
+          </div>
+          <div style={{ padding:'14px 16px', borderRadius:12, background: combinedNetPL>=0 ? 'rgba(0,122,255,0.06)' : 'rgba(255,59,48,0.06)', border:`1px solid ${combinedNetPL>=0?'rgba(0,122,255,0.2)':'rgba(255,59,48,0.15)'}` }}>
+            <div style={{ fontSize:11, color:tokens.textMuted, fontWeight:700, textTransform:'uppercase' }}>Combined Net P&amp;L</div>
+            <div style={{ fontSize:19, fontWeight:900, color: combinedNetPL>=0?tokens.blue:tokens.red, marginTop:4 }}>{combinedNetPL>=0?'+':''}{fmt(combinedNetPL)}</div>
+            <div style={{ fontSize:11, color:tokens.textSub, marginTop:2 }}>Formed profit + joined realized P&amp;L</div>
+          </div>
+        </div>
+      </Card>
 
       <div className="cf-dash-main-aside">
         {/* Chart */}

@@ -6,8 +6,11 @@ import toast from 'react-hot-toast';
 import {PageHeader,Card,Badge,Button,StatCard,SearchBar,FilterTabs,formatCurrency} from '../../components/finledger/UI';
 import {printBorrowerReport, printBorrowersSummary} from '../../utils/pdfReport';
 import {PageLoader} from '../../components/Skeleton';
+import {useAuth} from '../../contexts/AuthContext';
+import {scopeToUser} from '../../utils/scopeHelper';
 
 export default function Borrowers(){
+  const {user}=useAuth();
   const[data,setData]=useState([]);
   const[reps,setReps]=useState({});
   const[loading,setLoading]=useState(true);
@@ -24,13 +27,12 @@ export default function Borrowers(){
   useEffect(()=>{
     const bUnsub=onSnapshot(
       query(collection(db,'borrower_master'),orderBy('createdAt','desc')),
-      snap=>{setData(snap.docs.map(d=>({id:d.id,...d.data()})));setLoading(false);},
+      snap=>{setData(scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid));setLoading(false);},
       ()=>{toast.error('Failed to load');setLoading(false);}
     );
     const rUnsub=onSnapshot(collection(db,'loan_repayments'),snap=>{
       const rm={};
-      snap.docs.forEach(d=>{
-        const r={id:d.id,...d.data()};
+      scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).forEach(r=>{
         if(r.deleted)return;
         if(!rm[r.borrowerId])rm[r.borrowerId]=[];
         rm[r.borrowerId].push(r);
@@ -39,7 +41,7 @@ export default function Borrowers(){
     });
     const iUnsub=onSnapshot(collection(db,'borrower_interest_payments'),snap=>{
       const im={};
-      snap.docs.forEach(d=>{const x={id:d.id,...d.data()};if(!im[x.borrowerId])im[x.borrowerId]=[];im[x.borrowerId].push(x);});
+      scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).forEach(x=>{if(!im[x.borrowerId])im[x.borrowerId]=[];im[x.borrowerId].push(x);});
       setIntPays(im);
     });
     return()=>{bUnsub();rUnsub();iUnsub();};
