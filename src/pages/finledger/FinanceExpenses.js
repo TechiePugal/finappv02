@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import {PageHeader,Card,StatCard,Button,Modal,FormField,Input,Select,SectionHeader,Badge,FilterTabs,SearchBar,formatCurrency,Divider} from '../../components/finledger/UI';
 import {useAuth} from '../../contexts/AuthContext';
 import {PageLoader} from '../../components/Skeleton';
+import {scopeToUser} from '../../utils/scopeHelper';
 
 const EXPENSE_CATS=[
   {label:'Utilities',items:['EB Bill / Electricity','Water Bill','Internet / Broadband','Phone / Mobile','Gas / LPG']},
@@ -34,7 +35,7 @@ export default function FinanceExpenses(){
 
   useEffect(()=>{
     const unsub=onSnapshot(query(collection(db,'finance_expenses'),orderBy('date','desc')),
-      snap=>{setExpenses(snap.docs.map(d=>({id:d.id,...d.data()})));setLoading(false);},
+      snap=>{setExpenses(scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid));setLoading(false);},
       ()=>{setLoading(false);}
     );
     return unsub;

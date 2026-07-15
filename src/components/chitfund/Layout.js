@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { logOut } from '../../firebase/config';
 import { useAuth } from '../../contexts/AuthContext';
+import { getCompanyProfile } from '../../utils/companyProfile';
 const ACCENT = '#007AFF';
 const NAV = [
   { group:'Overview', items:[
@@ -29,6 +30,8 @@ const NAV = [
 const MOB_MAIN = ['/cf', '/cf/chits', '/cf/calendar', '/cf/other-chits'];
 export default function CFLayout() {
   const { user } = useAuth();
+  const [companyName, setCompanyName] = useState('');
+  useEffect(() => { if (user?.uid) getCompanyProfile(user.uid).then(p => setCompanyName(p.chitFundCompanyName || '')); }, [user]);
   const nav = useNavigate(); const loc = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -48,7 +51,7 @@ export default function CFLayout() {
         <div style={{ padding:'16px 14px 12px', borderBottom:'1px solid rgba(0,0,0,0.05)' }}>
           <div style={{ display:'flex', alignItems:'center', gap:10 }}>
             <div style={{ width:36, height:36, borderRadius:11, background:ACCENT, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, boxShadow:'0 3px 12px rgba(0,122,255,0.25)' }}><svg width="19" height="19" viewBox="0 0 22 22" fill="none"><path d="M3 16L8 8l4 4 3-5 3 4" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/><circle cx="4" cy="11" r="2" fill="white" opacity=".85"/></svg></div>
-            <div><div style={{ fontSize:15.5, fontWeight:800, color:'#000', letterSpacing:'-0.03em', lineHeight:1 }}>ChitFlow</div><div style={{ fontSize:10.5, color:'#8E8E93', marginTop:2, fontWeight:500 }}>Fund Manager</div></div>
+            <div><div style={{ fontSize:15.5, fontWeight:800, color:'#000', letterSpacing:'-0.03em', lineHeight:1 }}>{companyName || 'ChitFlow'}</div><div style={{ fontSize:10.5, color:'#8E8E93', marginTop:2, fontWeight:500 }}>{companyName ? 'Chit Fund' : 'Fund Manager'}</div></div>
           </div>
         </div>
         <nav style={{ flex:1, padding:'6px 6px 4px', overflowY:'auto' }}>

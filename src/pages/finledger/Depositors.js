@@ -15,6 +15,8 @@ export default function Depositors(){
   const [loading,setLoading]=useState(true);
   const [search,setSearch]=useState('');
   const [filter,setFilter]=useState('All');
+  const [amtRange,setAmtRange]=useState('all');
+  const [sortBy,setSortBy]=useState('name');
   const [depPays,setDepPays]=useState({});
   const nav=useNavigate();
 
@@ -41,8 +43,15 @@ export default function Depositors(){
 
   const filtered=data.filter(d=>{
     const q=search.toLowerCase();
+    const amt=d.depositAmount||0;
+    let ma=true;
+    if(amtRange==='0-10000')ma=amt<=10000;else if(amtRange==='10000-50000')ma=amt>10000&&amt<=50000;else if(amtRange==='50000-100000')ma=amt>50000&&amt<=100000;else if(amtRange==='100000+')ma=amt>100000;
     return(!q||d.name?.toLowerCase().includes(q)||d.phone?.includes(q)||d.depositId?.toLowerCase().includes(q))
-      &&(filter==='All'||d.status===filter);
+      &&(filter==='All'||d.status===filter)&&ma;
+  }).sort((a,b)=>{
+    if(sortBy==='amount')return(b.depositAmount||0)-(a.depositAmount||0);
+    if(sortBy==='rate')return(b.interestRate||0)-(a.interestRate||0);
+    return String(a.name||'').localeCompare(String(b.name||''));
   });
   const active=data.filter(d=>d.status==='Active');
   const totalAmt=active.reduce((s,d)=>s+(d.depositAmount||0),0);
@@ -53,7 +62,7 @@ export default function Depositors(){
     <div className="page-enter">
       <PageHeader title="Depositors" subtitle="Manage investor deposits and interest liabilities"
         action={<div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-          <Button variant="secondary" onClick={()=>printDepositorsSummary(data)}>Export PDF</Button>
+          <Button variant="secondary" onClick={()=>printDepositorsSummary(filtered, depPays)}>Export PDF{filter!=='All'?` (${filter})`:''}</Button>
           <Button onClick={()=>nav('/fl/depositors/new')}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Depositor</Button>
         </div>}/>
 
@@ -70,6 +79,8 @@ export default function Depositors(){
         <div style={{padding:'16px 18px 12px',display:'flex',gap:12,flexWrap:'wrap',alignItems:'center'}}>
           <SearchBar value={search} onChange={setSearch} placeholder="Search by name, phone, ID…"/>
           <FilterTabs options={['All','Active','Closed']} value={filter} onChange={setFilter}/>
+          <select value={amtRange} onChange={e=>setAmtRange(e.target.value)} style={{padding:'7px 10px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:9,fontSize:12.5,color:'var(--text-primary)',outline:'none',fontFamily:'inherit',cursor:'pointer'}}><option value="all">All Amounts</option><option value="0-10000">₹0 – ₹10K</option><option value="10000-50000">₹10K – ₹50K</option><option value="50000-100000">₹50K – ₹1L</option><option value="100000+">₹1L+</option></select>
+          <select value={sortBy} onChange={e=>setSortBy(e.target.value)} style={{padding:'7px 10px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:9,fontSize:12.5,color:'var(--text-primary)',outline:'none',fontFamily:'inherit',cursor:'pointer'}}><option value="name">Sort: Name A–Z</option><option value="amount">Sort: Highest Deposit First</option><option value="rate">Sort: Highest Rate First</option></select>
         </div>
         <div style={{overflowX:'auto'}}>
           <table style={{width:'100%',borderCollapse:'collapse',minWidth:700}}>

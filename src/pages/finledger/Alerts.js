@@ -4,6 +4,8 @@ import {db} from '../../firebase/config';
 import {PageHeader,Card,Badge,Button,formatCurrency,FilterTabs,SearchBar,Modal,InfoRow} from '../../components/finledger/UI';
 import {printAlertsReport} from '../../utils/pdfReport';
 import {PageLoader} from '../../components/Skeleton';
+import {useAuth} from '../../contexts/AuthContext';
+import {scopeToUser} from '../../utils/scopeHelper';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -24,6 +26,7 @@ function fmtDate(d){
 }
 
 export default function Alerts(){
+  const {user}=useAuth();
   const[borrowers,setBorrowers]=useState([]);
   const[repayments,setRepayments]=useState({});
   const[interests,setInterests]=useState({});
@@ -36,12 +39,11 @@ export default function Alerts(){
   useEffect(()=>{
     const b=onSnapshot(
       query(collection(db,'borrower_master'),orderBy('createdAt','desc')),
-      snap=>{setBorrowers(snap.docs.map(d=>({id:d.id,...d.data()})));setLoading(false);}
+      snap=>{setBorrowers(scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid));setLoading(false);}
     );
     const r=onSnapshot(collection(db,'loan_repayments'),snap=>{
       const rm={};
-      snap.docs.forEach(d=>{
-        const x={id:d.id,...d.data()};
+      scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).forEach(x=>{
         if(x.deleted)return;
         if(!rm[x.borrowerId])rm[x.borrowerId]=[];
         rm[x.borrowerId].push(x);
@@ -51,10 +53,9 @@ export default function Alerts(){
     const i=onSnapshot(collection(db,'borrower_interest_payments'),snap=>{
       // Key: borrowerId_YYYY-MM → payment record
       const im={};
-      snap.docs.forEach(d=>{
-        const x=d.data();
+      scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).forEach(x=>{
         const key=`${x.borrowerId}_${x.month}`;
-        im[key]={id:d.id,...x};
+        im[key]=x;
       });
       setInterests(im);
     });

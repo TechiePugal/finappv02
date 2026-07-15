@@ -3,6 +3,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { getAllClients, getAllInvestors, getAllPayments, getLedger, getProjects,
   updateClient, cancelBooking, addInvestor, updateInvestor, deleteInvestor } from '../../utils/re_firestore';
 import { fmt, fmtDate, today, INV_TYPES, PAY_MODES } from '../../utils/re_helpers';
+import { printLedgerReport } from '../../utils/re_pdfReport';
 import { Card, StatCard, Table, Badge, Button, IconBtn, Modal, FormField, Input, Select, Textarea, Grid, Alert, Confirm, PageHeader, SectionHeader, FilterTabs, SearchBar, InfoRow, T, ProgressBar, Loader, SiteTile, Tabs, UploadZone, Divider, KPIRow, ActionMenu, Empty, Btn, Inp, Sel, Ta, Fld, SHead } from '../../components/realestate/UI';
 import { Users, UserCheck, BookOpen, Wallet, DollarSign, TrendingUp, Plus, Edit, Trash2, XCircle } from 'lucide-react';
 
@@ -285,7 +286,8 @@ export function LedgerPage() {
 
   return (
     <>
-      <PageHeader title="Finance Ledger" subtitle="Auto-posted accounting entries"/>
+      <PageHeader title="Finance Ledger" subtitle="Auto-posted accounting entries"
+        action={<Button variant="secondary" onClick={()=>printLedgerReport(filtered, projMap, `Filter: ${filter==="all"?"All Types":filter}${projFilter!=="all"?" · "+(projMap[projFilter]||""):""}`)}>🖨 Export PDF</Button>}/>
       <div className="page fade-in">
         <div className="stats-g" style={{marginBottom:16}}>
           <StatCard label="Total Expenditure" value={entries.reduce((s,e)=>s+(e.debit||0),0)} isCurrency icon={TrendingUp} accent="#ff3b30"/>

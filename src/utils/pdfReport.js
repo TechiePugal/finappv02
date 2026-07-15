@@ -591,29 +591,45 @@ export function printEMIAlertsReport(list, filterLabel, collections){
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── DEPOSITORS SUMMARY ──────────────────────────────────────────────────────
-export function printDepositorsSummary(depositors){
+export function printDepositorsSummary(depositors, depPaysMap){
   const list = (depositors||[]).slice().sort((a,b)=>(b.depositAmount||0)-(a.depositAmount||0));
   const active = list.filter(d=>d.status==='Active');
-  const totalDeposited = active.reduce((s,d)=>s+(d.depositAmount||0),0);
+  const totalDeposited = list.reduce((s,d)=>s+(d.depositAmount||0),0); // Total Current Deposit — ALL listed depositors, not just active
   const totalMonthlyInterest = active.reduce((s,d)=>s+((d.depositAmount||0)*(d.interestRate||0)/100),0);
+
+  // Per-depositor: total interest accrued from start to today, how much of that has been
+  // settled/paid, and what remains — the 3-column breakdown requested.
+  const enriched = list.map(d=>{
+    const pays = (depPaysMap && depPaysMap[d.id]) || [];
+    const start = d.startDate ? new Date(d.startDate) : null;
+    const elapsedMonths = start ? Math.max(0, (new Date().getFullYear()-start.getFullYear())*12 + (new Date().getMonth()-start.getMonth())) : 0;
+    const totalInterestToDate = (d.depositAmount||0) * (d.interestRate||0)/100 * elapsedMonths;
+    const paidAmount = pays.reduce((s,p)=> s + (p.status==='Paid'||p.addedToDeposit ? (p.addedToDeposit?(p.addedAmount||0):(p.totalPayout||p.amountPaid||0)) : 0), 0);
+    const balanceInterest = Math.max(0, totalInterestToDate - paidAmount);
+    return { ...d, totalInterestToDate, paidAmount, balanceInterest };
+  });
+  const grandTotalInterest = enriched.reduce((s,d)=>s+d.totalInterestToDate,0);
+  const grandTotalPaid = enriched.reduce((s,d)=>s+d.paidAmount,0);
+  const grandTotalBalance = enriched.reduce((s,d)=>s+d.balanceInterest,0);
 
   const body = `
     <div class="header">
-      <div><div class="logo">EC Fin 360 · Depositors Summary</div><div class="meta" style="text-align:left;margin-top:4px;">All depositor records with principal, rate and status</div></div>
+      <div><div class="logo">EC Fin 360 · Depositors Summary</div><div class="meta" style="text-align:left;margin-top:4px;">All depositor records — principal, interest to date, settled and balance</div></div>
       <div class="meta">Generated: ${now()}</div>
     </div>
     <div class="kpi-grid">
       <div class="kpi"><div class="kpi-val">${list.length}</div><div class="kpi-lbl">Total Depositors</div></div>
-      <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${active.length}</div><div class="kpi-lbl">Active</div></div>
-      <div class="kpi" style="border-left-color:#0ea5e9;"><div class="kpi-val" style="color:#0369a1;">${INR(totalDeposited)}</div><div class="kpi-lbl">Total Deposited (Active)</div></div>
-      <div class="kpi" style="border-left-color:#8b5cf6;"><div class="kpi-val" style="color:#7c3aed;">${INR(totalMonthlyInterest)}</div><div class="kpi-lbl">Monthly Interest Payable</div></div>
+      <div class="kpi" style="border-left-color:#0ea5e9;"><div class="kpi-val" style="color:#0369a1;">${INR(totalDeposited)}</div><div class="kpi-lbl">Total Current Deposit</div></div>
+      <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${INR(grandTotalPaid)}</div><div class="kpi-lbl">Interest Paid (All Depositors)</div></div>
+      <div class="kpi" style="border-left-color:#f59e0b;"><div class="kpi-val" style="color:#b45309;">${INR(grandTotalBalance)}</div><div class="kpi-lbl">Interest Balance Due</div></div>
     </div>
     <h2>Depositor Records</h2>
+    <p class="section-note">"Total Interest" is accrued from the deposit's start date up to today at its monthly rate. "Paid" is interest actually settled (or added back to principal). "Balance" is what's still owed.</p>
     <table>
-      <thead><tr><th>Name</th><th>Phone</th><th>Deposit ID</th><th class="text-right">Amount</th><th class="text-right">Rate</th><th>Type</th><th>Status</th></tr></thead>
+      <thead><tr><th>Name</th><th>Phone</th><th>Deposit ID</th><th class="text-right">Principal</th><th class="text-right">Rate</th><th class="text-right">Total Interest</th><th class="text-right">Paid</th><th class="text-right">Balance</th><th>Status</th></tr></thead>
       <tbody>
-        ${list.map(d=>`<tr><td>${d.name||'—'}</td><td>${d.phone||'—'}</td><td>${d.depositId||'—'}</td><td class="text-right">${INR(d.depositAmount||0)}</td><td class="text-right">${d.interestRate||0}%/mo</td><td>${d.compounding?'Compound':'Simple'}</td><td><span class="badge ${d.status==='Active'?'badge-green':'badge-gray'}">${d.status||'—'}</span></td></tr>`).join('')}
-        <tr class="total-row"><td colspan="3">TOTAL (Active)</td><td class="text-right">${INR(totalDeposited)}</td><td colspan="3"></td></tr>
+        ${enriched.map(d=>`<tr><td>${d.name||'—'}</td><td>${d.phone||'—'}</td><td>${d.depositId||'—'}</td><td class="text-right">${INR(d.depositAmount||0)}</td><td class="text-right">${d.interestRate||0}%/mo</td><td class="text-right">${INR(d.totalInterestToDate)}</td><td class="text-right text-green">${INR(d.paidAmount)}</td><td class="text-right ${d.balanceInterest>0?'text-red':'text-green'}">${INR(d.balanceInterest)}</td><td><span class="badge ${d.status==='Active'?'badge-green':'badge-gray'}">${d.status||'—'}</span></td></tr>`).join('')}
+        <tr class="total-row"><td colspan="3">TOTAL</td><td class="text-right">${INR(totalDeposited)}</td><td></td><td class="text-right">${INR(grandTotalInterest)}</td><td class="text-right">${INR(grandTotalPaid)}</td><td class="text-right">${INR(grandTotalBalance)}</td><td></td></tr>
       </tbody>
     </table>
     <div class="footer"><span>EC Fin 360 Finance Ledger</span><span>Depositors Summary Report</span></div>
@@ -853,7 +869,14 @@ export function printEMILoanReport(loan, sched){
   const paidRows = rows.filter(r=>r.status==='Paid');
   const totalCollected = paidRows.reduce((s,r)=>s+(r.col?.totalCollected||r.col?.amount||0),0);
   const totalFine = rows.reduce((s,r)=>s+(r.col?.fine||0),0);
-  const outstanding = Math.max(0, (loan.loanAmount||0) - paidRows.reduce((s,r)=>s+((loan.loanAmount||0)/(loan.totalPeriods||1)),0));
+  // BUG FIX: this used to compute outstanding purely from periods-paid arithmetic
+  // (loanAmount − paidCount × principal-per-period), which is wrong for a loan that
+  // was CLOSED EARLY — an early closure settles the full remaining principal in one
+  // lump sum, without necessarily recording every individual EMI period as 'Paid'.
+  // A loan whose status is 'Closed' is, by definition, fully settled — ₹0 outstanding —
+  // regardless of how many of the 10 scheduled periods show as paid in the schedule.
+  const outstanding = loan.status==='Closed' ? 0
+    : Math.max(0, (loan.loanAmount||0) - paidRows.reduce((s,r)=>s+((loan.loanAmount||0)/(loan.totalPeriods||1)),0));
   const overdueCount = rows.filter(r=>r.status==='Overdue').length;
   const badgeSt = s => {
     if(s==='Active')return'<span class="badge badge-green">Active</span>';

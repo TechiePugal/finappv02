@@ -9,6 +9,7 @@ import { uploadDocumentFile } from '../../utils/fileStore';
 import toast from 'react-hot-toast';
 import {printEMILoansSummary, printEMILoanReport} from '../../utils/pdfReport';
 import {saveEmiDocs, getEmiDocs} from '../../utils/emiFiles';
+import {logStatusChange} from '../../utils/statusHistory';
 import {useAuth} from '../../contexts/AuthContext';
 import {scopeToUser} from '../../utils/scopeHelper';
 import {
@@ -390,6 +391,7 @@ export default function EMILoans() {
   const [editLoan, setEditLoan] = useState(null);
   const [collectLoan, setCollectLoan] = useState(null);
   const [expandedLoan, setExpandedLoan] = useState(null);
+  const [windowStarts, setWindowStarts] = useState({}); // per-loan sliding-window offset for schedule cards
   const [docFiles, setDocFiles] = useState({});
   const [existingDocs, setExistingDocs] = useState({});
   const [histLoan, setHistLoan] = useState(null);
@@ -637,9 +639,11 @@ export default function EMILoans() {
         const updatedCols = cols.map(x => x.id === cpf.editingId ? { ...x, status: statusSel } : x);
         const recount = updatedCols.filter(x => x.status === 'Paid').length;
         const fullyPaidEdit = recount >= loan.totalPeriods;
+        const newEditStatus = fullyPaidEdit ? 'Closed' : 'Active';
         await updateDoc(doc(db, 'emi_loans', loan.id), {
-          paidPeriods: recount, status: fullyPaidEdit ? 'Closed' : 'Active', updatedAt: serverTimestamp(),
+          paidPeriods: recount, status: newEditStatus, updatedAt: serverTimestamp(),
         });
+        if (loan.status !== newEditStatus) await logStatusChange('emi_loan', loan.id, loan.status, newEditStatus, user?.uid);
         toast.success(isUnpaid ? `↩ EMI #${effectivePeriodNo} reverted to unpaid.` : `✓ EMI #${effectivePeriodNo} updated to ${statusSel}.`);
         setCollectLoan(null);
         setSaving(false);
@@ -663,9 +667,11 @@ export default function EMILoans() {
       });
 
       const fullyPaid = cpf.earlyClose || paidPeriods >= loan.totalPeriods;
+      const newStatus2 = fullyPaid ? 'Closed' : 'Active';
       await updateDoc(doc(db, 'emi_loans', loan.id), {
-        paidPeriods: cpf.earlyClose ? loan.totalPeriods : paidPeriods, status: fullyPaid ? 'Closed' : 'Active', closedEarly: cpf.earlyClose || false, updatedAt: serverTimestamp(),
+        paidPeriods: cpf.earlyClose ? loan.totalPeriods : paidPeriods, status: newStatus2, closedEarly: cpf.earlyClose || false, updatedAt: serverTimestamp(),
       });
+      if (loan.status !== newStatus2) await logStatusChange('emi_loan', loan.id, loan.status, newStatus2, user?.uid);
       if (fullyPaid) {
         // Milestone: EMI Loan Closed — notable lifecycle event for Journal
         await addDoc(collection(db, 'finance_ledger_entries'), {
@@ -908,27 +914,44 @@ export default function EMILoans() {
                                   <div style={{ fontSize: 15, fontWeight: 700, color: '#34c759' }}>{formatCurrency(Math.round(paidAmt))}</div>
                                 </div>
                               </div>
-                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(140px,1fr))', gap: 8 }}>
-                                {sched.map((slot, i) => {
-                                  const isPaid = slot.status === 'Paid';
-                                  const isPartial = slot.status === 'Partial';
-                                  const isOverdue = slot.status === 'Overdue';
-                                  const isNext = i === paid && !isPaid;
-                                  const label = new Date(slot.dueDate).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
-                                  const bg = isPaid ? 'rgba(52,199,89,0.04)' : isPartial ? 'rgba(88,86,214,0.05)' : isOverdue ? 'rgba(255,59,48,0.04)' : isNext ? 'rgba(0,122,255,0.04)' : '#fff';
-                                  const border = isPaid ? 'rgba(52,199,89,0.25)' : isPartial ? 'rgba(88,86,214,0.25)' : isOverdue ? 'rgba(255,59,48,0.25)' : isNext ? 'rgba(0,122,255,0.3)' : 'rgba(0,0,0,0.07)';
-                                  const textCol = isPaid ? '#1a7a34' : isPartial ? '#5856d6' : isOverdue ? '#c0392b' : isNext ? '#007aff' : 'var(--text-primary)';
-                                  return (
-                                    <div key={i} onClick={() => handleScheduleSelect(l, i)}
-                                      style={{ padding: '10px 12px', borderRadius: 10, border: `1px solid ${border}`, background: bg, cursor: 'pointer' }}>
-                                      <div style={{ fontSize: 12, fontWeight: 600, color: textCol, marginBottom: 4 }}>{label}</div>
-                                      <div style={{ fontSize: 13, fontWeight: 700, color: isPaid ? '#34c759' : isPartial ? '#5856d6' : isOverdue ? '#ff3b30' : 'var(--text-secondary)' }}>
-                                        {isPaid ? formatCurrency(slot.col.totalCollected || slot.col.amount) : isPartial ? `${formatCurrency(slot.col.amount)} (partial)` : isOverdue ? `${slot.overdue}d overdue` : 'Pending'}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
+                              {(() => {
+                                const WIN = 5;
+                                const defaultStart = Math.max(0, paid - 2);
+                                const winStart = Math.min(Math.max(0, sched.length - WIN), windowStarts[l.id] ?? defaultStart);
+                                const visible = sched.slice(winStart, winStart + WIN);
+                                const canPrev = winStart > 0;
+                                const canNext = winStart + WIN < sched.length;
+                                return (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                  <button onClick={() => setWindowStarts(w => ({ ...w, [l.id]: Math.max(0, winStart - 1) }))} disabled={!canPrev}
+                                    style={{ width: 32, height: 32, flexShrink: 0, borderRadius: 8, border: '1px solid rgba(0,0,0,0.1)', background: canPrev ? '#fff' : '#f5f5f5', color: canPrev ? 'var(--text-primary)' : 'var(--text-tertiary)', cursor: canPrev ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>‹</button>
+                                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 8, flex: 1 }}>
+                                    {visible.map((slot, vi) => {
+                                      const i = winStart + vi;
+                                      const isPaid = slot.status === 'Paid';
+                                      const isPartial = slot.status === 'Partial';
+                                      const isOverdue = slot.status === 'Overdue';
+                                      const isNext = i === paid && !isPaid;
+                                      const label = new Date(slot.dueDate).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+                                      const bg = isPaid ? 'rgba(52,199,89,0.04)' : isPartial ? 'rgba(88,86,214,0.05)' : isOverdue ? 'rgba(255,59,48,0.04)' : isNext ? 'rgba(0,122,255,0.04)' : '#fff';
+                                      const border = isPaid ? 'rgba(52,199,89,0.25)' : isPartial ? 'rgba(88,86,214,0.25)' : isOverdue ? 'rgba(255,59,48,0.25)' : isNext ? 'rgba(0,122,255,0.3)' : 'rgba(0,0,0,0.07)';
+                                      const textCol = isPaid ? '#1a7a34' : isPartial ? '#5856d6' : isOverdue ? '#c0392b' : isNext ? '#007aff' : 'var(--text-primary)';
+                                      return (
+                                        <div key={i} onClick={() => handleScheduleSelect(l, i)}
+                                          style={{ padding: '10px 12px', borderRadius: 10, border: `1px solid ${border}`, background: bg, cursor: 'pointer' }}>
+                                          <div style={{ fontSize: 12, fontWeight: 600, color: textCol, marginBottom: 4 }}>{label}</div>
+                                          <div style={{ fontSize: 13, fontWeight: 700, color: isPaid ? '#34c759' : isPartial ? '#5856d6' : isOverdue ? '#ff3b30' : 'var(--text-secondary)' }}>
+                                            {isPaid ? formatCurrency(slot.col.totalCollected || slot.col.amount) : isPartial ? `${formatCurrency(slot.col.amount)} (partial)` : isOverdue ? `${slot.overdue}d overdue` : 'Pending'}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                  <button onClick={() => setWindowStarts(w => ({ ...w, [l.id]: Math.min(sched.length - WIN, winStart + 1) }))} disabled={!canNext}
+                                    style={{ width: 32, height: 32, flexShrink: 0, borderRadius: 8, border: '1px solid rgba(0,0,0,0.1)', background: canNext ? '#fff' : '#f5f5f5', color: canNext ? 'var(--text-primary)' : 'var(--text-tertiary)', cursor: canNext ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>›</button>
+                                </div>
+                                );
+                              })()}
                             </div>
                           </td>
                         </tr>

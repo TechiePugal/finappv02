@@ -6,6 +6,7 @@ import ProjectDetail from './ProjectDetail';
 import { ClientsPage, InvestorsPage, PaymentsPage, LedgerPage } from './OtherPages';
 import Reports from './Reports';
 import AccountSettings from '../AccountSettings';
+import Calculator from './Calculator';
 
 // Same structure as chitfund Layout.js
 export default function REApp() {
@@ -34,6 +35,7 @@ export default function REApp() {
     case 'payments':       content = <PaymentsPage />; break;
     case 'ledger':         content = <LedgerPage />; break;
     case 'reports':        content = <Reports />; break;
+    case 'calculator':     content = <Calculator />; break;
     case 'account':        content = <AccountSettings onBack={() => navigate('dashboard')} />; break;
     default:               content = <Dashboard onNav={navigate} />;
   }

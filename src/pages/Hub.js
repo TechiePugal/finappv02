@@ -6,7 +6,6 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis
 import { addHubNote, getHubNotes, dismissHubNote, deleteHubNote } from '../utils/hub_notes';
 import { getCompanyProfile, saveCompanyProfile } from '../utils/companyProfile';
 import toast from 'react-hot-toast';
-import Logo from '../assets/ECFin360Logo.png'
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 function fmtCr(v) {
@@ -393,8 +392,7 @@ export default function Hub({ onLaunch }) {
       <nav style={{ position:'sticky', top:0, zIndex:100, background:'rgba(255,255,255,.85)', backdropFilter:'blur(20px)', WebkitBackdropFilter:'blur(20px)', borderBottom:'1px solid rgba(0,0,0,.06)', padding:'0 24px', height:64, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
         {/* Logo */}
         <div style={{ display:'flex', alignItems:'center', gap:11 }}>
-          <img src={Logo}
-alt="EC Fin 360" style={{ width:38, height:38, borderRadius:10, boxShadow:'0 4px 12px rgba(0,0,0,.18)' }} />
+          <img src="/logo.png" alt="EC Fin 360" style={{ width:38, height:38, borderRadius:10, boxShadow:'0 4px 12px rgba(0,0,0,.18)' }} />
           <div>
             <span style={{ fontSize:17, fontWeight:900, color:'#111928', letterSpacing:'-.4px' }}>EC Fin 360</span>
             <span style={{ fontSize:11, color:'#9ca3af', marginLeft:8, fontWeight:500 }}>ERP</span>

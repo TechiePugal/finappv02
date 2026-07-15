@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { BarChart3, Zap, Shield } from 'lucide-react';
-import Logo from '../assets/ECFin360Logo.png';
 
 const ERR_MAP = {
   'auth/popup-closed-by-user':    '',
@@ -23,8 +22,7 @@ const GoogleIcon = () => (
 );
 
 const FinSuiteLogo = ({ size = 44 }) => (
-  <img src={Logo}
- alt="EC Fin 360" style={{ width: size, height: size, borderRadius: size * 0.27, objectFit: 'cover' }} />
+  <img src="/logo.png" alt="EC Fin 360" style={{ width: size, height: size, borderRadius: size * 0.27, objectFit: 'cover' }} />
 );
 
 export default function AuthPage() {

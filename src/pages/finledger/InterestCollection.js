@@ -2,6 +2,7 @@ import React,{useEffect,useState} from 'react';
 import {collection,onSnapshot,addDoc,serverTimestamp,doc,updateDoc} from 'firebase/firestore';
 import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
+import {scopeToUser} from '../../utils/scopeHelper';
 import {printCollectInterestSummary} from '../../utils/pdfReport';
 import {PageHeader,Badge,Button,Card,StatCard,Modal,formatCurrency,SectionHeader,Divider} from '../../components/finledger/UI';
 import {useAuth} from '../../contexts/AuthContext';
@@ -28,6 +29,7 @@ function getDaysOverdue(monthStr){
 
 export default function InterestCollection(){
   const {user}=useAuth();
+  const [windowStarts,setWindowStarts]=useState({}); // per-borrower sliding-window offset for the month cards
   const[borrowers,setBorrowers]=useState([]);
   const[payments,setPayments]=useState({});
   const[repayments,setRepayments]=useState({});
@@ -49,17 +51,17 @@ export default function InterestCollection(){
 
   useEffect(()=>{
     const b=onSnapshot(collection(db,'borrower_master'),snap=>{
-      setBorrowers(snap.docs.map(d=>({id:d.id,...d.data()})).filter(b=>b.status!=='Closed'));
+      setBorrowers(scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).filter(b=>b.status!=='Closed'));
       setLoading(false);
     },()=>{toast.error('Failed');setLoading(false);});
     const p=onSnapshot(collection(db,'borrower_interest_payments'),snap=>{
       const pm={};
-      snap.docs.forEach(d=>{const r=d.data();if(!pm[r.borrowerId])pm[r.borrowerId]={};pm[r.borrowerId][r.month]={id:d.id,...r};});
+      scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).forEach(r=>{if(!pm[r.borrowerId])pm[r.borrowerId]={};pm[r.borrowerId][r.month]=r;});
       setPayments(pm);
     });
     const r=onSnapshot(collection(db,'loan_repayments'),snap=>{
       const rm={};
-      snap.docs.forEach(d=>{const r=d.data();if(!r.deleted){if(!rm[r.borrowerId])rm[r.borrowerId]=[];rm[r.borrowerId].push(r);}});
+      scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).forEach(r=>{if(!r.deleted){if(!rm[r.borrowerId])rm[r.borrowerId]=[];rm[r.borrowerId].push(r);}});
       setRepayments(rm);
     });
     return()=>{b();p();r();};
@@ -198,7 +200,7 @@ export default function InterestCollection(){
             </div>
             <input type="month" value={month} onChange={e=>setMonth(e.target.value)}
               style={{padding:'8px 14px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:10,fontSize:14,color:'var(--text-primary)',outline:'none',fontFamily:'inherit'}}/>
-            <Button variant="secondary" onClick={()=>printCollectInterestSummary(borrowers, payments, month, getOutstanding, calcInterest)}>Export PDF</Button>
+            <Button variant="secondary" onClick={()=>printCollectInterestSummary(filtBorrowers, payments, month, getOutstanding, calcInterest)}>Export PDF</Button>
           </div>
         }/>
 
@@ -338,25 +340,39 @@ export default function InterestCollection(){
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6e6e73" strokeWidth="2" style={{transform:isOpen?'rotate(180deg)':'none',transition:'transform 0.2s'}}><polyline points="6 9 12 15 18 9"/></svg>
                     </div>
                   </div>
-                  {isOpen&&(
+                  {isOpen&&(()=>{
+                    const WIN=5;
+                    const defaultStart=Math.max(0,slots.length-WIN);
+                    const winStart=windowStarts[b.id]??defaultStart;
+                    const visible=slots.slice(winStart,winStart+WIN);
+                    const canPrev=winStart>0;
+                    const canNext=winStart+WIN<slots.length;
+                    return(
                     <div style={{borderTop:'1px solid rgba(0,0,0,0.07)',padding:14}}>
-                      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))',gap:8}}>
-                        {slots.map(mo=>{
-                          const p=payments[b.id]?.[mo];
-                          const isPaid=p?.status==='Paid';
-                          const label=new Date(mo+'-01').toLocaleDateString('en-IN',{month:'short',year:'numeric'});
-                          return(
-                            <div key={mo} onClick={()=>openModal(b,mo)} /* stays on History — no forced view switch */
-                              style={{padding:'10px 12px',borderRadius:10,border:`1px solid ${isPaid?'rgba(52,199,89,0.25)':mo===month?'rgba(0,122,255,0.3)':'rgba(0,0,0,0.07)'}`,background:isPaid?'rgba(52,199,89,0.04)':mo===month?'rgba(0,122,255,0.04)':'#fafafa',cursor:'pointer'}}>
-                              <div style={{fontSize:12,fontWeight:600,color:isPaid?'#1a7a34':mo===month?'#007aff':'var(--text-primary)',marginBottom:4}}>{label}</div>
-                              <div style={{fontSize:13,fontWeight:700,color:isPaid?'#34c759':'var(--text-secondary)'}}>{isPaid?formatCurrency(p.totalCollected||p.amountPaid):'Pending'}</div>
-                              {p?.addedToLoan&&<div style={{fontSize:10,color:'#5856d6',marginTop:2}}>Added to principal</div>}
-                            </div>
-                          );
-                        })}
+                      <div style={{display:'flex',alignItems:'center',gap:8}}>
+                        <button onClick={()=>setWindowStarts(w=>({...w,[b.id]:Math.max(0,winStart-1)}))} disabled={!canPrev}
+                          style={{width:32,height:32,flexShrink:0,borderRadius:8,border:'1px solid rgba(0,0,0,0.1)',background:canPrev?'#fff':'#f5f5f5',color:canPrev?'var(--text-primary)':'var(--text-tertiary)',cursor:canPrev?'pointer':'default',display:'flex',alignItems:'center',justifyContent:'center'}}>‹</button>
+                        <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:8,flex:1}}>
+                          {visible.map(mo=>{
+                            const p=payments[b.id]?.[mo];
+                            const isPaid=p?.status==='Paid';
+                            const label=new Date(mo+'-01').toLocaleDateString('en-IN',{month:'short',year:'numeric'});
+                            return(
+                              <div key={mo} onClick={()=>openModal(b,mo)}
+                                style={{padding:'10px 12px',borderRadius:10,border:`1px solid ${isPaid?'rgba(52,199,89,0.25)':mo===month?'rgba(0,122,255,0.3)':'rgba(0,0,0,0.07)'}`,background:isPaid?'rgba(52,199,89,0.04)':mo===month?'rgba(0,122,255,0.04)':'#fafafa',cursor:'pointer'}}>
+                                <div style={{fontSize:12,fontWeight:600,color:isPaid?'#1a7a34':mo===month?'#007aff':'var(--text-primary)',marginBottom:4}}>{label}</div>
+                                <div style={{fontSize:13,fontWeight:700,color:isPaid?'#34c759':'var(--text-secondary)'}}>{isPaid?formatCurrency(p.totalCollected||p.amountPaid):'Pending'}</div>
+                                {p?.addedToLoan&&<div style={{fontSize:10,color:'#5856d6',marginTop:2}}>Added to principal</div>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <button onClick={()=>setWindowStarts(w=>({...w,[b.id]:Math.min(slots.length-WIN,winStart+1)}))} disabled={!canNext}
+                          style={{width:32,height:32,flexShrink:0,borderRadius:8,border:'1px solid rgba(0,0,0,0.1)',background:canNext?'#fff':'#f5f5f5',color:canNext?'var(--text-primary)':'var(--text-tertiary)',cursor:canNext?'pointer':'default',display:'flex',alignItems:'center',justifyContent:'center'}}>›</button>
                       </div>
                     </div>
-                  )}
+                    );
+                  })()}
                 </div>
               );
             })}

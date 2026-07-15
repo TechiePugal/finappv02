@@ -4,10 +4,13 @@ import {db} from '../../firebase/config';
 import {PageHeader,Card,Badge,Button,StatCard,SearchBar,FilterTabs,formatCurrency} from '../../components/finledger/UI';
 import {PageLoader} from '../../components/Skeleton';
 import {printJournalReport} from '../../utils/pdfReport';
+import {useAuth} from '../../contexts/AuthContext';
+import {scopeToUser} from '../../utils/scopeHelper';
 
 const PRESETS=['This Month','Last Month','This Year','Custom'];
 
 export default function Journal(){
+  const {user}=useAuth();
   const[entries,setEntries]=useState([]);
   const[loading,setLoading]=useState(true);
   const[search,setSearch]=useState('');
@@ -19,11 +22,11 @@ export default function Journal(){
 
   useEffect(()=>{
     const u=onSnapshot(query(collection(db,'finance_ledger_entries'),orderBy('date','desc')),
-      s=>{setEntries(s.docs.map(d=>{
+      s=>{setEntries(scopeToUser(s.docs.map(d=>{
         const x=d.data();
         const time=x.createdAt?.seconds?new Date(x.createdAt.seconds*1000).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}):'';
         return {id:d.id,...x,time};
-      }));setLoading(false);},
+      }),user?.uid));setLoading(false);},
       ()=>setLoading(false));
     return()=>u();
   },[]);

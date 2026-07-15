@@ -3,6 +3,8 @@ import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { signOut } from 'firebase/auth';
 import { auth } from '../../firebase/config';
 import toast from 'react-hot-toast';
+import { useEffect, useState as useState2 } from 'react';
+import { getCompanyProfile } from '../../utils/companyProfile';
 
 const NAV_GROUPS = [
   { label:'Overview', items:[
@@ -55,6 +57,8 @@ const NAV_GROUPS = [
 ];
 
 export default function Layout({ user }) {
+  const [companyName, setCompanyName] = useState2('');
+  useEffect(() => { if (user?.uid) getCompanyProfile(user.uid).then(p => setCompanyName(p.financeCompanyName || '')); }, [user]);
   const navigate  = useNavigate();
   const location  = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -90,8 +94,8 @@ export default function Layout({ user }) {
             </svg>
           </div>
           <div>
-            <p style={{ fontSize:15, fontWeight:800, color:'var(--text-primary)', letterSpacing:'-0.02em', lineHeight:1 }}>FinLedger</p>
-            <p style={{ fontSize:10, color:'var(--text-secondary)', marginTop:2, fontWeight:500 }}>Finance Management</p>
+            <p style={{ fontSize:15, fontWeight:800, color:'var(--text-primary)', letterSpacing:'-0.02em', lineHeight:1 }}>{companyName || 'FinLedger'}</p>
+            <p style={{ fontSize:10, color:'var(--text-secondary)', marginTop:2, fontWeight:500 }}>{companyName ? 'Finance Ledger' : 'Finance Management'}</p>
           </div>
         </div>
       </div>

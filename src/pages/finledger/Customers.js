@@ -4,10 +4,13 @@ import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
 import {PageHeader,Card,Badge,Button,StatCard,SearchBar,FilterTabs,Modal,FormField,Input,Select,Textarea,formatCurrency} from '../../components/finledger/UI';
 import {PageLoader} from '../../components/Skeleton';
+import {useAuth} from '../../contexts/AuthContext';
+import {scopeToUser} from '../../utils/scopeHelper';
 
 const BLANK={name:'',phone:'',address:'',idNumber:'',dob:'',occupation:'',nomineeName:'',nomineePhone:'',status:'Active',notes:''};
 
 export default function Customers(){
+  const {user}=useAuth();
   const[customers,setCustomers]=useState([]);
   const[loans,setLoans]=useState([]);
   const[deposits,setDeposits]=useState([]);
@@ -22,11 +25,11 @@ export default function Customers(){
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
 
   useEffect(()=>{
-    const u=onSnapshot(query(collection(db,'customer_master'),orderBy('createdAt','desc')),s=>{setCustomers(s.docs.map(d=>({id:d.id,...d.data()})));setLoading(false);},()=>setLoading(false));
+    const u=onSnapshot(query(collection(db,'customer_master'),orderBy('createdAt','desc')),s=>{setCustomers(scopeToUser(s.docs.map(d=>({id:d.id,...d.data()})),user?.uid));setLoading(false);},()=>setLoading(false));
     Promise.all([getDocs(collection(db,'borrower_master')),getDocs(collection(db,'deposit_master')),getDocs(collection(db,'emi_loans'))]).then(([b,d,e])=>{
-      setLoans(b.docs.map(x=>({id:x.id,...x.data()})));
-      setDeposits(d.docs.map(x=>({id:x.id,...x.data()})));
-      setEmis(e.docs.map(x=>({id:x.id,...x.data()})));
+      setLoans(scopeToUser(b.docs.map(x=>({id:x.id,...x.data()})),user?.uid));
+      setDeposits(scopeToUser(d.docs.map(x=>({id:x.id,...x.data()})),user?.uid));
+      setEmis(scopeToUser(e.docs.map(x=>({id:x.id,...x.data()})),user?.uid));
     }).catch(()=>{});
     return()=>u();
   },[]);
@@ -42,7 +45,7 @@ export default function Customers(){
     setSaving(true);
     try{
       if(modal==='add'){
-        await addDoc(collection(db,'customer_master'),{...form,customerId:`CUST-${Date.now().toString(36).toUpperCase()}`,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+        await addDoc(collection(db,'customer_master'),{...form,customerId:`CUST-${Date.now().toString(36).toUpperCase()}`,createdBy:user?.uid||null,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
         toast.success('User enrolled!');
       }else{
         await updateDoc(doc(db,'customer_master',modal.id),{...form,updatedAt:serverTimestamp()});
@@ -56,12 +59,16 @@ export default function Customers(){
     setHistory({cust:c,loading:true,txns:[],lk:linked(c)});
     try{
       const lk=linked(c);
-      const [ip,lr,dp,ec]=await Promise.all([
+      const [ipRaw,lrRaw,dpRaw,ecRaw]=await Promise.all([
         getDocs(collection(db,'borrower_interest_payments')),
         getDocs(collection(db,'loan_repayments')),
         getDocs(collection(db,'deposit_payments')),
         getDocs(collection(db,'emi_collections')).catch(()=>({docs:[]})),
       ]);
+      const ip={docs:scopeToUser(ipRaw.docs.map(d=>({id:d.id,...d.data()})),user?.uid).map(x=>({data:()=>x}))};
+      const lr={docs:scopeToUser(lrRaw.docs.map(d=>({id:d.id,...d.data()})),user?.uid).map(x=>({data:()=>x}))};
+      const dp={docs:scopeToUser(dpRaw.docs.map(d=>({id:d.id,...d.data()})),user?.uid).map(x=>({data:()=>x}))};
+      const ec={docs:scopeToUser(ecRaw.docs.map(d=>({id:d.id,...d.data()})),user?.uid).map(x=>({data:()=>x}))};
       const lids=new Set(lk.loans.map(l=>l.id)),dids=new Set(lk.deposits.map(d=>d.id)),eids=new Set(lk.emis.map(e=>e.id));
       const T=[];
       lk.loans.forEach(l=>{if(l.loanStartDate)T.push({date:l.loanStartDate,label:`Loan created — ${l.loanId||l.id}`,amount:l.loanAmount||0,type:'loan',parentId:l.id});if(['Closed','Repaid','Paid Off'].includes(l.status))T.push({date:l.updatedAt?.seconds?new Date(l.updatedAt.seconds*1000).toISOString().split('T')[0]:'',label:`Loan closed — ${l.loanId||l.id}`,amount:0,type:'close',parentId:l.id});});

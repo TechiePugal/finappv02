@@ -4,6 +4,7 @@ import {collection,addDoc,doc,getDoc,updateDoc,serverTimestamp,getDocs} from 'fi
 import {db} from '../../firebase/config';
 import {uploadDocumentFile,openDocument} from '../../utils/fileStore';
 import {saveDepositorDocs,getDepositorDocs} from '../../utils/depositorFiles';
+import {logStatusChange} from '../../utils/statusHistory';
 import toast from 'react-hot-toast';
 import {Button,FormField,Input,Select,Card,PageHeader,Toggle,formatCurrency,SectionHeader,InfoRow,Divider} from '../../components/finledger/UI';
 import {useAuth} from '../../contexts/AuthContext';
@@ -122,6 +123,9 @@ export default function DepositorForm(){
       let depId=id;
       if(isEdit){
         await updateDoc(doc(db,'deposit_master',id),data);
+        if(origStatus && origStatus!==form.status){
+          await logStatusChange('deposit', id, origStatus, form.status, user?.uid);
+        }
         if(origStatus!=='Closed'&&form.status==='Closed'){
           // Milestone: Deposit Closed — notable lifecycle event for Journal
           await addDoc(collection(db,'finance_ledger_entries'),{

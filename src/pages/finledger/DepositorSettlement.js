@@ -3,6 +3,7 @@ import {collection,onSnapshot,addDoc,updateDoc,doc,serverTimestamp} from 'fireba
 import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
 import {printSettleInterestSummary} from '../../utils/pdfReport';
+import {scopeToUser} from '../../utils/scopeHelper';
 import {PageHeader,Card,Badge,Button,StatCard,Modal,SectionHeader,formatCurrency} from '../../components/finledger/UI';
 import {useAuth} from '../../contexts/AuthContext';
 import {PageLoader} from '../../components/Skeleton';
@@ -51,17 +52,19 @@ export default function DepositorSettlement(){
   const[saving,setSaving]=useState(false);
   const[search,setSearch]=useState('');
   const[amtRange,setAmtRange]=useState('all');
+  const[sortBy,setSortBy]=useState('name');
+  const[windowStarts,setWindowStarts]=useState({}); // per-depositor sliding-window offset for period cards
   const[month,setMonth]=useState(()=>{const n=new Date();return`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;});
   const DAILY_FINE=50;
 
   useEffect(()=>{
     const d=onSnapshot(collection(db,'deposit_master'),snap=>{
-      setDepositors(snap.docs.map(d=>({id:d.id,...d.data()})).filter(d=>d.status==='Active').sort((a,b)=>(b.createdAt?.toMillis?.()??0)-(a.createdAt?.toMillis?.()??0)));
+      setDepositors(scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).filter(d=>d.status==='Active').sort((a,b)=>(b.createdAt?.toMillis?.()??0)-(a.createdAt?.toMillis?.()??0)));
       setLoading(false);
     },()=>setLoading(false));
     const p=onSnapshot(collection(db,'deposit_payments'),snap=>{
       const pm={};
-      snap.docs.forEach(d=>{const r=d.data();const k=`${r.depositId}_${r.month}`;pm[k]={id:d.id,...r};});
+      scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).forEach(r=>{const k=`${r.depositId}_${r.month}`;pm[k]=r;});
       setPayments(pm);
     });
     return()=>{d();p();};
@@ -173,6 +176,10 @@ export default function DepositorSettlement(){
     else if(amtRange==='50000-100000')matchA=amt>50000&&amt<=100000;
     else if(amtRange==='100000+')matchA=amt>100000;
     return matchS&&matchA;
+  }).sort((a,b)=>{
+    if(sortBy==='amount')return(b.depositAmount||0)-(a.depositAmount||0);
+    if(sortBy==='rate')return(b.interestRate||0)-(a.interestRate||0);
+    return String(a.name||'').localeCompare(String(b.name||''));
   });
 
   if(loading)return<PageLoader stats={4}/>;
@@ -182,14 +189,9 @@ export default function DepositorSettlement(){
       <PageHeader title="Settle Interest" subtitle="Pay out interest to depositors or reinvest via compound"
         action={
           <div style={{display:'flex',gap:10,alignItems:'center'}}>
-            <input type="text" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name, phone, ID, guardian…"
-              style={{padding:'8px 14px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:10,fontSize:13,color:'var(--text-primary)',outline:'none',fontFamily:'inherit',width:200}}/>
-            <select value={amtRange} onChange={e=>setAmtRange(e.target.value)} style={{padding:'8px 12px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:10,fontSize:13,color:'var(--text-primary)',outline:'none',fontFamily:'inherit'}}>
-              <option value="all">All Amounts</option><option value="0-10000">₹0 – ₹10K</option><option value="10000-50000">₹10K – ₹50K</option><option value="50000-100000">₹50K – ₹1L</option><option value="100000+">₹1L+</option>
-            </select>
             <input type="month" value={month} onChange={e=>setMonth(e.target.value)}
               style={{padding:'8px 14px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:10,fontSize:14,color:'var(--text-primary)',outline:'none',fontFamily:'inherit'}}/>
-            <Button variant="secondary" onClick={()=>printSettleInterestSummary(depositors, payments, month)}>Export PDF</Button>
+            <Button variant="secondary" onClick={()=>printSettleInterestSummary(filtered, payments, month)}>Export PDF</Button>
           </div>
         }/>
 
@@ -199,6 +201,20 @@ export default function DepositorSettlement(){
         <StatCard label="This Month Settled" value={formatCurrency(Math.round(monthPaid))} sub="Already paid out" color="#34c759"/>
         <StatCard label="All Time Settled" value={formatCurrency(Math.round(totalPaid))} sub="Total interest paid" color="#007aff"/>
       </div>
+
+      {/* Search + filter bar — matches Depositors/Borrowers layout */}
+      <Card style={{marginBottom:20}}>
+        <div style={{display:'flex',gap:12,flexWrap:'wrap',alignItems:'center'}}>
+          <input type="text" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name, phone, ID, guardian…"
+            style={{flex:'1 1 220px',padding:'9px 14px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:9,fontSize:13,color:'var(--text-primary)',outline:'none',fontFamily:'inherit'}}/>
+          <select value={amtRange} onChange={e=>setAmtRange(e.target.value)} style={{padding:'9px 12px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:9,fontSize:12.5,color:'var(--text-primary)',outline:'none',fontFamily:'inherit',cursor:'pointer'}}>
+            <option value="all">All Amounts</option><option value="0-10000">₹0 – ₹10K</option><option value="10000-50000">₹10K – ₹50K</option><option value="50000-100000">₹50K – ₹1L</option><option value="100000+">₹1L+</option>
+          </select>
+          <select value={sortBy} onChange={e=>setSortBy(e.target.value)} style={{padding:'9px 12px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:9,fontSize:12.5,color:'var(--text-primary)',outline:'none',fontFamily:'inherit',cursor:'pointer'}}>
+            <option value="name">Sort: Name A–Z</option><option value="amount">Sort: Highest Deposit First</option><option value="rate">Sort: Highest Rate First</option>
+          </select>
+        </div>
+      </Card>
 
       {/* Depositor cards */}
       <div style={{display:'flex',flexDirection:'column',gap:14}}>
@@ -240,74 +256,52 @@ export default function DepositorSettlement(){
                 </div>
               </div>
 
-              {isOpen&&(
+              {isOpen&&(()=>{
+                const WIN=5;
+                const now=new Date();
+                const curMo=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+                const curIdx=slots.findIndex(s=>s.month===curMo);
+                const defaultStart=Math.max(0, (curIdx>=0?curIdx:slots.length-1) - 2);
+                const winStart=Math.min(Math.max(0,slots.length-WIN), windowStarts[dep.id]??defaultStart);
+                const visible=slots.slice(winStart,winStart+WIN);
+                const canPrev=winStart>0;
+                const canNext=winStart+WIN<slots.length;
+                return(
                 <div style={{borderTop:'1px solid rgba(0,0,0,0.07)',padding:'14px 20px'}}>
-                  {/* ±3 month window header */}
-                  {(() => {
-                    const now=new Date();
-                    const curMo=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
-                    const curIdx=slots.findIndex(s=>s.month===curMo);
-                    const wi=curIdx>=0?curIdx:Math.max(0,slots.findIndex(s=>s.month>curMo)-1);
-                    const windowSlots=slots.slice(Math.max(0,wi-3),Math.min(slots.length,wi+4));
-                    return(
-                      <>
-                      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,flexWrap:'wrap'}}>
-                        <span style={{fontSize:11,fontWeight:700,color:'var(--text-secondary)',textTransform:'uppercase',letterSpacing:'.05em'}}>Schedule Window</span>
-                        <span style={{fontSize:11,color:'var(--text-tertiary)'}}>prev 3 · current · next 3</span>
-                        {curIdx<0&&<span style={{fontSize:11,color:'#ff9500'}}>· outside active period</span>}
-                      </div>
-                      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(120px,1fr))',gap:8,marginBottom:14}}>
-                        {windowSlots.map(slot=>{
-                          const key=`${dep.id}_${slot.month}`;
-                          const p=payments[key];
-                          const isPaid=p?.status==='Paid';
-                          const isAdded=p?.addedToDeposit;
-                          const isCur=slot.month===curMo;
-                          const isFut=slot.isFuture;
-                          const dOD=isFut?0:getDaysOverdue(slot.dueDate);
-                          const bg=isPaid?'rgba(52,199,89,0.08)':isAdded?'rgba(88,86,214,0.08)':isFut?'rgba(0,0,0,0.02)':isCur?'rgba(0,122,255,0.08)':dOD>2?'rgba(255,59,48,0.06)':'rgba(0,0,0,0.02)';
-                          const border=isPaid?'1.5px solid rgba(52,199,89,0.3)':isAdded?'1.5px solid rgba(88,86,214,0.3)':isFut?'1px dashed rgba(0,0,0,0.12)':isCur?'2px solid rgba(0,122,255,0.4)':dOD>2?'1.5px solid rgba(255,59,48,0.25)':'1px solid rgba(0,0,0,0.08)';
-                          const col=isPaid?'#34c759':isAdded?'#5856d6':isFut?'var(--text-secondary)':isCur?'#007aff':dOD>2?'#ff3b30':'var(--text-primary)';
-                          return(
-                            <div key={slot.month} onClick={()=>openPay(dep,slot)} style={{padding:'10px 11px',borderRadius:10,border,background:bg,cursor:'pointer',position:'relative',opacity:isFut?0.7:1}}>
-                              {isCur&&<div style={{position:'absolute',top:-8,left:'50%',transform:'translateX(-50%)',background:'#007aff',color:'#fff',fontSize:8.5,fontWeight:800,padding:'2px 7px',borderRadius:99,whiteSpace:'nowrap'}}>CURRENT</div>}
-                              {isFut&&<div style={{position:'absolute',top:-8,left:'50%',transform:'translateX(-50%)',background:'rgba(0,0,0,0.3)',color:'#fff',fontSize:8.5,fontWeight:800,padding:'2px 7px',borderRadius:99,whiteSpace:'nowrap'}}>UPCOMING</div>}
-                              <div style={{fontSize:11,fontWeight:700,color:col,marginBottom:2}}>{slot.label}</div>
-                              <div style={{fontSize:13,fontWeight:800,color:col}}>{isPaid?formatCurrency(p.totalPayout||p.amountPaid):isAdded?'+ Principal':formatCurrency(Math.round(periodInt))}</div>
-                              {isPaid&&<div style={{fontSize:9.5,color:'#34c759',marginTop:2}}>✓ paid</div>}
-                              {isFut&&!isPaid&&<div style={{fontSize:9.5,color:'var(--text-secondary)',marginTop:2}}>advance allowed</div>}
-                              {!isFut&&!isPaid&&dOD>2&&!isAdded&&<div style={{fontSize:9.5,color:'#ff3b30',fontWeight:600,marginTop:2}}>{dOD}d late</div>}
-                            </div>
-                          );
-                        })}
-                      </div>
-                      <div style={{borderBottom:'1px solid rgba(0,0,0,0.07)',marginBottom:12}}><span style={{fontSize:11,color:'var(--text-secondary)',fontWeight:600}}>All {slots.length} periods</span></div>
-                      </>
-                    );
-                  })()}
-                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(155px,1fr))',gap:8}}>
-                    {slots.map(slot=>{
-                      const key=`${dep.id}_${slot.month}`;
-                      const p=payments[key];
-                      const isPaid=p?.status==='Paid';
-                      const daysOD=getDaysOverdue(slot.dueDate);
-                      const isAddedToDeposit=p?.addedToDeposit;
-                      return(
-                        <div key={slot.month} style={{padding:'12px',borderRadius:10,border:`1.5px solid ${isPaid?'rgba(52,199,89,0.3)':isAddedToDeposit?'rgba(88,86,214,0.3)':daysOD>2?'rgba(255,59,48,0.25)':'rgba(0,0,0,0.08)'}`,background:isPaid?'rgba(52,199,89,0.04)':isAddedToDeposit?'rgba(88,86,214,0.04)':'#fafafa',cursor:'pointer',transition:'all 0.15s'}}
-                          onClick={()=>openPay(dep,slot)}>
-                          <div style={{fontSize:12,fontWeight:600,color:isPaid?'#1a7a34':isAddedToDeposit?'#5856d6':'var(--text-primary)',marginBottom:3}}>{slot.label}</div>
-                          <div style={{fontSize:11,color:'var(--text-secondary)',marginBottom:4}}>Due: {slot.dueDate}</div>
-                          <div style={{fontSize:14,fontWeight:700,color:isPaid?'#34c759':isAddedToDeposit?'#5856d6':'#ff9500'}}>
-                            {isPaid?formatCurrency(p.totalPayout||p.amountPaid):isAddedToDeposit?'+ Principal':formatCurrency(Math.round(periodInt))}
+                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                    <button onClick={()=>setWindowStarts(w=>({...w,[dep.id]:Math.max(0,winStart-1)}))} disabled={!canPrev}
+                      style={{width:32,height:32,flexShrink:0,borderRadius:8,border:'1px solid rgba(0,0,0,0.1)',background:canPrev?'#fff':'#f5f5f5',color:canPrev?'var(--text-primary)':'var(--text-tertiary)',cursor:canPrev?'pointer':'default',display:'flex',alignItems:'center',justifyContent:'center'}}>‹</button>
+                    <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:8,flex:1}}>
+                      {visible.map(slot=>{
+                        const key=`${dep.id}_${slot.month}`;
+                        const p=payments[key];
+                        const isPaid=p?.status==='Paid';
+                        const isAdded=p?.addedToDeposit;
+                        const isCur=slot.month===curMo;
+                        const isFut=slot.isFuture;
+                        const dOD=isFut?0:getDaysOverdue(slot.dueDate);
+                        const bg=isPaid?'rgba(52,199,89,0.08)':isAdded?'rgba(88,86,214,0.08)':isFut?'rgba(0,0,0,0.02)':isCur?'rgba(0,122,255,0.08)':dOD>2?'rgba(255,59,48,0.06)':'rgba(0,0,0,0.02)';
+                        const border=isPaid?'1.5px solid rgba(52,199,89,0.3)':isAdded?'1.5px solid rgba(88,86,214,0.3)':isFut?'1px dashed rgba(0,0,0,0.12)':isCur?'2px solid rgba(0,122,255,0.4)':dOD>2?'1.5px solid rgba(255,59,48,0.25)':'1px solid rgba(0,0,0,0.08)';
+                        const col=isPaid?'#34c759':isAdded?'#5856d6':isFut?'var(--text-secondary)':isCur?'#007aff':dOD>2?'#ff3b30':'var(--text-primary)';
+                        return(
+                          <div key={slot.month} onClick={()=>openPay(dep,slot)} style={{padding:'10px 11px',borderRadius:10,border,background:bg,cursor:'pointer',position:'relative',opacity:isFut?0.7:1}}>
+                            {isCur&&<div style={{position:'absolute',top:-8,left:'50%',transform:'translateX(-50%)',background:'#007aff',color:'#fff',fontSize:8.5,fontWeight:800,padding:'2px 7px',borderRadius:99,whiteSpace:'nowrap'}}>CURRENT</div>}
+                            {isFut&&<div style={{position:'absolute',top:-8,left:'50%',transform:'translateX(-50%)',background:'rgba(0,0,0,0.3)',color:'#fff',fontSize:8.5,fontWeight:800,padding:'2px 7px',borderRadius:99,whiteSpace:'nowrap'}}>UPCOMING</div>}
+                            <div style={{fontSize:11,fontWeight:700,color:col,marginBottom:2}}>{slot.label}</div>
+                            <div style={{fontSize:13,fontWeight:800,color:col}}>{isPaid?formatCurrency(p.totalPayout||p.amountPaid):isAdded?'+ Principal':formatCurrency(Math.round(periodInt))}</div>
+                            {isPaid&&<div style={{fontSize:9.5,color:'#34c759',marginTop:2}}>✓ paid</div>}
+                            {isFut&&!isPaid&&<div style={{fontSize:9.5,color:'var(--text-secondary)',marginTop:2}}>advance allowed</div>}
+                            {!isFut&&!isPaid&&dOD>2&&!isAdded&&<div style={{fontSize:9.5,color:'#ff3b30',fontWeight:600,marginTop:2}}>{dOD}d late</div>}
                           </div>
-                          {daysOD>2&&!isPaid&&!isAddedToDeposit&&<div style={{fontSize:10,color:'#ff3b30',fontWeight:600,marginTop:2}}>{daysOD}d overdue</div>}
-                          {isPaid&&<div style={{fontSize:10,color:'#34c759',marginTop:2}}>✓ {p.paymentMode}</div>}
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+                    </div>
+                    <button onClick={()=>setWindowStarts(w=>({...w,[dep.id]:Math.min(slots.length-WIN,winStart+1)}))} disabled={!canNext}
+                      style={{width:32,height:32,flexShrink:0,borderRadius:8,border:'1px solid rgba(0,0,0,0.1)',background:canNext?'#fff':'#f5f5f5',color:canNext?'var(--text-primary)':'var(--text-tertiary)',cursor:canNext?'pointer':'default',display:'flex',alignItems:'center',justifyContent:'center'}}>›</button>
                   </div>
                 </div>
-              )}
+                );
+              })()}
             </Card>
           );
         })}

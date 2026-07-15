@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 import { db } from '../../firebase/config';
+import {useAuth} from '../../contexts/AuthContext';
+import {scopeToUser} from '../../utils/scopeHelper';
+import {getAllStatusHistory, getEffectiveStatus} from '../../utils/statusHistory';
 import { PageHeader, Card, Button, StatCard, SectionHeader, formatCurrency } from '../../components/finledger/UI';
 import { PageLoader } from '../../components/Skeleton';
 import { printOverallReport } from '../../utils/pdfReport';
@@ -44,7 +47,10 @@ function INR(v) { return '₹' + Math.abs(Number(v)||0).toLocaleString('en-IN', 
 function fmtDate(d) { if(!d)return'—'; try{ return new Date(d).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});}catch{return d;} }
 
 export default function Reports() {
+  const {user} = useAuth();
   const [borrowers,    setBorrowers]    = useState([]);
+  const [loanHistory,  setLoanHistory]  = useState({});
+  const [depHistory,   setDepHistory]   = useState({});
   const [depositors,   setDepositors]   = useState([]);
   const [repayments,   setRepayments]   = useState([]);
   const [intPayments,  setIntPayments]  = useState([]);
@@ -66,12 +72,15 @@ export default function Reports() {
   useEffect(() => {
     let done = 0;
     const setDone = () => { done++; if (done >= 6) setLoading(false); };
-    const u1 = onSnapshot(query(collection(db,'borrower_master'), orderBy('createdAt','desc')), s => { setBorrowers(s.docs.map(d=>({id:d.id,...d.data()}))); setDone(); });
-    const u2 = onSnapshot(collection(db,'deposit_master'), s => { setDepositors(s.docs.map(d=>({id:d.id,...d.data()}))); setDone(); });
-    const u3 = onSnapshot(collection(db,'loan_repayments'), s => { setRepayments(s.docs.map(d=>({id:d.id,...d.data()}))); setDone(); });
-    const u4 = onSnapshot(collection(db,'borrower_interest_payments'), s => { setIntPayments(s.docs.map(d=>({id:d.id,...d.data()}))); setDone(); });
-    const u5 = onSnapshot(collection(db,'finance_expenses'), s => { setExpenses(s.docs.map(d=>({id:d.id,...d.data()}))); setDone(); });
-    const u6 = onSnapshot(collection(db,'emi_collections'), s => { setEmiCols(s.docs.map(d=>({id:d.id,...d.data()}))); setDone(); });
+    const u1 = onSnapshot(query(collection(db,'borrower_master'), orderBy('createdAt','desc')), s => { setBorrowers(scopeToUser(s.docs.map(d=>({id:d.id,...d.data()})),user?.uid)); setDone(); });
+    const u2 = onSnapshot(collection(db,'deposit_master'), s => { setDepositors(scopeToUser(s.docs.map(d=>({id:d.id,...d.data()})),user?.uid)); setDone(); });
+    const u3 = onSnapshot(collection(db,'loan_repayments'), s => { setRepayments(scopeToUser(s.docs.map(d=>({id:d.id,...d.data()})),user?.uid)); setDone(); });
+    const u4 = onSnapshot(collection(db,'borrower_interest_payments'), s => { setIntPayments(scopeToUser(s.docs.map(d=>({id:d.id,...d.data()})),user?.uid)); setDone(); });
+    const u5 = onSnapshot(collection(db,'finance_expenses'), s => { setExpenses(scopeToUser(s.docs.map(d=>({id:d.id,...d.data()})),user?.uid)); setDone(); });
+    const u6 = onSnapshot(collection(db,'emi_collections'), s => { setEmiCols(scopeToUser(s.docs.map(d=>({id:d.id,...d.data()})),user?.uid)); setDone(); });
+    // Point-in-time status resolution — see utils/statusHistory.js for why this exists
+    getAllStatusHistory('loan').then(setLoanHistory);
+    getAllStatusHistory('deposit').then(setDepHistory);
     return () => { u1(); u2(); u3(); u4(); u5(); u6(); };
   }, []);
 
@@ -106,8 +115,14 @@ export default function Reports() {
   const periodActiveB = borrowers.filter(b => {
     const start = b.loanStartDate || b.agreementDate || '';
     if (start && start > toDate) return false; // loan started after period
-    if (_closedStatuses.includes(b.status)) {
-      // Find when it was closed via repayments: last repayment date
+    // Point-in-time status: what was this loan's status as of toDate, not its status TODAY?
+    // Falls back to the old repayment-date heuristic only if no audit history was ever logged
+    // for this record (e.g. it was closed before this feature existed).
+    const hist = loanHistory[b.id];
+    if (hist && hist.length) {
+      const effStatus = getEffectiveStatus(b.status, hist, toDate);
+      if (_closedStatuses.includes(effStatus)) return false;
+    } else if (_closedStatuses.includes(b.status)) {
       const bReps = repayments.filter(r => r.borrowerId === b.id && !r.deleted);
       const lastRep = bReps.reduce((mx,r) => r.date > mx ? r.date : mx, '');
       if (lastRep && lastRep < fromDate) return false; // closed before period started
@@ -115,11 +130,22 @@ export default function Reports() {
     return true;
   });
   const activeB = periodActiveB; // keep activeB name for rest of render
+  // Same point-in-time fix for depositors — "Active Depositors" used to always show
+  // TODAY's active depositors regardless of what period the report was for.
+  const periodActiveD = depositors.filter(d => {
+    const hist = depHistory[d.id];
+    if (hist && hist.length) {
+      const effStatus = getEffectiveStatus(d.status, hist, toDate);
+      return effStatus === 'Active';
+    }
+    return d.status === 'Active'; // no history logged — best available fallback
+  });
+
   const totalOutstanding = activeB.reduce((s,b) => {
     const paid = repayments.filter(r => r.borrowerId === b.id && !r.deleted && r.date <= toDate).reduce((a,r) => a + (r.repaidAmount||r.amount||0), 0);
     return s + Math.max(0, (b.loanAmount||0) - paid);
   }, 0);
-  const totalDeposits = depositors.filter(d => d.status === 'Active').reduce((s,d) => s + (d.depositAmount||0), 0);
+  const totalDeposits = periodActiveD.reduce((s,d) => s + (d.depositAmount||0), 0);
   const monthlyInterestIncome = activeB.reduce((s,b) => {
     const paid = repayments.filter(r => r.borrowerId === b.id && !r.deleted && r.date <= toDate).reduce((a,r) => a + (r.repaidAmount||r.amount||0), 0);
     const out = Math.max(0, (b.loanAmount||0) - paid);
@@ -320,7 +346,7 @@ export default function Reports() {
           </div>
 
           <div>
-            <h3 style={{ fontSize:13, fontWeight:700, color:'var(--text-primary)', marginBottom:10 }}>Active Depositors ({depositors.filter(d=>d.status==='Active').length})</h3>
+            <h3 style={{ fontSize:13, fontWeight:700, color:'var(--text-primary)', marginBottom:10 }}>Active Depositors ({periodActiveD.length})</h3>
             <div style={{ overflowX:'auto' }}>
               <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
                 <thead><tr style={{ background:'rgba(118,118,128,0.06)', borderBottom:'1px solid rgba(0,0,0,0.07)' }}>
@@ -329,7 +355,7 @@ export default function Reports() {
                   ))}
                 </tr></thead>
                 <tbody>
-                  {depositors.filter(d=>d.status==='Active').map(d => {
+                  {periodActiveD.map(d => {
                     const t = parseInt(d.interestTenure)||1;
                     const tl = t===1?'Monthly':t===3?'Quarterly':t===6?'Half-Yearly':t===12?'Yearly':`${t}mo`;
                     return (

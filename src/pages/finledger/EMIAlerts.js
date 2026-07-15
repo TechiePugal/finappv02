@@ -4,6 +4,8 @@ import {db} from '../../firebase/config';
 import {PageHeader,Card,Button,Badge,FilterTabs,SearchBar,formatCurrency,Modal} from '../../components/finledger/UI';
 import {printEMIAlertsReport} from '../../utils/pdfReport';
 import {PageLoader} from '../../components/Skeleton';
+import {useAuth} from '../../contexts/AuthContext';
+import {scopeToUser} from '../../utils/scopeHelper';
 
 // ── helpers ────────────────────────────────────────────────────────────────
 function todayStr(){return new Date().toISOString().split('T')[0];}
@@ -99,6 +101,7 @@ const AMT_RANGES=[
 ];
 
 export default function EMIAlerts(){
+  const {user}=useAuth();
   const[loans,setLoans]=useState([]);
   const[collections,setCollections]=useState({});
   const[loading,setLoading]=useState(true);
@@ -111,13 +114,12 @@ export default function EMIAlerts(){
   useEffect(()=>{
     const l=onSnapshot(
       query(collection(db,'emi_loans'),orderBy('createdAt','desc')),
-      snap=>{setLoans(snap.docs.map(d=>({id:d.id,...d.data()})));setLoading(false);},
+      snap=>{setLoans(scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid));setLoading(false);},
       ()=>setLoading(false)
     );
     const c=onSnapshot(collection(db,'emi_collections'),snap=>{
       const cm={};
-      snap.docs.forEach(d=>{
-        const x={id:d.id,...d.data()};
+      scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).forEach(x=>{
         if(!cm[x.loanId])cm[x.loanId]=[];
         cm[x.loanId].push(x);
       });

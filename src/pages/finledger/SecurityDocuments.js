@@ -8,8 +8,11 @@ import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
 import {PageHeader,Card,Badge,StatCard,SearchBar,FilterTabs,formatCurrency} from '../../components/finledger/UI';
 import { PageLoader } from '../../components/Skeleton';
+import {useAuth} from '../../contexts/AuthContext';
+import {scopeToUser} from '../../utils/scopeHelper';
 
 export default function SecurityDocuments(){
+  const {user}=useAuth();
   const [bors,setBors]=useState([]);
   const [borDocs,setBorDocs]=useState({});
   const [deps,setDeps]=useState([]);
@@ -28,9 +31,9 @@ export default function SecurityDocuments(){
         getDocs(query(collection(db,'deposit_master'),orderBy('createdAt','desc'))),
         getDocs(query(collection(db,'emi_loans'),orderBy('createdAt','desc'))),
       ]);
-      const borList=bs.docs.map(d=>({id:d.id,...d.data()}));
-      const depList=ds.docs.map(d=>({id:d.id,...d.data()}));
-      const emiList=es.docs.map(d=>({id:d.id,...d.data()}));
+      const borList=scopeToUser(bs.docs.map(d=>({id:d.id,...d.data()})),user?.uid);
+      const depList=scopeToUser(ds.docs.map(d=>({id:d.id,...d.data()})),user?.uid);
+      const emiList=scopeToUser(es.docs.map(d=>({id:d.id,...d.data()})),user?.uid);
       setBors(borList); setDeps(depList); setEmis(emiList);
       // Fetch actual file blobs — each record type has its own safe collection
       const [borPairs,depPairs,emiPairs]=await Promise.all([

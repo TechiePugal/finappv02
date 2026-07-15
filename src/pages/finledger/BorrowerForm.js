@@ -4,6 +4,7 @@ import {collection,addDoc,doc,getDoc,updateDoc,serverTimestamp,getDocs} from 'fi
 import {db} from '../../firebase/config';
 import {uploadDocumentFile,openDocument} from '../../utils/fileStore';
 import {saveBorrowerDocs,getBorrowerDocs} from '../../utils/borrowerFiles';
+import {logStatusChange} from '../../utils/statusHistory';
 import toast from 'react-hot-toast';
 import {Button,FormField,Input,Select,Card,PageHeader,SectionHeader,InfoRow,Divider,formatCurrency} from '../../components/finledger/UI';
 import {useAuth} from '../../contexts/AuthContext';
@@ -23,6 +24,7 @@ export default function BorrowerForm(){
   });
   const[files,setFiles]=useState({check:null,bond:null,agreement:null,land:null});
   const[existing,setExisting]=useState({});
+  const[origStatus,setOrigStatus]=useState(null);
   const[loading,setLoading]=useState(false);
 
   useEffect(()=>{if(isEdit)loadData();},[]);// eslint-disable-line
@@ -41,6 +43,7 @@ export default function BorrowerForm(){
         securityValue:d.securityValue||'', status:d.status||'Active', notes:d.notes||'',
         guardianName:d.guardianName||'', guardianPhone:d.guardianPhone||'', guardianAddress:d.guardianAddress||''
       });
+      setOrigStatus(d.status||'Active');
       const bd=await getBorrowerDocs(id);
       setExisting({check:bd.check||d.checkCopyUrl,bond:bd.bond||d.bondCopyUrl,agreement:bd.agreement||d.agreementCopyUrl,land:bd.land||d.landDocumentsUrl});
       if(d.photo){setPhotoPreview(d.photo);set('photo',d.photo);}
@@ -87,7 +90,12 @@ export default function BorrowerForm(){
         updatedAt:serverTimestamp()
       };
       let bid=id;
-      if(isEdit){await updateDoc(doc(db,'borrower_master',id),data);}
+      if(isEdit){
+        await updateDoc(doc(db,'borrower_master',id),data);
+        if(origStatus && origStatus!==data.status){
+          await logStatusChange('loan', id, origStatus, data.status, user?.uid);
+        }
+      }
       else{
         data.createdAt=serverTimestamp();
         data.createdBy=user?.uid||null;

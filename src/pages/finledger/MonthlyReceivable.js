@@ -5,6 +5,8 @@ import toast from 'react-hot-toast';
 import {PageHeader,Card,Badge,StatCard,ProgressBar,SectionHeader,formatCurrency,Loader} from '../../components/finledger/UI';
 import {BarChart,Bar,XAxis,YAxis,CartesianGrid,Tooltip,ResponsiveContainer,Cell,LineChart,Line,Legend} from 'recharts';
 import { PageLoader } from '../../components/Skeleton';
+import {useAuth} from '../../contexts/AuthContext';
+import {scopeToUser} from '../../utils/scopeHelper';
 
 // ─── BUG FIX: recalculate interest on outstanding balance, not stale monthlyInterest field ───
 function calcInterestOnOutstanding(borrower, repaymentsByBorrower) {
@@ -15,6 +17,7 @@ function calcInterestOnOutstanding(borrower, repaymentsByBorrower) {
 }
 
 export default function MonthlyReceivable() {
+  const {user}=useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [month, setMonth] = useState(() => {
@@ -37,12 +40,14 @@ export default function MonthlyReceivable() {
         getDocs(collection(db, 'loan_repayments')),
       ]);
 
-      const borrowers = bSnap.docs.map(d => ({id:d.id,...d.data()}));
-      const deposits  = dSnap.docs.map(d => ({id:d.id,...d.data()}));
+      const borrowers = scopeToUser(bSnap.docs.map(d => ({id:d.id,...d.data()})), user?.uid);
+      const deposits  = scopeToUser(dSnap.docs.map(d => ({id:d.id,...d.data()})), user?.uid);
+      const validBorrowerIds = new Set(borrowers.map(b=>b.id));
+      const validDepositIds = new Set(deposits.map(d=>d.id));
 
       // ─── BUG FIX: build repayment map BEFORE calculating interest ───
       const repsByBorrower = {};
-      repSnap.docs.forEach(d => {
+      repSnap.docs.filter(d=>validBorrowerIds.has(d.data().borrowerId)).forEach(d => {
         const r = {id:d.id,...d.data()};
         if(r.deleted) return;
         if(!repsByBorrower[r.borrowerId]) repsByBorrower[r.borrowerId] = [];
@@ -51,9 +56,9 @@ export default function MonthlyReceivable() {
 
       // Payments for THIS month
       const bpMap = {}; // borrowerId -> payment
-      bpSnap.docs.forEach(d => { bpMap[d.data().borrowerId] = {id:d.id,...d.data()}; });
+      bpSnap.docs.filter(d=>validBorrowerIds.has(d.data().borrowerId)).forEach(d => { bpMap[d.data().borrowerId] = {id:d.id,...d.data()}; });
       const dpMap = {}; // depositId -> payment
-      dpSnap.docs.forEach(d => { dpMap[d.data().depositId] = {id:d.id,...d.data()}; });
+      dpSnap.docs.filter(d=>validDepositIds.has(d.data().depositId)).forEach(d => { dpMap[d.data().depositId] = {id:d.id,...d.data()}; });
 
       const activeBorrowers = borrowers.filter(b => b.status === 'Active' || b.status === 'Non-Active');
       const activeDeposits  = deposits.filter(d => d.status === 'Active');
@@ -61,12 +66,12 @@ export default function MonthlyReceivable() {
       // ─── FIXED: use outstanding-based calculation ───
       const totalReceivable = activeBorrowers.reduce((s,b) => s + calcInterestOnOutstanding(b, repsByBorrower), 0);
       // ─── FIXED: collected = only what was actually paid this month, never more than due ───
-      const totalCollected  = bpSnap.docs
+      const totalCollected  = bpSnap.docs.filter(d=>validBorrowerIds.has(d.data().borrowerId))
         .filter(d => d.data().status === 'Paid')
         .reduce((s,d) => s + (d.data().amountPaid||0), 0);
 
       const totalPayable    = activeDeposits.reduce((s,d) => s + ((d.depositAmount||0)*(d.interestRate||0)/100), 0); // monthly basis
-      const totalPaidOut    = dpSnap.docs
+      const totalPaidOut    = dpSnap.docs.filter(d=>validDepositIds.has(d.data().depositId))
         .filter(d => d.data().status === 'Paid')
         .reduce((s,d) => s + (d.data().amountPaid||0), 0);
 
@@ -100,8 +105,8 @@ export default function MonthlyReceivable() {
         const mo = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
         const moSnap = await getDocs(query(collection(db,'borrower_interest_payments'), where('month','==',mo)));
         const moDepSnap = await getDocs(query(collection(db,'deposit_payments'), where('month','==',mo)));
-        const rec = moSnap.docs.filter(d=>d.data().status==='Paid').reduce((s,d)=>s+(d.data().amountPaid||0),0);
-        const pay = moDepSnap.docs.filter(d=>d.data().status==='Paid'||d.data().addedToDeposit).reduce((s,d)=>s+(d.data().addedToDeposit?(d.data().addedAmount||0):(d.data().amountPaid||0)),0);
+        const rec = moSnap.docs.filter(d=>validBorrowerIds.has(d.data().borrowerId)&&d.data().status==='Paid').reduce((s,d)=>s+(d.data().amountPaid||0),0);
+        const pay = moDepSnap.docs.filter(d=>validDepositIds.has(d.data().depositId)&&(d.data().status==='Paid'||d.data().addedToDeposit)).reduce((s,d)=>s+(d.data().addedToDeposit?(d.data().addedAmount||0):(d.data().amountPaid||0)),0);
         trend.push({ month: dt.toLocaleDateString('en-IN',{month:'short'}), receivable:Math.round(rec)||Math.round(totalReceivable*(0.7+Math.random()*0.5)), payable:Math.round(pay)||Math.round(totalPayable*(0.7+Math.random()*0.5)) });
       }
       trend[5] = { ...trend[5], receivable:Math.round(totalCollected)||Math.round(totalReceivable), payable:Math.round(totalPaidOut)||Math.round(totalPayable) };

@@ -54,12 +54,12 @@ import FLEMILoans from './pages/finledger/EMILoans';
 import FLEMIAlerts from './pages/finledger/EMIAlerts';
 import FLExpenses from './pages/finledger/FinanceExpenses';
 import FLReports from './pages/finledger/Reports';
-import Logo from './assets/ECFin360Logo.png'
+
 // Full-page branded loading screen shown on first load
 const AppLoadingScreen = () => (
   <div className="app-loading-overlay">
     <div className="app-loading-logo">
-      <img src={Logo} alt="EC Fin 360" style={{ width: 44, height: 44, borderRadius: 12 }} />
+      <img src="/logo.png" alt="EC Fin 360" style={{ width: 44, height: 44, borderRadius: 12 }} />
     </div>
     <div style={{ fontSize: 20, fontWeight: 800, color: '#0f172a', letterSpacing: '-0.4px' }}>EC Fin 360</div>
     <div className="app-loading-bar">

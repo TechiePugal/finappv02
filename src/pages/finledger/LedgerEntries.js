@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import {PageHeader,Card,StatCard,Button,SearchBar,FilterTabs,Modal,formatCurrency,formatDate,Loader,SectionHeader} from '../../components/finledger/UI';
 import {useAuth} from '../../contexts/AuthContext';
 import { PageLoader } from '../../components/Skeleton';
+import {scopeToUser} from '../../utils/scopeHelper';
 
 export default function LedgerEntries(){
   const {user}=useAuth();
@@ -38,7 +39,7 @@ export default function LedgerEntries(){
 
   useEffect(()=>{
     const unsub=onSnapshot(query(collection(db,'finance_ledger_entries'),orderBy('createdAt','desc')),
-      snap=>{setEntries(snap.docs.map(d=>({id:d.id,...d.data()})));setLoading(false);},
+      snap=>{setEntries(scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid));setLoading(false);},
       ()=>{toast.error('Failed to load');setLoading(false);}
     );
     return unsub;

@@ -3,6 +3,8 @@ import {collection,onSnapshot,addDoc,updateDoc,doc,query,orderBy,serverTimestamp
 import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
 import {printLoanRepaymentSummary} from '../../utils/pdfReport';
+import {scopeToUser} from '../../utils/scopeHelper';
+import {logStatusChange} from '../../utils/statusHistory';
 import {PageHeader,Card,Badge,Button,StatCard,Modal,SectionHeader,InfoRow,formatCurrency,Loader,Divider,FilterTabs,SearchBar} from '../../components/finledger/UI';
 import {useAuth} from '../../contexts/AuthContext';
 import {PageLoader} from '../../components/Skeleton';
@@ -27,13 +29,12 @@ export default function LoanRepayment(){
   useEffect(()=>{
     const bUnsub=onSnapshot(
       query(collection(db,'borrower_master'),orderBy('createdAt','desc')),
-      snap=>{setBorrowers(snap.docs.map(d=>({id:d.id,...d.data()})));setLoading(false);},
+      snap=>{setBorrowers(scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid));setLoading(false);},
       err=>{toast.error('Failed: '+err.message);setLoading(false);}
     );
     const rUnsub=onSnapshot(collection(db,'loan_repayments'),snap=>{
       const rm={};
-      snap.docs.forEach(d=>{
-        const r={id:d.id,...d.data()};
+      scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).forEach(r=>{
         if(!rm[r.borrowerId])rm[r.borrowerId]=[];
         if(!r.deleted)rm[r.borrowerId].push(r);
       });
@@ -90,6 +91,9 @@ export default function LoanRepayment(){
         ?{status:'Closed',closedAt:serverTimestamp(),outstandingBalance:0,updatedAt:serverTimestamp()}
         :{outstandingBalance:newBalance,updatedAt:serverTimestamp()};
       await updateDoc(doc(db,'borrower_master',modal.id),upd);
+      if(isFullClose){
+        await logStatusChange('loan', modal.id, modal.status||'Active', 'Closed', user?.uid);
+      }
 
       if(isFullClose){
         // Milestone: Loan Closed — notable lifecycle event for Journal
@@ -144,7 +148,7 @@ export default function LoanRepayment(){
   return(
     <div className="page-enter">
       <PageHeader title="Loan Repayment" subtitle="Track principal repayments and loan closures"
-        action={<Button variant="secondary" onClick={()=>printLoanRepaymentSummary(borrowers, getRepaid, getBalance)}>Export PDF</Button>}/>
+        action={<Button variant="secondary" onClick={()=>printLoanRepaymentSummary(filtered, getRepaid, getBalance)}>Export PDF</Button>}/>
 
       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>
         <StatCard label="Original Loans" value={formatCurrency(totalOriginal)} sub={`${allActive.length} active`} color="#007aff"/>
