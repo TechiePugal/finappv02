@@ -4,7 +4,7 @@ import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
 import {printSettleInterestSummary} from '../../utils/pdfReport';
 import {scopeToUser} from '../../utils/scopeHelper';
-import {PageHeader,Card,Badge,Button,StatCard,Modal,SectionHeader,formatCurrency} from '../../components/finledger/UI';
+import {PageHeader,Card,Badge,Button,StatCard,Modal,SectionHeader,formatCurrency,FormField,Input} from '../../components/finledger/UI';
 import {useAuth} from '../../contexts/AuthContext';
 import {PageLoader} from '../../components/Skeleton';
 
@@ -54,6 +54,9 @@ export default function DepositorSettlement(){
   const[amtRange,setAmtRange]=useState('all');
   const[sortBy,setSortBy]=useState('name');
   const[windowStarts,setWindowStarts]=useState({}); // per-depositor sliding-window offset for period cards
+  const[addModal,setAddModal]=useState(null); // depositor currently getting extra principal added
+  const[af,setAf]=useState({amount:'',date:'',remarks:''});
+  const[addSaving,setAddSaving]=useState(false);
   const[month,setMonth]=useState(()=>{const n=new Date();return`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;});
   const DAILY_FINE=50;
 
@@ -154,6 +157,36 @@ export default function DepositorSettlement(){
     }catch(e){toast.error('Failed: '+e.message);}finally{setSaving(false);}
   }
 
+  // ── Add extra principal to an existing deposit — own audit-trail record with date
+  // and note, plus a ledger entry, separate from regular interest settlements. ──
+  async function saveAddAmount(e){
+    if(e&&e.preventDefault) e.preventDefault();
+    if(!af.amount||parseFloat(af.amount)<=0)return toast.error('Enter a valid amount');
+    const extra=parseFloat(af.amount);
+    const prevAmount=addModal.depositAmount||0;
+    const newAmount=prevAmount+extra;
+    setAddSaving(true);
+    try{
+      await addDoc(collection(db,'deposit_additions'),{
+        depositorId:addModal.id, depositorName:addModal.name, depositId:addModal.depositId||addModal.id,
+        amount:extra, previousAmount:prevAmount, newAmount, date:af.date, remarks:af.remarks,
+        createdAt:serverTimestamp(), createdBy:user?.uid||null,
+      });
+      await addDoc(collection(db,'finance_ledger_entries'),{
+        type:'Debit', category:'Deposit Amount Increased',
+        description:`Additional ${formatCurrency(extra)} deposited by ${addModal.name} — ${formatCurrency(prevAmount)} → ${formatCurrency(newAmount)}${af.remarks?' · '+af.remarks:''}`,
+        amount:extra, date:af.date,
+        borrowerName:addModal.name, depositorId:addModal.id, depositId:addModal.depositId||addModal.id,
+        createdAt:serverTimestamp(), createdBy:user?.uid||null,
+      });
+      await updateDoc(doc(db,'deposit_master',addModal.id),{
+        depositAmount:newAmount, updatedAt:serverTimestamp(),
+      });
+      toast.success(`✓ ₹${extra.toLocaleString('en-IN')} added — new deposit total: ${formatCurrency(newAmount)}`);
+      setAddModal(null);
+    }catch(err){toast.error('Failed: '+err.message);}finally{setAddSaving(false);}
+  }
+
   const totalDue=depositors.reduce((s,d)=>s+Math.round(calcPeriodInt(d)),0);
   const totalPaid=depositors.reduce((s,d)=>{
     const slots=genSlots(d.startDate,d.interestTenure);
@@ -252,6 +285,8 @@ export default function DepositorSettlement(){
                   {pendingSlots.length>0&&(
                     <div style={{padding:'4px 10px',borderRadius:99,background:'rgba(255,59,48,0.08)',border:'1px solid rgba(255,59,48,0.2)',fontSize:12,fontWeight:700,color:'#ff3b30'}}>{pendingSlots.length} pending</div>
                   )}
+                  <button onClick={(e)=>{e.stopPropagation();setAddModal(dep);setAf({amount:'',date:new Date().toISOString().split('T')[0],remarks:''});}}
+                    style={{padding:'6px 12px',borderRadius:8,border:'1px solid rgba(0,0,0,0.1)',background:'#fff',color:'var(--text-primary)',fontSize:12,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>+ Add Amount</button>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6e6e73" strokeWidth="2" style={{transform:isOpen?'rotate(180deg)':'none',transition:'transform 0.2s',flexShrink:0}}><polyline points="6 9 12 15 18 9"/></svg>
                 </div>
               </div>
@@ -307,6 +342,30 @@ export default function DepositorSettlement(){
         })}
         {filtered.length===0&&<div style={{textAlign:'center',padding:48,color:'var(--text-secondary)'}}>No active depositors</div>}
       </div>
+
+      {/* Add Extra Amount modal */}
+      <Modal open={!!addModal} onClose={()=>setAddModal(null)} title={`Add Amount — ${addModal?.name}`} width={460}
+        footer={addModal&&(
+          <Button full onClick={saveAddAmount} disabled={addSaving}>{addSaving?'Saving…':'✓ Add to Deposit'}</Button>
+        )}>
+        {addModal&&(
+          <div>
+            <div style={{padding:'12px 14px',background:'rgba(88,86,214,0.06)',borderRadius:10,marginBottom:16,fontSize:13}}>
+              Current deposit: <strong>{formatCurrency(addModal.depositAmount||0)}</strong>
+              {af.amount&&parseFloat(af.amount)>0&&(<> → New total: <strong style={{color:'#5856d6'}}>{formatCurrency((addModal.depositAmount||0)+parseFloat(af.amount))}</strong></>)}
+            </div>
+            <FormField label="Extra Amount (₹)">
+              <Input type="number" value={af.amount} onChange={e=>setAf(f=>({...f,amount:e.target.value}))} placeholder="e.g. 50000" autoFocus/>
+            </FormField>
+            <FormField label="Date">
+              <Input type="date" value={af.date} onChange={e=>setAf(f=>({...f,date:e.target.value}))}/>
+            </FormField>
+            <FormField label="Remarks (optional)">
+              <Input value={af.remarks} onChange={e=>setAf(f=>({...f,remarks:e.target.value}))} placeholder="Reason for the additional deposit…"/>
+            </FormField>
+          </div>
+        )}
+      </Modal>
 
       {/* Settlement Modal */}
       <Modal open={!!modal} onClose={()=>setModal(null)} title={`Settle Interest — ${modal?.depositor?.name}`} width={500}

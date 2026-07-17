@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import {printLoanRepaymentSummary} from '../../utils/pdfReport';
 import {scopeToUser} from '../../utils/scopeHelper';
 import {logStatusChange} from '../../utils/statusHistory';
-import {PageHeader,Card,Badge,Button,StatCard,Modal,SectionHeader,InfoRow,formatCurrency,Loader,Divider,FilterTabs,SearchBar} from '../../components/finledger/UI';
+import {PageHeader,Card,Badge,Button,StatCard,Modal,SectionHeader,InfoRow,formatCurrency,Loader,Divider,FilterTabs,SearchBar,FormField,Input} from '../../components/finledger/UI';
 import {useAuth} from '../../contexts/AuthContext';
 import {PageLoader} from '../../components/Skeleton';
 
@@ -25,6 +25,9 @@ export default function LoanRepayment(){
   const[dueFilter,setDueFilter]=useState('all');
   const[statusFilter,setStatusFilter]=useState('active');
   const[histModal,setHistModal]=useState(null);
+  const[addModal,setAddModal]=useState(null); // borrower currently getting extra loan amount added
+  const[af,setAf]=useState({amount:'',date:'',remarks:''});
+  const[addSaving,setAddSaving]=useState(false);
 
   useEffect(()=>{
     const bUnsub=onSnapshot(
@@ -112,6 +115,42 @@ export default function LoanRepayment(){
       );
       setModal(null);
     }catch(err){toast.error('Failed: '+err.message);}finally{setSaving(false);}
+  }
+
+  // ── Add extra amount to an existing loan (e.g. borrower already has ₹1L, needs ₹50K
+  // more — this raises the loan total to ₹1.5L, recorded with its own date and note,
+  // separate from repayments, and reflected in the Journal like any other transaction) ──
+  async function saveAddAmount(e){
+    if(e&&e.preventDefault) e.preventDefault();
+    if(!af.amount||parseFloat(af.amount)<=0)return toast.error('Enter a valid amount');
+    const extra=parseFloat(af.amount);
+    const prevAmount=addModal.loanAmount||0;
+    const newAmount=prevAmount+extra;
+    setAddSaving(true);
+    try{
+      // Own audit-trail record — separate from repayments, keeps a clean history of every
+      // top-up with its date and note, exactly as requested.
+      await addDoc(collection(db,'loan_additions'),{
+        borrowerId:addModal.id, borrowerName:addModal.borrowerName, loanId:addModal.loanId||addModal.id,
+        amount:extra, previousAmount:prevAmount, newAmount, date:af.date, remarks:af.remarks,
+        createdAt:serverTimestamp(), createdBy:user?.uid||null,
+      });
+      // Ledger entry — shows up in the Journal like any other transaction
+      await addDoc(collection(db,'finance_ledger_entries'),{
+        type:'Debit', category:'Loan Amount Increased',
+        description:`Additional ${formatCurrency(extra)} added to ${addModal.borrowerName}'s loan — ${formatCurrency(prevAmount)} → ${formatCurrency(newAmount)}${af.remarks?' · '+af.remarks:''}`,
+        amount:extra, date:af.date,
+        borrowerName:addModal.borrowerName, borrowerId:addModal.id, loanId:addModal.loanId||addModal.id,
+        createdAt:serverTimestamp(), createdBy:user?.uid||null,
+      });
+      // Raise the loan's actual principal — every downstream calculation (outstanding,
+      // repayment %, reports) automatically reflects the new total from here on.
+      await updateDoc(doc(db,'borrower_master',addModal.id),{
+        loanAmount:newAmount, updatedAt:serverTimestamp(),
+      });
+      toast.success(`✓ ₹${extra.toLocaleString('en-IN')} added — new loan total: ${formatCurrency(newAmount)}`);
+      setAddModal(null);
+    }catch(err){toast.error('Failed: '+err.message);}finally{setAddSaving(false);}
   }
 
   const allActive=borrowers.filter(b=>b.status==='Active'||b.status==='Non-Active');
@@ -210,6 +249,9 @@ export default function LoanRepayment(){
                         {reps.length>0&&(
                           <Button size="sm" variant="secondary" onClick={()=>setHistModal({borrower:b,reps})}>History</Button>
                         )}
+                        {(b.status==='Active'||b.status==='Non-Active')&&(
+                          <Button size="sm" variant="secondary" onClick={()=>{setAddModal(b);setAf({amount:'',date:new Date().toISOString().split('T')[0],remarks:''});}}>+ Add Amount</Button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -301,6 +343,30 @@ export default function LoanRepayment(){
 
             </form>
           </>
+        )}
+      </Modal>
+
+      {/* Add Extra Amount modal */}
+      <Modal open={!!addModal} onClose={()=>setAddModal(null)} title={`Add Amount — ${addModal?.borrowerName}`} width={460}
+        footer={addModal&&(
+          <Button full onClick={saveAddAmount} disabled={addSaving}>{addSaving?'Saving…':'✓ Add to Loan'}</Button>
+        )}>
+        {addModal&&(
+          <div>
+            <div style={{padding:'12px 14px',background:'rgba(0,122,255,0.06)',borderRadius:10,marginBottom:16,fontSize:13}}>
+              Current loan: <strong>{formatCurrency(addModal.loanAmount||0)}</strong>
+              {af.amount&&parseFloat(af.amount)>0&&(<> → New total: <strong style={{color:'#007aff'}}>{formatCurrency((addModal.loanAmount||0)+parseFloat(af.amount))}</strong></>)}
+            </div>
+            <FormField label="Extra Amount (₹)">
+              <Input type="number" value={af.amount} onChange={e=>setAf(f=>({...f,amount:e.target.value}))} placeholder="e.g. 50000" autoFocus/>
+            </FormField>
+            <FormField label="Date">
+              <Input type="date" value={af.date} onChange={e=>setAf(f=>({...f,date:e.target.value}))}/>
+            </FormField>
+            <FormField label="Remarks (optional)">
+              <Input value={af.remarks} onChange={e=>setAf(f=>({...f,remarks:e.target.value}))} placeholder="Reason for the additional amount…"/>
+            </FormField>
+          </div>
         )}
       </Modal>
 

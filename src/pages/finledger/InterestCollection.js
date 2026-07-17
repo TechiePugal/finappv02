@@ -291,8 +291,9 @@ export default function InterestCollection(){
       {viewMode==='history'&&(
         <Card>
           <SectionHeader title="Full Interest History from Loan Start"/>
+          {filtBorrowers.length===0&&<div style={{padding:48,textAlign:'center',color:'var(--text-secondary)'}}>No borrowers match filters</div>}
           <div style={{display:'flex',flexDirection:'column',gap:12}}>
-            {borrowers.map(b=>{
+            {filtBorrowers.map(b=>{
               const slots=getMonths(b.loanStartDate);
               const isOpen=selected===b.id;
               const outstanding=getOutstanding(b);

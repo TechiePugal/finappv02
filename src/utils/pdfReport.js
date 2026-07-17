@@ -626,10 +626,10 @@ export function printDepositorsSummary(depositors, depPaysMap){
     <h2>Depositor Records</h2>
     <p class="section-note">"Total Interest" is accrued from the deposit's start date up to today at its monthly rate. "Paid" is interest actually settled (or added back to principal). "Balance" is what's still owed.</p>
     <table>
-      <thead><tr><th>Name</th><th>Phone</th><th>Deposit ID</th><th class="text-right">Principal</th><th class="text-right">Rate</th><th class="text-right">Total Interest</th><th class="text-right">Paid</th><th class="text-right">Balance</th><th>Status</th></tr></thead>
+      <thead><tr><th>#</th><th>Name</th><th>Phone</th><th>Deposit ID</th><th class="text-right">Principal</th><th class="text-right">Rate</th><th class="text-right">Total Interest</th><th class="text-right">Paid</th><th class="text-right">Balance</th><th>Status</th></tr></thead>
       <tbody>
-        ${enriched.map(d=>`<tr><td>${d.name||'—'}</td><td>${d.phone||'—'}</td><td>${d.depositId||'—'}</td><td class="text-right">${INR(d.depositAmount||0)}</td><td class="text-right">${d.interestRate||0}%/mo</td><td class="text-right">${INR(d.totalInterestToDate)}</td><td class="text-right text-green">${INR(d.paidAmount)}</td><td class="text-right ${d.balanceInterest>0?'text-red':'text-green'}">${INR(d.balanceInterest)}</td><td><span class="badge ${d.status==='Active'?'badge-green':'badge-gray'}">${d.status||'—'}</span></td></tr>`).join('')}
-        <tr class="total-row"><td colspan="3">TOTAL</td><td class="text-right">${INR(totalDeposited)}</td><td></td><td class="text-right">${INR(grandTotalInterest)}</td><td class="text-right">${INR(grandTotalPaid)}</td><td class="text-right">${INR(grandTotalBalance)}</td><td></td></tr>
+        ${enriched.map((d,i)=>`<tr><td>${i+1}</td><td>${d.name||'—'}</td><td>${d.phone||'—'}</td><td>${d.depositId||'—'}</td><td class="text-right">${INR(d.depositAmount||0)}</td><td class="text-right">${d.interestRate||0}%/mo</td><td class="text-right">${INR(d.totalInterestToDate)}</td><td class="text-right text-green">${INR(d.paidAmount)}</td><td class="text-right ${d.balanceInterest>0?'text-red':'text-green'}">${INR(d.balanceInterest)}</td><td><span class="badge ${d.status==='Active'?'badge-green':'badge-gray'}">${d.status||'—'}</span></td></tr>`).join('')}
+        <tr class="total-row"><td colspan="4">TOTAL</td><td class="text-right">${INR(totalDeposited)}</td><td></td><td class="text-right">${INR(grandTotalInterest)}</td><td class="text-right">${INR(grandTotalPaid)}</td><td class="text-right">${INR(grandTotalBalance)}</td><td></td></tr>
       </tbody>
     </table>
     <div class="footer"><span>EC Fin 360 Finance Ledger</span><span>Depositors Summary Report</span></div>
@@ -663,10 +663,10 @@ export function printSettleInterestSummary(depositors, payments, month){
     </div>
     <h2>Settlement Status — ${month||''}</h2>
     <table>
-      <thead><tr><th>Depositor</th><th>Deposit ID</th><th class="text-right">Interest Due</th><th>Status</th><th>Date Paid</th><th>Mode</th></tr></thead>
+      <thead><tr><th>#</th><th>Depositor</th><th>Deposit ID</th><th class="text-right">Interest Due</th><th>Status</th><th>Date Paid</th><th>Mode</th></tr></thead>
       <tbody>
-        ${rows.map(r=>`<tr><td>${r.d.name||'—'}</td><td>${r.d.depositId||'—'}</td><td class="text-right">${INR(r.interest)}</td><td><span class="badge ${r.status==='Paid'?'badge-green':r.status==='Partial'?'badge-amber':'badge-red'}">${r.status}</span></td><td>${r.p?.paymentDate?fmtDate(r.p.paymentDate):'—'}</td><td>${r.p?.mode||'—'}</td></tr>`).join('')}
-        <tr class="total-row"><td colspan="2">TOTAL</td><td class="text-right">${INR(totalDue)}</td><td colspan="3"></td></tr>
+        ${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${r.d.name||'—'}</td><td>${r.d.depositId||'—'}</td><td class="text-right">${INR(r.interest)}</td><td><span class="badge ${r.status==='Paid'?'badge-green':r.status==='Partial'?'badge-amber':'badge-red'}">${r.status}</span></td><td>${r.p?.paymentDate?fmtDate(r.p.paymentDate):'—'}</td><td>${r.p?.mode||'—'}</td></tr>`).join('')}
+        <tr class="total-row"><td colspan="3">TOTAL</td><td class="text-right">${INR(totalDue)}</td><td colspan="3"></td></tr>
       </tbody>
     </table>
     <div class="footer"><span>EC Fin 360 Finance Ledger</span><span>Settle Interest Summary — ${month||''}</span></div>
@@ -700,10 +700,10 @@ export function printBorrowersSummary(borrowers, repayments){
     </div>
     <h2>Borrower Records</h2>
     <table>
-      <thead><tr><th>Name</th><th>Phone</th><th>Loan ID</th><th class="text-right">Loan Amount</th><th class="text-right">Outstanding</th><th class="text-right">Rate</th><th>Status</th></tr></thead>
+      <thead><tr><th>#</th><th>Name</th><th>Phone</th><th>Loan ID</th><th class="text-right">Loan Amount</th><th class="text-right">Outstanding</th><th class="text-right">Rate</th><th>Status</th></tr></thead>
       <tbody>
-        ${list.map(b=>`<tr><td>${b.borrowerName||'—'}</td><td>${b.phone||'—'}</td><td>${b.loanId||'—'}</td><td class="text-right">${INR(b.loanAmount||0)}</td><td class="text-right">${INR(getOut(b))}</td><td class="text-right">${b.interestRate||0}%/mo</td><td><span class="badge ${b.status==='Active'?'badge-green':'badge-gray'}">${b.status||'—'}</span></td></tr>`).join('')}
-        <tr class="total-row"><td colspan="3">TOTAL (Active)</td><td class="text-right">${INR(totalLoan)}</td><td class="text-right">${INR(totalOutstanding)}</td><td colspan="2"></td></tr>
+        ${list.map((b,i)=>`<tr><td>${i+1}</td><td>${b.borrowerName||'—'}</td><td>${b.phone||'—'}</td><td>${b.loanId||'—'}</td><td class="text-right">${INR(b.loanAmount||0)}</td><td class="text-right">${INR(getOut(b))}</td><td class="text-right">${b.interestRate||0}%/mo</td><td><span class="badge ${b.status==='Active'?'badge-green':'badge-gray'}">${b.status||'—'}</span></td></tr>`).join('')}
+        <tr class="total-row"><td colspan="4">TOTAL (Active)</td><td class="text-right">${INR(totalLoan)}</td><td class="text-right">${INR(totalOutstanding)}</td><td colspan="2"></td></tr>
       </tbody>
     </table>
     <div class="footer"><span>EC Fin 360 Finance Ledger</span><span>Borrowers Summary Report</span></div>
@@ -737,10 +737,10 @@ export function printCollectInterestSummary(borrowers, payments, month, getOutst
     </div>
     <h2>Collection Status — ${month||''}</h2>
     <table>
-      <thead><tr><th>Borrower</th><th>Loan ID</th><th class="text-right">Outstanding</th><th class="text-right">Interest Due</th><th>Status</th><th>Fine</th></tr></thead>
+      <thead><tr><th>#</th><th>Borrower</th><th>Contact</th><th>Loan ID</th><th class="text-right">Outstanding</th><th class="text-right">Interest Due</th><th>Status</th><th>Fine</th></tr></thead>
       <tbody>
-        ${rows.map(r=>`<tr><td>${r.b.borrowerName||'—'}</td><td>${r.b.loanId||'—'}</td><td class="text-right">${INR(r.out)}</td><td class="text-right">${INR(r.interest)}</td><td><span class="badge ${r.status==='Paid'?'badge-green':r.status==='Partial'?'badge-amber':'badge-red'}">${r.status}</span></td><td class="text-right">${r.p?.fine?INR(r.p.fine):'—'}</td></tr>`).join('')}
-        <tr class="total-row"><td colspan="3">TOTAL</td><td class="text-right">${INR(totalDue)}</td><td colspan="2"></td></tr>
+        ${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${r.b.borrowerName||'—'}</td><td>${r.b.phone||'—'}</td><td>${r.b.loanId||'—'}</td><td class="text-right">${INR(r.out)}</td><td class="text-right">${INR(r.interest)}</td><td><span class="badge ${r.status==='Paid'?'badge-green':r.status==='Partial'?'badge-amber':'badge-red'}">${r.status}</span></td><td class="text-right">${r.p?.fine?INR(r.p.fine):'—'}</td></tr>`).join('')}
+        <tr class="total-row"><td colspan="4">TOTAL</td><td class="text-right">${INR(totalDue)}</td><td colspan="3"></td></tr>
       </tbody>
     </table>
     <div class="footer"><span>EC Fin 360 Finance Ledger</span><span>Collect Interest Summary — ${month||''}</span></div>
@@ -770,10 +770,10 @@ export function printLoanRepaymentSummary(borrowers, getRepaid, getBalance){
     </div>
     <h2>Repayment Progress</h2>
     <table>
-      <thead><tr><th>Borrower</th><th>Loan ID</th><th class="text-right">Original</th><th class="text-right">Repaid</th><th class="text-right">Balance</th><th>Status</th></tr></thead>
+      <thead><tr><th>#</th><th>Borrower</th><th>Loan ID</th><th class="text-right">Original</th><th class="text-right">Repaid</th><th class="text-right">Balance</th><th>Status</th></tr></thead>
       <tbody>
-        ${rows.map(r=>`<tr><td>${r.b.borrowerName||'—'}</td><td>${r.b.loanId||'—'}</td><td class="text-right">${INR(r.b.loanAmount||0)}</td><td class="text-right text-green">${INR(r.repaid)}</td><td class="text-right ${r.balance>0?'text-amber':'text-green'}">${INR(r.balance)}</td><td><span class="badge ${r.balance<=0?'badge-green':'badge-amber'}">${r.balance<=0?'Closed':'Active'}</span></td></tr>`).join('')}
-        <tr class="total-row"><td colspan="2">TOTAL</td><td class="text-right">${INR(totalOriginal)}</td><td class="text-right">${INR(totalRepaid)}</td><td class="text-right">${INR(totalBalance)}</td><td></td></tr>
+        ${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${r.b.borrowerName||'—'}</td><td>${r.b.loanId||'—'}</td><td class="text-right">${INR(r.b.loanAmount||0)}</td><td class="text-right text-green">${INR(r.repaid)}</td><td class="text-right ${r.balance>0?'text-amber':'text-green'}">${INR(r.balance)}</td><td><span class="badge ${r.balance<=0?'badge-green':'badge-amber'}">${r.balance<=0?'Closed':'Active'}</span></td></tr>`).join('')}
+        <tr class="total-row"><td colspan="3">TOTAL</td><td class="text-right">${INR(totalOriginal)}</td><td class="text-right">${INR(totalRepaid)}</td><td class="text-right">${INR(totalBalance)}</td><td></td></tr>
       </tbody>
     </table>
     <div class="footer"><span>EC Fin 360 Finance Ledger</span><span>Loan Repayment Summary Report</span></div>
@@ -802,10 +802,10 @@ export function printEMILoansSummary(loans){
     </div>
     <h2>EMI Loan Records</h2>
     <table>
-      <thead><tr><th>Borrower</th><th>EMI ID</th><th class="text-right">Loan Amount</th><th class="text-right">EMI/Period</th><th>Paid / Total</th><th>Status</th></tr></thead>
+      <thead><tr><th>#</th><th>Borrower</th><th>EMI ID</th><th class="text-right">Loan Amount</th><th class="text-right">EMI/Period</th><th>Paid / Total</th><th>Status</th></tr></thead>
       <tbody>
-        ${list.map(l=>`<tr><td>${l.borrowerName||'—'}</td><td>${l.emiId||'—'}</td><td class="text-right">${INR(l.loanAmount||0)}</td><td class="text-right">${INR(l.emiAmount||0)}</td><td>${l.paidPeriods||0} / ${l.totalPeriods||0}</td><td><span class="badge ${l.status==='Active'?'badge-green':'badge-gray'}">${l.status||'—'}</span></td></tr>`).join('')}
-        <tr class="total-row"><td colspan="2">TOTAL</td><td class="text-right">${INR(totalLoan)}</td><td class="text-right">${INR(totalEMI)}</td><td colspan="2"></td></tr>
+        ${list.map((l,i)=>`<tr><td>${i+1}</td><td>${l.borrowerName||'—'}</td><td>${l.emiId||'—'}</td><td class="text-right">${INR(l.loanAmount||0)}</td><td class="text-right">${INR(l.emiAmount||0)}</td><td>${l.paidPeriods||0} / ${l.totalPeriods||0}</td><td><span class="badge ${l.status==='Active'?'badge-green':'badge-gray'}">${l.status||'—'}</span></td></tr>`).join('')}
+        <tr class="total-row"><td colspan="3">TOTAL</td><td class="text-right">${INR(totalLoan)}</td><td class="text-right">${INR(totalEMI)}</td><td colspan="2"></td></tr>
       </tbody>
     </table>
     <div class="footer"><span>EC Fin 360 Finance Ledger</span><span>EMI Loans Summary Report</span></div>
@@ -838,9 +838,9 @@ export function printJournalReport(entries, fromDate, toDate){
     <h2>Lifecycle Events — Created &amp; Closed Accounts</h2>
     <p style="font-size:11px;color:#6b7280;margin:-6px 0 10px;">Loans, deposits and EMI accounts opened or closed in this period. Shown separately — not counted in Income/Expense totals below.</p>
     <table>
-      <thead><tr><th>Date</th><th>Time</th><th>Event</th><th>Description</th><th class="text-right">Amount</th></tr></thead>
+      <thead><tr><th>#</th><th>Date</th><th>Time</th><th>Event</th><th>Description</th><th class="text-right">Amount</th></tr></thead>
       <tbody>
-        ${milestones.map(m=>`<tr><td>${fmtDate(m.date)}</td><td>${m.time||'—'}</td><td><span class="badge ${m.category?.includes('Closed')?'badge-amber':'badge-blue'}">${m.category}</span></td><td>${m.description||'—'}</td><td class="text-right">${INR(m.amount)}</td></tr>`).join('')}
+        ${milestones.map((m,i)=>`<tr><td>${i+1}</td><td>${fmtDate(m.date)}</td><td>${m.time||'—'}</td><td><span class="badge ${m.category?.includes('Closed')?'badge-amber':'badge-blue'}">${m.category}</span></td><td>${m.description||'—'}</td><td class="text-right">${INR(m.amount)}</td></tr>`).join('')}
       </tbody>
     </table>`:''}
     <h2>Profit &amp; Loss by Category</h2>
@@ -853,9 +853,9 @@ export function printJournalReport(entries, fromDate, toDate){
     </table>
     <h2>Transaction Journal</h2>
     <table>
-      <thead><tr><th>Date</th><th>Time</th><th>Type</th><th>Category</th><th>Description</th><th class="text-right">Amount</th></tr></thead>
+      <thead><tr><th>#</th><th>Date</th><th>Time</th><th>Type</th><th>Category</th><th>Description</th><th class="text-right">Amount</th></tr></thead>
       <tbody>
-        ${txns.map(e=>`<tr><td>${fmtDate(e.date)}</td><td>${e.time||'—'}</td><td><span class="badge ${e.type==='Credit'?'badge-green':'badge-red'}">${e.type}</span></td><td>${e.category||'—'}</td><td>${e.description||'—'}</td><td class="text-right ${e.type==='Credit'?'text-green':'text-red'}">${e.type==='Credit'?'+':'-'}${INR(e.amount)}</td></tr>`).join('')}
+        ${txns.map((e,i)=>`<tr><td>${i+1}</td><td>${fmtDate(e.date)}</td><td>${e.time||'—'}</td><td><span class="badge ${e.type==='Credit'?'badge-green':'badge-red'}">${e.type}</span></td><td>${e.category||'—'}</td><td>${e.description||'—'}</td><td class="text-right ${e.type==='Credit'?'text-green':'text-red'}">${e.type==='Credit'?'+':'-'}${INR(e.amount)}</td></tr>`).join('')}
       </tbody>
     </table>
     <div class="footer"><span>EC Fin 360 Finance Ledger</span><span>Journal — Full Transaction History</span></div>
