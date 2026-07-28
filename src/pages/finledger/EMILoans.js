@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import {
   collection, onSnapshot, addDoc, updateDoc, deleteDoc,
@@ -382,6 +383,7 @@ function LoanForm({ form, setForm, photoPreview, onPhotoChange, onPhotoRemove, d
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function EMILoans() {
   const {user} = useAuth();
+  const nav = useNavigate();
   const [loans, setLoans] = useState([]);
   const [collections, setCollections] = useState({});
   const [loading, setLoading] = useState(true);
@@ -730,7 +732,7 @@ export default function EMILoans() {
       <PageHeader title="EMI Loans" subtitle="Daily, weekly and monthly instalment loan management"
         action={<div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <Button variant="secondary" onClick={() => printEMILoansSummary(filtered)}>Export PDF{filter!=='all' ? ` (${filter==='active'?'Active':'Closed'})` : ''}</Button>
-          <Button onClick={openAdd}>+ New EMI Loan</Button>
+          <Button onClick={() => nav('/fl/emi-loans/new')}>+ New EMI Loan</Button>
         </div>} />
 
       {/* Stats */}
@@ -760,20 +762,20 @@ export default function EMILoans() {
             <div style={{ fontSize: 44, marginBottom: 12 }}>📋</div>
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>No EMI loans found</div>
             <div style={{ fontSize: 13, marginBottom: 20 }}>Create a new EMI loan to get started</div>
-            <Button onClick={openAdd}>+ New EMI Loan</Button>
+            <Button onClick={() => nav('/fl/emi-loans/new')}>+ New EMI Loan</Button>
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: 'rgba(118,118,128,0.07)', borderBottom: '1px solid rgba(0,0,0,.08)' }}>
-                  {['', 'EMI ID', 'Borrower', 'Loan', 'EMI Amt', 'Freq', 'Progress', 'Next Due', 'Status', 'Actions'].map(h => (
+                  {['#', '', 'EMI ID', 'Borrower', 'Loan', 'EMI Amt', 'Freq', 'Progress', 'Next Due', 'Status', 'Actions'].map(h => (
                     <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '.06em', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(l => {
+                {filtered.map((l, _i) => {
                   const cols = collections[l.id] || [];
                   // Only count records with status==='Paid' — a reverted 'Unpaid' record still exists
                   // (to preserve history) but must NOT count toward progress.
@@ -791,6 +793,7 @@ export default function EMILoans() {
                       onMouseEnter={e => e.currentTarget.style.background = 'rgba(0,122,255,0.015)'}
                       onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
 
+                      <td style={{ padding: '10px 12px', color: 'var(--text-tertiary)', fontSize: 12.5 }}>{_i + 1}</td>
                       {/* Photo avatar — click to popup */}
                       <td style={{ padding: '10px 10px' }}>
                         <PhotoAvatar
@@ -861,15 +864,8 @@ export default function EMILoans() {
                       <td style={{ padding: '10px 12px' }}>
                         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                           {l.status === 'Active' && (
-                            <Button size="sm" onClick={() => openCollect(l)}>Collect</Button>
+                            <Button size="sm" onClick={() => nav('/fl/collect-emi')}>Collect EMI →</Button>
                           )}
-                          <button
-                            title={expandedLoan===l.id?'Collapse':'View full EMI schedule'}
-                            onClick={() => setExpandedLoan(expandedLoan===l.id?null:l.id)}
-                            style={{padding:'7px 10px',background:expandedLoan===l.id?'rgba(0,122,255,0.08)':'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:9,fontSize:12.5,color:expandedLoan===l.id?'var(--accent)':'var(--text-primary)',outline:'none',fontFamily:'inherit',cursor:'pointer',display:'flex',alignItems:'center',gap:5,fontWeight:600}}>
-                            {expandedLoan===l.id?'Close':'Schedule'}
-                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{transform:expandedLoan===l.id?'rotate(180deg)':'none',transition:'transform 0.2s'}}><polyline points="6 9 12 15 18 9"/></svg>
-                          </button>
                           <button onClick={() => printEMILoanReport(l, getScheduleWithStatus(l))} title="Download PDF Report"
                             style={{width:28,height:28,borderRadius:7,border:'1px solid rgba(220,38,38,.2)',background:'rgba(220,38,38,.04)',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',color:'#dc2626'}}>
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="12" y2="18"/><line x1="15" y1="15" x2="12" y2="18"/></svg>
@@ -884,7 +880,7 @@ export default function EMILoans() {
                           )}
                           <button
                             title="Edit Loan"
-                            onClick={() => openEdit(l)}
+                            onClick={() => nav(`/fl/emi-loans/edit/${l.id}`)}
                             style={{ width: 28, height: 28, borderRadius: 7, border: '1px solid rgba(0,122,255,0.2)', background: 'rgba(0,122,255,0.04)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent)' }}>
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
                           </button>
@@ -902,7 +898,7 @@ export default function EMILoans() {
                       const paidAmt = cols.filter(x => x.status === 'Paid').reduce((s, x) => s + (x.totalCollected || x.amount || 0), 0);
                       return (
                         <tr>
-                          <td colSpan={10} style={{ padding: 0, background: '#fafafa', borderTop: '1px solid rgba(0,0,0,0.06)' }}>
+                          <td colSpan={11} style={{ padding: 0, background: '#fafafa', borderTop: '1px solid rgba(0,0,0,0.06)' }}>
                             <div style={{ padding: 16 }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
                                 <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>

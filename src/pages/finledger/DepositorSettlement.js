@@ -219,14 +219,8 @@ export default function DepositorSettlement(){
 
   return(
     <div className="page-enter">
-      <PageHeader title="Settle Interest" subtitle="Pay out interest to depositors or reinvest via compound"
-        action={
-          <div style={{display:'flex',gap:10,alignItems:'center'}}>
-            <input type="month" value={month} onChange={e=>setMonth(e.target.value)}
-              style={{padding:'8px 14px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:10,fontSize:14,color:'var(--text-primary)',outline:'none',fontFamily:'inherit'}}/>
-            <Button variant="secondary" onClick={()=>printSettleInterestSummary(filtered, payments, month)}>Export PDF</Button>
-          </div>
-        }/>
+      <PageHeader title="Settle Interest" subtitle="Pay out interest to depositors or reinvest via compound (current month)"
+        action={<Button variant="secondary" onClick={()=>printSettleInterestSummary(filtered, payments, month)}>Export PDF</Button>}/>
 
       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>
         <StatCard label="Active Depositors" value={depositors.length} sub="Requiring payouts" color="#5856d6"/>

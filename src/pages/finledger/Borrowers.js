@@ -142,14 +142,14 @@ export default function Borrowers(){
         <div style={{overflowX:'auto'}}>
           <table style={{width:'100%',borderCollapse:'collapse',minWidth:820}}>
             <thead><tr style={{background:'rgba(118,118,128,0.06)',borderBottom:'1px solid rgba(0,0,0,0.07)'}}>
-              {['Loan ID','Borrower','Original Loan','Repaid','Outstanding','Rate','Interest/Mo','Agreement','Start','Status',''].map(h=>(
+              {['#','Loan ID','Borrower','Original Loan','Repaid','Outstanding','Rate','Interest/Mo','Agreement','Start','Status',''].map(h=>(
                 <th key={h} style={{padding:'10px 14px',textAlign:'left',fontSize:11,fontWeight:700,color:'var(--text-secondary)',textTransform:'uppercase',letterSpacing:'0.07em',whiteSpace:'nowrap'}}>{h}</th>
               ))}
             </tr></thead>
             <tbody>
               {filtered.length===0
-                ?<tr><td colSpan={11} style={{padding:48,textAlign:'center',color:'var(--text-secondary)',fontSize:14}}>No borrowers found.</td></tr>
-                :filtered.map(b=>{
+                ?<tr><td colSpan={12} style={{padding:48,textAlign:'center',color:'var(--text-secondary)',fontSize:14}}>No borrowers found.</td></tr>
+                :filtered.map((b,_i)=>{
                   const outstanding=getOutstanding(b);
                   const repaid=(reps[b.id]||[]).reduce((s,r)=>s+(r.repaidAmount||r.amount||0),0);
                   const interest=calcInterest(b);
@@ -163,6 +163,7 @@ export default function Borrowers(){
                       onClick={()=>nav(`/fl/borrowers/edit/${b.id}`)}
                       onMouseEnter={e=>e.currentTarget.style.background='rgba(0,122,255,0.02)'}
                       onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                      <td style={{padding:'12px 14px',color:'var(--text-tertiary)',fontSize:12.5}}>{_i+1}</td>
                       <td style={{padding:'12px 14px',fontFamily:'monospace',fontSize:11,color:'var(--accent)',fontWeight:600}}>{b.loanId||b.id.slice(-8)}</td>
                       <td style={{padding:'12px 14px'}}>
                         <div style={{display:'flex',alignItems:'center',gap:9}}>

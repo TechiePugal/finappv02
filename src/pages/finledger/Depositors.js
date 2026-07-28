@@ -85,18 +85,19 @@ export default function Depositors(){
         <div style={{overflowX:'auto'}}>
           <table style={{width:'100%',borderCollapse:'collapse',minWidth:700}}>
             <thead><tr style={{background:'var(--bg-secondary)',borderBottom:'1px solid var(--border)'}}>
-              {['ID','Investor','Amount','Rate','Monthly Int.','Type','Start Date','Status',''].map(h=>(
+              {['#','ID','Investor','Amount','Rate','Monthly Int.','Type','Start Date','Status',''].map(h=>(
                 <th key={h} style={{padding:'10px 16px',textAlign:'left',fontSize:11,fontWeight:700,color:'var(--text-secondary)',textTransform:'uppercase',letterSpacing:'0.07em',whiteSpace:'nowrap'}}>{h}</th>
               ))}
             </tr></thead>
             <tbody>
               {filtered.length===0
-                ?<tr><td colSpan={9} style={{padding:48,textAlign:'center',color:'var(--text-tertiary)',fontSize:14}}>No depositors found. Add your first investor.</td></tr>
-                :filtered.map(dep=>(
+                ?<tr><td colSpan={10} style={{padding:48,textAlign:'center',color:'var(--text-tertiary)',fontSize:14}}>No depositors found. Add your first investor.</td></tr>
+                :filtered.map((dep,_i)=>(
                   <tr key={dep.id} style={{borderBottom:'1px solid var(--divider)',cursor:'pointer'}}
                     onClick={()=>nav(`/fl/depositors/edit/${dep.id}`)}
                     onMouseEnter={e=>e.currentTarget.style.background='rgba(10,132,255,0.025)'}
                     onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                    <td style={{padding:'12px 16px',color:'var(--text-tertiary)',fontSize:12.5}}>{_i+1}</td>
                     <td style={{padding:'12px 16px'}}><span style={{fontFamily:'var(--font-mono)',fontSize:11,color:'var(--accent)',fontWeight:600}}>{dep.depositId}</span></td>
                     <td style={{padding:'12px 16px'}}>
                       <p style={{fontWeight:600,color:'var(--text-primary)',fontSize:14}}>{dep.name}</p>

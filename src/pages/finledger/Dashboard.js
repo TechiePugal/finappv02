@@ -95,7 +95,14 @@ export default function Dashboard(){
 
       const emiLoans=scopeToUser(emiSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid);
       const activeEmi=emiLoans.filter(l=>l.status==='Active');
+      const closedEmi=emiLoans.filter(l=>l.status==='Closed');
       const emiMonthlyTotal=activeEmi.reduce((s,l)=>s+(l.emiAmount||0),0);
+      // Overall (not monthly) EMI figures — total issued & outstanding across all EMI loans
+      const emiTotalIssued=emiLoans.reduce((s,l)=>s+(l.loanAmount||0),0);
+      const emiTotalOutstanding=activeEmi.reduce((s,l)=>{
+        const perPeriodPrincipal=(l.loanAmount||0)/(l.totalPeriods||1);
+        return s+Math.max(0,(l.loanAmount||0)-(perPeriodPrincipal*(l.paidPeriods||0)));
+      },0);
       const emiProjData=Array.from({length:6},(_,i)=>{
         const d=new Date(now.getFullYear(),now.getMonth()+i,1);
         const label=MONTHS[d.getMonth()]+' '+(d.getFullYear()%100);
@@ -118,6 +125,7 @@ export default function Dashboard(){
         totalDepositors:deps.length, totalBorrowers:bors.length,
         coverage:totalOutstanding>0?((secVal/totalOutstanding)*100).toFixed(0):100,
         chartData, recent, emiProjData, emiMonthlyTotal, emiLoanCount:activeEmi.length,
+        emiClosedCount:closedEmi.length, emiTotalIssued, emiTotalOutstanding,
       });
     }catch(e){console.error(e);}finally{setLoading(false);}
   }
@@ -136,35 +144,11 @@ export default function Dashboard(){
         </p>
       </div>
 
-      {/* KPI Row 1 */}
-      <div className="grid-4" style={{marginBottom:12}}>
+      {/* LOANS — overall, all-time figures only */}
+      <SectionHeader title="📋 Loans — Overview"/>
+      <div className="grid-4" style={{marginBottom:20}}>
         <StatCard label="Outstanding Loans" value={formatCurrency(d.totalOutstanding)} sub={`${d.activeBorrowers||0} active · ₹${Math.round((d.totalRepaid||0)/1000)}k repaid`} color="#0a84ff"
           icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M16 10a2 2 0 1 1-4 0 2 2 0 0 1 4 0"/></svg>}/>
-        <StatCard label="Deposit Liability" value={formatCurrency(d.totalDeposits)} sub={`${d.activeDeposits||0} active investors`} color="#bf5af2"
-          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>}/>
-        <StatCard label="Monthly Receivable" value={formatCurrency(Math.round(d.monthlyRec))} sub={`Collected: ${formatCurrency(Math.round(d.curMonthCollected||0))}`} color="#30d158"
-          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>}/>
-        <StatCard label="Monthly Payable" value={formatCurrency(Math.round(d.monthlyPay))} sub={`Settled: ${formatCurrency(Math.round(d.curMonthSettled||0))}`} color="#ff9f0a"
-          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/><polyline points="16 17 22 17 22 11"/></svg>}/>
-      </div>
-
-      {/* EMI KPI row */}
-      {(d.emiLoanCount||0)>0&&(
-        <div className="grid-4" style={{marginBottom:12}}>
-          <StatCard label="EMI Monthly" value={formatCurrency(Math.round(d.emiMonthlyTotal||0))} sub={`${d.emiLoanCount||0} active EMI loan${(d.emiLoanCount||0)!==1?'s':''}`} color="#5e5ce6"
-            icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M12 10v4M10 12h4"/></svg>}/>
-          {(d.emiProjData||[]).slice(0,3).map((p,i)=>(
-            <StatCard key={i} label={`EMI ${p.label}`} value={formatCurrency(p.expected)}
-              sub={i===0?'this month':i===1?'next month':'2 months out'} color={i===0?'#007aff':i===1?'#34aadc':'#5ac8fa'}
-              icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/></svg>}/>
-          ))}
-        </div>
-      )}
-
-      {/* KPI Row 2 */}
-      <div className="grid-4" style={{marginBottom:20}}>
-        <StatCard label="Net Monthly Spread" value={formatCurrency(Math.round(Math.abs(d.net||0)))} sub={(d.net||0)>=0?'↑ Profitable':'↓ Loss-making'} color={(d.net||0)>=0?'#30d158':'#ff453a'}
-          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>}/>
         <StatCard label="Security Coverage" value={`${d.coverage||100}%`} sub="Security vs outstanding" color="#5e5ce6"
           icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>}/>
         <StatCard label="Non-Active Loans" value={d.nonActive||0} sub={d.nonActive?'Needs immediate attention':'All accounts current'} color={d.nonActive?'#ff453a':'#30d158'}
@@ -172,6 +156,30 @@ export default function Dashboard(){
         <StatCard label="Loans Closed" value={d.closedLoans||0} sub="Fully settled accounts" color="#30d158"
           icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>}/>
       </div>
+
+      {/* DEPOSITS — overall, all-time figures only */}
+      <SectionHeader title="🏦 Deposits — Overview"/>
+      <div className="grid-4" style={{marginBottom:20}}>
+        <StatCard label="Deposit Liability" value={formatCurrency(d.totalDeposits)} sub={`${d.activeDeposits||0} active investors`} color="#bf5af2"
+          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>}/>
+        <StatCard label="Total Depositors" value={d.totalDepositors||0} sub="All-time records" color="#5e5ce6"
+          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>}/>
+      </div>
+
+      {/* EMI LOANS — overall, all-time figures only */}
+      {(d.emiLoanCount||0)+(d.emiClosedCount||0)>0&&(
+        <>
+        <SectionHeader title="📆 EMI Loans — Overview"/>
+        <div className="grid-4" style={{marginBottom:20}}>
+          <StatCard label="EMI Outstanding" value={formatCurrency(Math.round(d.emiTotalOutstanding||0))} sub={`${d.emiLoanCount||0} active EMI loan${(d.emiLoanCount||0)!==1?'s':''}`} color="#5e5ce6"
+            icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M12 10v4M10 12h4"/></svg>}/>
+          <StatCard label="EMI Total Issued" value={formatCurrency(Math.round(d.emiTotalIssued||0))} sub="All-time, all EMI loans" color="#007aff"
+            icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/></svg>}/>
+          <StatCard label="EMI Closed" value={d.emiClosedCount||0} sub="Fully settled EMI loans" color="#30d158"
+            icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>}/>
+        </div>
+        </>
+      )}
 
       {/* Charts */}
       <div className="grid-2" style={{marginBottom:14}}>
@@ -204,27 +212,27 @@ export default function Dashboard(){
         </Card>
 
         <Card>
-          <SectionHeader title="This Month — Collection Status"/>
-          <div style={{marginBottom:16}}>
-            <ProgressBar value={d.curMonthCollected||0} max={d.monthlyRec||1} color="var(--green)"
-              label={`Interest Collected (${(d.collectionRate||0).toFixed(0)}%)`}/>
-            <div style={{display:'flex',justifyContent:'space-between',marginTop:6}}>
-              <span style={{fontSize:11,color:'var(--text-secondary)'}}>Collected: <strong style={{color:'var(--green)'}}>{formatCurrency(Math.round(d.curMonthCollected||0))}</strong></span>
-              <span style={{fontSize:11,color:'var(--text-secondary)'}}>Due: <strong>{formatCurrency(Math.round(d.monthlyRec||0))}</strong></span>
+          <SectionHeader title="Overall Position"/>
+          <div style={{display:'grid',gap:12}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px 14px',borderRadius:10,background:'rgba(10,132,255,0.06)'}}>
+              <span style={{fontSize:12.5,color:'var(--text-secondary)',fontWeight:500}}>Total Outstanding (Loans)</span>
+              <span style={{fontSize:16,fontWeight:800,color:'#0a84ff'}}>{formatCurrency(Math.round(d.totalOutstanding||0))}</span>
             </div>
-          </div>
-          <div style={{marginBottom:4}}>
-            <ProgressBar value={d.curMonthSettled||0} max={d.monthlyPay||1} color="var(--orange)"
-              label={`Depositor Settlements (${d.monthlyPay>0?Math.round((d.curMonthSettled/d.monthlyPay)*100):0}%)`}/>
-            <div style={{display:'flex',justifyContent:'space-between',marginTop:6}}>
-              <span style={{fontSize:11,color:'var(--text-secondary)'}}>Settled: <strong style={{color:'var(--orange)'}}>{formatCurrency(Math.round(d.curMonthSettled||0))}</strong></span>
-              <span style={{fontSize:11,color:'var(--text-secondary)'}}>Due: <strong>{formatCurrency(Math.round(d.monthlyPay||0))}</strong></span>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px 14px',borderRadius:10,background:'rgba(191,90,242,0.06)'}}>
+              <span style={{fontSize:12.5,color:'var(--text-secondary)',fontWeight:500}}>Total Deposits Held</span>
+              <span style={{fontSize:16,fontWeight:800,color:'#bf5af2'}}>{formatCurrency(Math.round(d.totalDeposits||0))}</span>
             </div>
-          </div>
-          <div style={{marginTop:16,padding:'12px 14px',borderRadius:10,background:(d.net||0)>=0?'rgba(48,209,88,0.07)':'rgba(255,69,58,0.07)',border:`1px solid ${(d.net||0)>=0?'rgba(48,209,88,0.2)':'rgba(255,69,58,0.2)'}`}}>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <span style={{fontSize:12,color:'var(--text-secondary)',fontWeight:500}}>Net This Month</span>
-              <span className="num" style={{fontSize:18,fontWeight:800,color:(d.net||0)>=0?'var(--green)':'var(--red)',letterSpacing:'-0.03em'}}>{(d.net||0)>=0?'+':'-'}{formatCurrency(Math.round(Math.abs(d.net||0)))}</span>
+            {(d.emiTotalOutstanding||0)>0&&(
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px 14px',borderRadius:10,background:'rgba(94,92,230,0.06)'}}>
+                <span style={{fontSize:12.5,color:'var(--text-secondary)',fontWeight:500}}>EMI Outstanding</span>
+                <span style={{fontSize:16,fontWeight:800,color:'#5e5ce6'}}>{formatCurrency(Math.round(d.emiTotalOutstanding||0))}</span>
+              </div>
+            )}
+            <div style={{marginTop:4,padding:'12px 14px',borderRadius:10,background:(d.net||0)>=0?'rgba(48,209,88,0.07)':'rgba(255,69,58,0.07)',border:`1px solid ${(d.net||0)>=0?'rgba(48,209,88,0.2)':'rgba(255,69,58,0.2)'}`}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <span style={{fontSize:12,color:'var(--text-secondary)',fontWeight:500}}>Net Spread (Receivable − Payable)</span>
+                <span className="num" style={{fontSize:18,fontWeight:800,color:(d.net||0)>=0?'var(--green)':'var(--red)',letterSpacing:'-0.03em'}}>{(d.net||0)>=0?'+':'-'}{formatCurrency(Math.round(Math.abs(d.net||0)))}</span>
+              </div>
             </div>
           </div>
         </Card>

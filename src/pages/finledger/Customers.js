@@ -127,8 +127,9 @@ export default function Customers(){
         </div>
         {filtered.length===0?<div style={{textAlign:'center',padding:40,color:'var(--text-secondary)'}}>No users yet — enroll your first user, then create their deposit or loan.</div>:(
           <div style={{display:'grid',gap:8}}>
-            {filtered.map(c=>{const lk=linked(c);return(
+            {filtered.map((c,_i)=>{const lk=linked(c);return(
               <div key={c.id} style={{display:'flex',alignItems:'center',gap:12,padding:'12px 14px',borderRadius:12,border:'1px solid var(--border)',flexWrap:'wrap'}}>
+                <span style={{fontSize:12,color:'var(--text-tertiary)',minWidth:20,flexShrink:0}}>{_i+1}</span>
                 <div style={{width:42,height:42,borderRadius:'50%',background:'linear-gradient(135deg,#0a84ff,#5856d6)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:800,flexShrink:0}}>{(c.name||'?')[0].toUpperCase()}</div>
                 <div style={{flex:1,minWidth:160}}>
                   <div style={{fontWeight:700,fontSize:14}}>{c.name} <span style={{fontSize:11,color:'var(--text-secondary)',fontWeight:400}}>{c.customerId}</span></div>

@@ -32,12 +32,14 @@ export default function MonthlyReceivable() {
     setLoading(true);
     try {
       // Fetch all needed data in parallel
-      const [bSnap, dSnap, bpSnap, dpSnap, repSnap] = await Promise.all([
+      const [bSnap, dSnap, bpSnap, dpSnap, repSnap, emiSnap, emiColSnap] = await Promise.all([
         getDocs(collection(db, 'borrower_master')),
         getDocs(collection(db, 'deposit_master')),
         getDocs(query(collection(db, 'borrower_interest_payments'), where('month','==',month))),
         getDocs(query(collection(db, 'deposit_payments'), where('month','==',month))),
         getDocs(collection(db, 'loan_repayments')),
+        getDocs(collection(db, 'emi_loans')),
+        getDocs(collection(db, 'emi_collections')),
       ]);
 
       const borrowers = scopeToUser(bSnap.docs.map(d => ({id:d.id,...d.data()})), user?.uid);
@@ -75,8 +77,16 @@ export default function MonthlyReceivable() {
         .filter(d => d.data().status === 'Paid')
         .reduce((s,d) => s + (d.data().amountPaid||0), 0);
 
-      // Net = collected from borrowers minus paid to depositors
-      const netRevenue = totalCollected - totalPaidOut;
+      // ── Connect EMI Loans into the Monthly Report ──
+      const emiLoans = scopeToUser(emiSnap.docs.map(d => ({id:d.id,...d.data()})), user?.uid);
+      const emiCols = scopeToUser(emiColSnap.docs.map(d => ({id:d.id,...d.data()})), user?.uid);
+      const activeEmi = emiLoans.filter(l => l.status === 'Active');
+      const totalEmiDue = activeEmi.reduce((s,l) => s + (l.emiAmount||0), 0);
+      const totalEmiCollected = emiCols.filter(c => c.date && c.date.startsWith(month) && c.status === 'Paid')
+        .reduce((s,c) => s + (c.totalCollected||c.amount||0), 0);
+
+      // Net = collected from borrowers + EMI collected, minus paid to depositors
+      const netRevenue = totalCollected + totalEmiCollected - totalPaidOut;
 
       // Per-borrower rows with correct interest
       const borrowerRows = activeBorrowers.map(b => {
@@ -115,6 +125,8 @@ export default function MonthlyReceivable() {
       setData({ totalReceivable, totalCollected, totalPayable, totalPaidOut, netRevenue, borrowerRows, depositRows,
         collectionRate: totalReceivable>0 ? Math.min(100,(totalCollected/totalReceivable)*100) : 0,
         payoutRate: totalPayable>0 ? Math.min(100,(totalPaidOut/totalPayable)*100) : 0,
+        totalEmiDue, totalEmiCollected, activeEmiCount: activeEmi.length,
+        emiCollectionRate: totalEmiDue>0 ? Math.min(100,(totalEmiCollected/totalEmiDue)*100) : 0,
       });
     } catch(e) { toast.error('Failed to load'); console.error(e); }
     finally { setLoading(false); }
@@ -136,11 +148,7 @@ export default function MonthlyReceivable() {
     <div className="page-enter">
       <PageHeader
         title="Monthly Report"
-        subtitle={`Interest flow analysis — ${label}`}
-        action={
-          <input type="month" value={month} onChange={e=>setMonth(e.target.value)}
-            style={{ padding:'8px 14px', background:'#fff', border:'1px solid var(--border-strong)', borderRadius:'var(--r-sm)', fontSize:14, color:'var(--text-primary)', outline:'none', fontFamily:'inherit', cursor:'pointer' }}/>
-        }
+        subtitle={`Interest flow analysis — ${label} (current month)`}
       />
 
       {/* KPI Row */}
@@ -174,6 +182,21 @@ export default function MonthlyReceivable() {
           icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>}
         />
       </div>
+
+      {/* EMI Loans — connected into the Monthly Report */}
+      {(d.activeEmiCount||0)>0 && (
+        <>
+          <SectionHeader title="📆 EMI Loans — This Month"/>
+          <div className="grid-4" style={{ marginBottom:20 }}>
+            <StatCard label="EMI Due This Month" value={formatCurrency(Math.round(d.totalEmiDue||0))} sub={`${d.activeEmiCount||0} active EMI loan${(d.activeEmiCount||0)!==1?'s':''}`} color="#5e5ce6"
+              icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M12 10v4M10 12h4"/></svg>}/>
+            <StatCard label="EMI Collected" value={formatCurrency(Math.round(d.totalEmiCollected||0))} sub={`${(d.emiCollectionRate||0).toFixed(0)}% of this month's EMI due`} color="#34c759"
+              icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="20 6 9 17 4 12"/></svg>}/>
+            <StatCard label="EMI Pending" value={formatCurrency(Math.round(Math.max(0,(d.totalEmiDue||0)-(d.totalEmiCollected||0))))} sub="Still to be collected this month" color="#ff9500"
+              icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>}/>
+          </div>
+        </>
+      )}
 
       {/* Progress bars */}
       <div className="grid-2" style={{ marginBottom:20 }}>

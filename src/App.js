@@ -43,6 +43,7 @@ import FLBorrowers from './pages/finledger/Borrowers';
 import FLCustomers from './pages/finledger/Customers';
 import FLJournal from './pages/finledger/Journal';
 import FLBorrowerForm from './pages/finledger/BorrowerForm';
+import FLEMILoanForm from './pages/finledger/EMILoanForm';
 import FLInterestCollection from './pages/finledger/InterestCollection';
 import FLLoanRepayment from './pages/finledger/LoanRepayment';
 import FLMonthlyReceivable from './pages/finledger/MonthlyReceivable';
@@ -51,6 +52,7 @@ import FLLedgerEntries from './pages/finledger/LedgerEntries';
 import FLBackupRestore from './pages/finledger/BackupRestore';
 import FLAlerts from './pages/finledger/Alerts';
 import FLEMILoans from './pages/finledger/EMILoans';
+import FLCollectEMI from './pages/finledger/CollectEMI';
 import FLEMIAlerts from './pages/finledger/EMIAlerts';
 import FLExpenses from './pages/finledger/FinanceExpenses';
 import FLReports from './pages/finledger/Reports';
@@ -187,6 +189,9 @@ function AppRouter() {
             <Route path="backup" element={<FLBackupRestore />} />
             <Route path="alerts" element={<FLAlerts />} />
             <Route path="emi-loans" element={<FLEMILoans />} />
+            <Route path="collect-emi" element={<FLCollectEMI />} />
+            <Route path="emi-loans/new" element={<FLEMILoanForm />} />
+            <Route path="emi-loans/edit/:id" element={<FLEMILoanForm />} />
             <Route path="emi-alerts" element={<FLEMIAlerts />} />
             <Route path="expenses" element={<FLExpenses />} />
             <Route path="reports" element={<FLReports />} />

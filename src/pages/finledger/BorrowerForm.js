@@ -5,6 +5,7 @@ import {db} from '../../firebase/config';
 import {uploadDocumentFile,openDocument} from '../../utils/fileStore';
 import {saveBorrowerDocs,getBorrowerDocs} from '../../utils/borrowerFiles';
 import {logStatusChange} from '../../utils/statusHistory';
+import {syncGuardianAsUser} from '../../utils/guardianSync';
 import toast from 'react-hot-toast';
 import {Button,FormField,Input,Select,Card,PageHeader,SectionHeader,InfoRow,Divider,formatCurrency} from '../../components/finledger/UI';
 import {useAuth} from '../../contexts/AuthContext';
@@ -52,6 +53,7 @@ export default function BorrowerForm(){
 
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
   const[custs,setCusts]=useState([]);const[custQ,setCustQ]=useState('');const[linkedUser,setLinkedUser]=useState(null);
+  const[guardianQ,setGuardianQ]=useState('');const[guardianLinked,setGuardianLinked]=useState(null);
   useEffect(()=>{getDocs(collection(db,'customer_master')).then(s=>setCusts(s.docs.map(d=>({id:d.id,...d.data()})))).catch(()=>{});},[]);
 
 
@@ -65,6 +67,8 @@ export default function BorrowerForm(){
   async function submit(e){
     e.preventDefault();
     if(!isEdit&&!linkedUser) return toast.error('Select an existing User first — loans can only be created for a linked User.');
+    if(form.guardianPhone && form.phone && form.guardianPhone.trim()===form.phone.trim())
+      return toast.error('The Guardian must be a different person from the borrower — they cannot share the same phone number.');
     if(!form.borrowerName||!form.phone||!form.loanAmount||!form.interestRate||!form.loanStartDate)
       return toast.error('Fill all required fields');
     if(!isEdit&&!files.check&&!existing.check) return toast.error('Check Copy is mandatory');
@@ -111,6 +115,7 @@ export default function BorrowerForm(){
         });
       }
       await saveBorrowerDocs(bid,{check:cu,bond:bu,agreement:au,land:lu});
+      await syncGuardianAsUser(form.guardianName, form.guardianPhone, form.guardianAddress, user?.uid);
       toast.success(isEdit?'Borrower updated!':'Borrower added!');
       nav('/fl/borrowers');
     }catch(e){console.error(e);toast.error('Failed: '+e.message);}finally{setLoading(false);}
@@ -207,16 +212,57 @@ export default function BorrowerForm(){
             </div>
           </Card>
 
-          {/* Guardian Details */}
+          {/* Guardian Details — searchable picker, same as the main User picker above.
+              A guardian is also a real User in the system (searchable, reusable across
+              records) — and must be a DIFFERENT person from the borrower themselves. */}
           <Card>
             <SectionHeader title="Guardian Details" action={<span style={{fontSize:11,color:'var(--text-secondary)'}}>Optional</span>}/>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
-              <FormField label="Guardian Name"><Input value={form.guardianName} onChange={e=>set('guardianName',e.target.value)} placeholder="Guardian's full name"/></FormField>
-              <FormField label="Guardian Mobile"><Input value={form.guardianPhone} onChange={e=>set('guardianPhone',e.target.value)} placeholder="9876543210" type="tel"/></FormField>
+            <div style={{padding:'14px 16px',background:guardianLinked?'rgba(88,86,214,0.06)':'rgba(118,118,128,0.05)',border:guardianLinked?'1.5px solid rgba(88,86,214,0.3)':'1.5px dashed rgba(0,0,0,0.15)',borderRadius:12,marginBottom:form.guardianName?12:0}}>
+              <div style={{fontSize:11,fontWeight:700,color:guardianLinked?'#5856d6':'var(--text-secondary)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:8}}>
+                {guardianLinked ? '✓ Linked to User' : 'Search or add a Guardian'}
+              </div>
+              {guardianLinked ? (
+                <div style={{display:'flex',alignItems:'center',gap:10}}>
+                  <div style={{width:36,height:36,borderRadius:'50%',background:'linear-gradient(135deg,#5856d6,#af52de)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:800,flexShrink:0}}>{(guardianLinked.name||'?')[0].toUpperCase()}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:700,fontSize:14}}>{guardianLinked.name}</div>
+                    <div style={{fontSize:12,color:'var(--text-secondary)'}}>{guardianLinked.phone}{guardianLinked.customerId?' · '+guardianLinked.customerId:''}</div>
+                  </div>
+                  <button type="button" onClick={()=>{setGuardianLinked(null);set('guardianName','');set('guardianPhone','');}} style={{fontSize:12,color:'#ff3b30',background:'none',border:'1px solid rgba(255,59,48,0.3)',borderRadius:8,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',flexShrink:0}}>Change</button>
+                </div>
+              ) : (
+                <>
+                  <input value={guardianQ} onChange={e=>{setGuardianQ(e.target.value);set('guardianName',e.target.value);}} placeholder="Search existing user, or type a new name…" style={{width:'100%',boxSizing:'border-box',height:36,padding:'0 12px',borderRadius:9,border:'1px solid rgba(0,0,0,0.12)',fontSize:13,fontFamily:'inherit',outline:'none'}}/>
+                  {guardianQ.trim()&&(()=>{
+                    const matches=custs.filter(cc=>cc.id!==form.customerId && [cc.name,cc.phone,cc.customerId].some(v=>String(v||'').toLowerCase().includes(guardianQ.trim().toLowerCase())));
+                    return(
+                    <div style={{marginTop:8,display:'grid',gap:4,maxHeight:180,overflowY:'auto'}}>
+                      {matches.slice(0,6).map(cc=>{
+                        const isSamePerson = cc.phone && form.phone && cc.phone===form.phone;
+                        return(
+                        <div key={cc.id} onClick={()=>{
+                          if(isSamePerson){toast.error('The Guardian must be a different person from the borrower.');return;}
+                          setGuardianLinked(cc);set('guardianName',cc.name||'');set('guardianPhone',cc.phone||'');setGuardianQ('');
+                        }} style={{padding:'8px 10px',borderRadius:8,background:isSamePerson?'rgba(255,59,48,0.04)':'#fff',border:`1px solid ${isSamePerson?'rgba(255,59,48,0.25)':'rgba(0,0,0,0.08)'}`,cursor:isSamePerson?'not-allowed':'pointer',fontSize:13,opacity:isSamePerson?0.6:1}}>
+                          <strong>{cc.name}</strong> <span style={{color:'var(--text-secondary)',fontSize:11.5}}>· {cc.phone}{cc.customerId?' · '+cc.customerId:''}</span>
+                          {isSamePerson && <span style={{marginLeft:6,fontSize:11,color:'#ff3b30',fontWeight:600}}>Same as borrower — can't select</span>}
+                        </div>);
+                      })}
+                      {matches.length===0 && (
+                        <div style={{fontSize:12.5,color:'var(--text-secondary)',padding:'8px 2px'}}>No matching user. Keep typing the full name and phone below to add them as a new Guardian.</div>
+                      )}
+                    </div>
+                    );
+                  })()}
+                </>
+              )}
             </div>
-            <div style={{marginTop:12}}>
-              <FormField label="Guardian Address"><Input value={form.guardianAddress} onChange={e=>set('guardianAddress',e.target.value)} placeholder="Guardian's full address"/></FormField>
-            </div>
+            {form.guardianName && (
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+                <FormField label="Guardian Mobile"><Input value={form.guardianPhone} onChange={e=>set('guardianPhone',e.target.value)} placeholder="9876543210" type="tel"/></FormField>
+                <FormField label="Guardian Address"><Input value={form.guardianAddress} onChange={e=>set('guardianAddress',e.target.value)} placeholder="Guardian's full address"/></FormField>
+              </div>
+            )}
           </Card>
 
           {/* Security Details */}

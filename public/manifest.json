@@ -1,0 +1,11 @@
+{
+  "short_name": "EC Fin 360",
+  "name": "EC Fin 360 — Finance, Chit, Loans, Real Estate",
+  "icons": [
+    { "src": "favicon.png", "sizes": "512x512", "type": "image/png" }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#111928",
+  "background_color": "#ffffff"
+}

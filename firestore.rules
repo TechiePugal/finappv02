@@ -1,0 +1,108 @@
+rules_version = '2';
+
+// ══════════════════════════════════════════════════════════════════════════
+// EC Fin 360 — Firestore Security Rules
+//
+// WHAT THIS FIXES: the "permission-denied" errors you're seeing happen when
+// Firestore's rules reject a request before it ever reaches your app's code —
+// no amount of changes in the React app can fix that, because the rules live
+// separately, inside the Firebase Console. This almost always happens because
+// a brand-new Firestore project starts in "production mode," which defaults
+// to blocking every single read and write until you explicitly allow them.
+//
+// THE MODEL USED HERE: every collection below simply requires the user to be
+// SIGNED IN (request.auth != null). Per-user data isolation — making sure one
+// account only ever sees its own borrowers, chits, projects, etc. — is already
+// enforced in the app's own code (every list is filtered client-side by
+// createdBy). These rules restore the app to working order without breaking
+// that existing logic, and without blocking older records that predate the
+// createdBy field.
+//
+// HOW TO APPLY:
+//   1. Go to https://console.firebase.google.com → select your project.
+//   2. Firestore Database (left sidebar) → "Rules" tab at the top.
+//   3. Select all existing text in the editor and delete it.
+//   4. Paste this entire file in its place.
+//   5. Click "Publish".
+// Changes take effect within a few seconds — no app redeploy needed.
+// ══════════════════════════════════════════════════════════════════════════
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Simple, reusable check: must be signed in.
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // ── Finance Ledger ──────────────────────────────────────────────────────
+    match /borrower_master/{id}        { allow read, write: if signedIn(); }
+    match /deposit_master/{id}         { allow read, write: if signedIn(); }
+    match /emi_loans/{id}              { allow read, write: if signedIn(); }
+    match /emi_collections/{id}        { allow read, write: if signedIn(); }
+    match /loan_repayments/{id}        { allow read, write: if signedIn(); }
+    match /loan_additions/{id}         { allow read, write: if signedIn(); }
+    match /deposit_additions/{id}      { allow read, write: if signedIn(); }
+    match /deposit_payments/{id}       { allow read, write: if signedIn(); }
+    match /deposit_interest_schedule/{id} { allow read, write: if signedIn(); }
+    match /borrower_interest_payments/{id} { allow read, write: if signedIn(); }
+    match /finance_expenses/{id}       { allow read, write: if signedIn(); }
+    match /finance_ledger_entries/{id} { allow read, write: if signedIn(); }
+    match /customer_master/{id}        { allow read, write: if signedIn(); }
+    match /status_history/{id}         { allow read, write: if signedIn(); }
+
+    // Safe per-record document/photo storage (keyed like "{recordId}_check" etc.)
+    match /borrower_files/{id}   { allow read, write: if signedIn(); }
+    match /depositor_files/{id}  { allow read, write: if signedIn(); }
+    match /emi_files/{id}        { allow read, write: if signedIn(); }
+
+    // ── Chit Fund ────────────────────────────────────────────────────────
+    match /chit_master/{id}                  { allow read, write: if signedIn(); }
+    match /chit_members/{id}                 { allow read, write: if signedIn(); }
+    match /chit_auction_schedule/{id}         { allow read, write: if signedIn(); }
+    match /chit_auction_results/{id}          { allow read, write: if signedIn(); }
+    match /chit_member_payments/{id}          { allow read, write: if signedIn(); }
+    match /chit_commission_distribution/{id}  { allow read, write: if signedIn(); }
+    match /chit_company_investment/{id}       { allow read, write: if signedIn(); }
+    match /chit_ledger_entries/{id}           { allow read, write: if signedIn(); }
+    match /chit_ledger/{id}                   { allow read, write: if signedIn(); }
+    match /chit_audit_log/{id}                { allow read, write: if signedIn(); }
+    match /chit_others/{id}                   { allow read, write: if signedIn(); }
+    match /chit_others_payments/{id}          { allow read, write: if signedIn(); }
+    match /chit_persons/{id}                  { allow read, write: if signedIn(); }
+    match /chit_person_files/{id}             { allow read, write: if signedIn(); }
+    match /chit_notes/{id}                    { allow read, write: if signedIn(); }
+    match /chit_bidding_notes/{id}             { allow read, write: if signedIn(); }
+
+    // ── Real Estate ──────────────────────────────────────────────────────
+    match /re_projects/{id}         { allow read, write: if signedIn(); }
+    match /re_sites/{id}            { allow read, write: if signedIn(); }
+    match /re_clients/{id}          { allow read, write: if signedIn(); }
+    match /re_investors/{id}        { allow read, write: if signedIn(); }
+    match /re_payments/{id}         { allow read, write: if signedIn(); }
+    match /re_expenses/{id}         { allow read, write: if signedIn(); }
+    match /re_ledger/{id}           { allow read, write: if signedIn(); }
+    match /re_documents/{id}        { allow read, write: if signedIn(); }
+    match /re_rent_agreements/{id}  { allow read, write: if signedIn(); }
+    match /re_rent_payments/{id}    { allow read, write: if signedIn(); }
+
+    // ── App-wide: profile, notes, sessions ──────────────────────────────
+    // These are keyed by the user's own uid as the document ID, so they can
+    // be locked down more tightly — only the owning account may touch them.
+    match /company_profiles/{uid} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+    match /company_settings/{uid} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+    match /app_notes/{id} {
+      allow read, write: if signedIn();
+    }
+    match /user_sessions/{id} {
+      allow read, write: if signedIn();
+    }
+
+    // Anything not explicitly listed above stays blocked by default —
+    // if you add a brand-new collection later, add a matching block here.
+  }
+}
