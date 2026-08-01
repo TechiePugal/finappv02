@@ -32,7 +32,7 @@ export default function MonthlyReceivable() {
     setLoading(true);
     try {
       // Fetch all needed data in parallel
-      const [bSnap, dSnap, bpSnap, dpSnap, repSnap, emiSnap, emiColSnap] = await Promise.all([
+      const [bSnap, dSnap, bpSnap, dpSnap, repSnap, emiSnap, emiColSnap, fineSnap] = await Promise.all([
         getDocs(collection(db, 'borrower_master')),
         getDocs(collection(db, 'deposit_master')),
         getDocs(query(collection(db, 'borrower_interest_payments'), where('month','==',month))),
@@ -40,6 +40,7 @@ export default function MonthlyReceivable() {
         getDocs(collection(db, 'loan_repayments')),
         getDocs(collection(db, 'emi_loans')),
         getDocs(collection(db, 'emi_collections')),
+        getDocs(collection(db, 'finance_ledger_entries')),
       ]);
 
       const borrowers = scopeToUser(bSnap.docs.map(d => ({id:d.id,...d.data()})), user?.uid);
@@ -73,20 +74,30 @@ export default function MonthlyReceivable() {
         .reduce((s,d) => s + (d.data().amountPaid||0), 0);
 
       const totalPayable    = activeDeposits.reduce((s,d) => s + ((d.depositAmount||0)*(d.interestRate||0)/100), 0); // monthly basis
+      // Interest Given = cash paid out + amount compounded back into principal (both count as 'given')
       const totalPaidOut    = dpSnap.docs.filter(d=>validDepositIds.has(d.data().depositId))
-        .filter(d => d.data().status === 'Paid')
-        .reduce((s,d) => s + (d.data().amountPaid||0), 0);
+        .filter(d => d.data().status === 'Paid' || d.data().addedToDeposit)
+        .reduce((s,d) => s + (d.data().amountPaid||0) + (d.data().addedAmount||0), 0);
 
       // ── Connect EMI Loans into the Monthly Report ──
       const emiLoans = scopeToUser(emiSnap.docs.map(d => ({id:d.id,...d.data()})), user?.uid);
       const emiCols = scopeToUser(emiColSnap.docs.map(d => ({id:d.id,...d.data()})), user?.uid);
       const activeEmi = emiLoans.filter(l => l.status === 'Active');
       const totalEmiDue = activeEmi.reduce((s,l) => s + (l.emiAmount||0), 0);
+      // BUG FIX: was using c.totalCollected (includes fine) — now uses c.amount only (fine excluded)
       const totalEmiCollected = emiCols.filter(c => c.date && c.date.startsWith(month) && c.status === 'Paid')
-        .reduce((s,c) => s + (c.totalCollected||c.amount||0), 0);
+        .reduce((s,c) => s + (c.amount||0), 0);
+      const validLoanIds = new Set(borrowers.map(b=>b.id));
+      const validEmiIds = new Set(emiLoans.map(l=>l.id));
 
-      // Net = collected from borrowers + EMI collected, minus paid to depositors
-      const netRevenue = totalCollected + totalEmiCollected - totalPaidOut;
+      // ── Fine income — kept OUT of every figure above, added ONLY to net revenue below ──
+      const fineDocs = scopeToUser(fineSnap.docs.map(d=>({id:d.id,...d.data()})), user?.uid).filter(e=>e.category==='Fine Income');
+      const curMonthFineIncome = fineDocs.filter(e=>e.date && e.date.startsWith(month))
+        .filter(e=>(e.borrowerId && validLoanIds.has(e.borrowerId)) || (e.loanId && validEmiIds.has(e.loanId)))
+        .reduce((s,e)=>s+(e.amount||0),0);
+
+      // Net = collected from borrowers + EMI collected, minus paid to depositors, PLUS fine income
+      const netRevenue = totalCollected + totalEmiCollected - totalPaidOut + curMonthFineIncome;
 
       // Per-borrower rows with correct interest
       const borrowerRows = activeBorrowers.map(b => {
@@ -127,6 +138,10 @@ export default function MonthlyReceivable() {
         payoutRate: totalPayable>0 ? Math.min(100,(totalPaidOut/totalPayable)*100) : 0,
         totalEmiDue, totalEmiCollected, activeEmiCount: activeEmi.length,
         emiCollectionRate: totalEmiDue>0 ? Math.min(100,(totalEmiCollected/totalEmiDue)*100) : 0,
+        curMonthFineIncome,
+        loanBalance: Math.max(0,totalReceivable-totalCollected),
+        emiBalance: Math.max(0,totalEmiDue-totalEmiCollected),
+        combinedNetProfitMonth: totalCollected + totalEmiCollected - totalPaidOut + curMonthFineIncome,
       });
     } catch(e) { toast.error('Failed to load'); console.error(e); }
     finally { setLoading(false); }
@@ -182,6 +197,25 @@ export default function MonthlyReceivable() {
           icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>}
         />
       </div>
+
+      {/* Net Profit breakdown — this month only, fine kept separate from loan/EMI figures
+          and added ONLY here, exactly like the overall Dashboard */}
+      <Card style={{marginBottom:20, background:'linear-gradient(135deg,rgba(48,209,88,0.06),rgba(10,132,255,0.04))', border:'1px solid rgba(48,209,88,0.18)'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:14}}>
+          <div>
+            <div style={{fontSize:12,fontWeight:700,color:'var(--text-secondary)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:4}}>Net Profit — {label}</div>
+            <div style={{fontSize:26,fontWeight:900,color:(d.combinedNetProfitMonth||0)>=0?'var(--green)':'var(--red)',letterSpacing:'-0.6px'}}>
+              {(d.combinedNetProfitMonth||0)>=0?'+':'-'}{formatCurrency(Math.round(Math.abs(d.combinedNetProfitMonth||0)))}
+            </div>
+          </div>
+          <div style={{display:'flex',gap:18,flexWrap:'wrap',fontSize:12.5,color:'var(--text-secondary)'}}>
+            <span>Loan Interest: <strong style={{color:'var(--text-primary)'}}>{formatCurrency(Math.round(d.totalCollected||0))}</strong></span>
+            <span>EMI Interest: <strong style={{color:'var(--text-primary)'}}>{formatCurrency(Math.round(d.totalEmiCollected||0))}</strong></span>
+            <span>− Interest Paid: <strong style={{color:'#ff453a'}}>{formatCurrency(Math.round(d.totalPaidOut||0))}</strong></span>
+            <span>+ Fine Income: <strong style={{color:'#ff9500'}}>{formatCurrency(Math.round(d.curMonthFineIncome||0))}</strong></span>
+          </div>
+        </div>
+      </Card>
 
       {/* EMI Loans — connected into the Monthly Report */}
       {(d.activeEmiCount||0)>0 && (

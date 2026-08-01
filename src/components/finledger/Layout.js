@@ -25,6 +25,8 @@ const NAV_GROUPS = [
       icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
     { to:'/fl/depositor-settlement', label:'Settle Interest',
       icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><line x1="12" y1="6" x2="12" y2="8"/><line x1="12" y1="16" x2="12" y2="18"/></svg> },
+    { to:'/fl/refunding', label:'Refunding',
+      icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg> },
   ]},
   { label:'Loans', items:[
     { to:'/fl/borrowers', label:'Borrowers',

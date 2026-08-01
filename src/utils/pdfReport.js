@@ -332,10 +332,12 @@ export function printOverallReport({fromDate, toDate, borrowers, depositors, int
   const filteredExps = (expenses||[]).filter(e=>e.date&&e.date>=fromDate&&e.date<=toDate);
   const filteredEMI  = (emiCollections||[]).filter(e=>e.date&&e.date>=fromDate&&e.date<=toDate);
 
-  const totalInterest = filteredInts.reduce((s,p)=>s+(p.totalCollected||p.amountPaid||0),0);
+  // Fine amounts excluded here — kept separate from interest/EMI income, consistent
+  // with the rule that fine never mixes into loan/EMI accounting.
+  const totalInterest = filteredInts.reduce((s,p)=>s+(p.amountPaid||0),0);
   const totalRepaid   = filteredReps.reduce((s,r)=>s+(r.repaidAmount||r.amount||0),0);
   const totalExpenses = filteredExps.reduce((s,e)=>s+(e.amount||0),0);
-  const totalEMI      = filteredEMI.reduce((s,e)=>s+(e.totalCollected||e.amount||0),0);
+  const totalEMI      = filteredEMI.reduce((s,e)=>s+(e.amount||0),0);
   const totalIncome   = totalInterest+totalRepaid+totalEMI;
   const netFlow       = totalIncome-totalExpenses;
 
@@ -349,9 +351,9 @@ export function printOverallReport({fromDate, toDate, borrowers, depositors, int
 
   // Group interest by month
   const byMonth = {};
-  filteredInts.forEach(p=>{const m=p.month||p.paymentDate?.slice(0,7)||'';if(!byMonth[m])byMonth[m]={interest:0,repaid:0,emi:0,expenses:0};byMonth[m].interest+=(p.totalCollected||p.amountPaid||0);});
+  filteredInts.forEach(p=>{const m=p.month||p.paymentDate?.slice(0,7)||'';if(!byMonth[m])byMonth[m]={interest:0,repaid:0,emi:0,expenses:0};byMonth[m].interest+=(p.amountPaid||0);});
   filteredReps.forEach(r=>{const m=r.date?.slice(0,7)||'';if(!byMonth[m])byMonth[m]={interest:0,repaid:0,emi:0,expenses:0};byMonth[m].repaid+=(r.repaidAmount||r.amount||0);});
-  filteredEMI.forEach(e=>{const m=e.date?.slice(0,7)||'';if(!byMonth[m])byMonth[m]={interest:0,repaid:0,emi:0,expenses:0};byMonth[m].emi+=(e.totalCollected||e.amount||0);});
+  filteredEMI.forEach(e=>{const m=e.date?.slice(0,7)||'';if(!byMonth[m])byMonth[m]={interest:0,repaid:0,emi:0,expenses:0};byMonth[m].emi+=(e.amount||0);});
   filteredExps.forEach(e=>{const m=e.date?.slice(0,7)||'';if(!byMonth[m])byMonth[m]={interest:0,repaid:0,emi:0,expenses:0};byMonth[m].expenses+=(e.amount||0);});
   const months = Object.keys(byMonth).sort();
 
@@ -645,10 +647,12 @@ export function printSettleInterestSummary(depositors, payments, month){
     const interest = (d.depositAmount||0)*(d.interestRate||0)/100;
     return { d, p, interest, status: p?.status || 'Pending' };
   });
-  const paid = rows.filter(r=>r.status==='Paid');
-  const pending = rows.filter(r=>r.status!=='Paid');
+  const paid = rows.filter(r=>r.status==='Paid'||r.p?.addedToDeposit);
+  const pending = rows.filter(r=>!(r.status==='Paid'||r.p?.addedToDeposit));
   const totalDue = rows.reduce((s,r)=>s+r.interest,0);
-  const totalPaid = paid.reduce((s,r)=>s+(r.p?.totalPayout||r.p?.amountPaid||r.interest),0);
+  // Includes BOTH the cash portion and whatever was compounded back into the deposit —
+  // a split settlement (part cash, part compound) counts fully as settled either way.
+  const totalPaid = paid.reduce((s,r)=>s+(r.p?.amountPaid||0)+(r.p?.addedAmount||0),0);
 
   const body = `
     <div class="header">

@@ -8,6 +8,7 @@ import { syncGuardianAsUser } from '../../utils/guardianSync';
 import toast from 'react-hot-toast';
 import { Button, FormField, Input, Select, Card, PageHeader, SectionHeader, Divider, formatCurrency } from '../../components/finledger/UI';
 import { useAuth } from '../../contexts/AuthContext';
+import { scopeToUser } from '../../utils/scopeHelper';
 
 function genId() { return 'EMI-' + Date.now().toString(36).toUpperCase(); }
 function today() { return new Date().toISOString().split('T')[0]; }
@@ -52,7 +53,7 @@ export default function EMILoanForm() {
   const [guardianLinked, setGuardianLinked] = useState(null);
 
   useEffect(() => {
-    getDocs(collection(db, 'customer_master')).then(s => setCusts(s.docs.map(d => ({ id: d.id, ...d.data() })))).catch(() => {});
+    getDocs(collection(db, 'customer_master')).then(s => setCusts(scopeToUser(s.docs.map(d => ({ id: d.id, ...d.data() })), user?.uid))).catch(() => {});
   }, []);
 
   useEffect(() => {

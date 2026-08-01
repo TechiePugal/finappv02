@@ -207,11 +207,12 @@ function PhotoPopup({ src, name, onClose }) {
 // This prevents remounting on every parent re-render, which was causing
 // the modal to close when typing.
 function LoanForm({ form, setForm, photoPreview, onPhotoChange, onPhotoRemove, docFiles, setDocFiles, existingDocs }) {
+  const { user } = useAuth();
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const [custs, setCusts] = useState([]);
   const [custQ, setCustQ] = useState('');
   const [linkedUser, setLinkedUser] = useState(form.customerId ? { id: form.customerId, name: form.borrowerName, phone: form.phone, customerId: form.customerId } : null);
-  useEffect(() => { getDocs(collection(db, 'customer_master')).then(s => setCusts(s.docs.map(d => ({ id: d.id, ...d.data() })))).catch(() => {}); }, []);
+  useEffect(() => { getDocs(collection(db, 'customer_master')).then(s => setCusts(scopeToUser(s.docs.map(d => ({ id: d.id, ...d.data() })), user?.uid))).catch(() => {}); }, []);
   const emi = (form.loanAmount && form.interestRate && form.totalPeriods)
     ? Math.round(calcEMI(form.loanAmount, form.interestRate, form.totalPeriods, form.frequency))
     : 0;

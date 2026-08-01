@@ -8,6 +8,7 @@ import {logStatusChange} from '../../utils/statusHistory';
 import toast from 'react-hot-toast';
 import {Button,FormField,Input,Select,Card,PageHeader,Toggle,formatCurrency,SectionHeader,InfoRow,Divider} from '../../components/finledger/UI';
 import {useAuth} from '../../contexts/AuthContext';
+import {scopeToUser} from '../../utils/scopeHelper';
 
 function genId(){return 'DEP-'+Date.now().toString(36).toUpperCase();}
 
@@ -86,7 +87,7 @@ export default function DepositorForm(){
 
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
   const[custs,setCusts]=useState([]);const[custQ,setCustQ]=useState('');const[linkedUser,setLinkedUser]=useState(null);
-  useEffect(()=>{getDocs(collection(db,'customer_master')).then(s=>setCusts(s.docs.map(d=>({id:d.id,...d.data()})))).catch(()=>{});},[]);
+  useEffect(()=>{getDocs(collection(db,'customer_master')).then(s=>setCusts(scopeToUser(s.docs.map(d=>({id:d.id,...d.data()})),user?.uid))).catch(()=>{});},[]);
 
 
   async function handlePhoto(file){

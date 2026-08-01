@@ -127,16 +127,29 @@ export default function InterestCollection(){
       else{data.createdAt=serverTimestamp();data.createdBy=user?.uid||null;const r=await addDoc(collection(db,'borrower_interest_payments'),data);payId=r.id;}
 
       if(collected){
-        // Ledger entry
+        // Ledger entry for the interest itself — fine is recorded SEPARATELY below, so
+        // it never gets mixed into loan/interest accounting; fine income flows straight
+        // to net profit on its own, as its own line item.
+        const interestOnly=parseFloat(pf.amount)||0;
         const lData={
           type:'Credit',category:'Loan Interest',
-          description:`Interest${isPartial?' (partial)':''} from ${modal.borrowerName} — ${month}${fine>0?` + Fine ₹${fine}`:''}`,
-          amount:totalCollected,paymentMode:pf.mode,date:pf.date,
+          description:`Interest${isPartial?' (partial)':''} from ${modal.borrowerName} — ${month}`,
+          amount:interestOnly,paymentMode:pf.mode,date:pf.date,
           borrowerName:modal.borrowerName,borrowerId:modal.id,
           linkedPaymentId:payId,createdAt:serverTimestamp(),createdBy:user?.uid||null
         };
         if(existing?.ledgerEntryId){await updateDoc(doc(db,'finance_ledger_entries',existing.ledgerEntryId),{...lData,createdAt:undefined,updatedAt:serverTimestamp()});}
         else await addDoc(collection(db,'finance_ledger_entries'),lData);
+
+        if(fine>0){
+          await addDoc(collection(db,'finance_ledger_entries'),{
+            type:'Credit',category:'Fine Income',
+            description:`Late-payment fine from ${modal.borrowerName} — ${month}`,
+            amount:fine,paymentMode:pf.mode,date:pf.date,
+            borrowerName:modal.borrowerName,borrowerId:modal.id,
+            linkedPaymentId:payId,createdAt:serverTimestamp(),createdBy:user?.uid||null
+          });
+        }
       }
 
       // Compound interest: add interest amount to loan principal
@@ -398,8 +411,18 @@ export default function InterestCollection(){
           const interest=calcInterest(modal,outstanding);
           const daysOD=getDaysOverdue(month);
           const fineAmt=parseFloat(pf.fine)||0;
+          const existingPay=payments[modal.id]?.[month];
+          const payStatus=existingPay?.status; // 'Paid' | 'Partial' | undefined (pending)
           return(
             <> {/* intColV3 */}
+              {/* Status shown first — before anything else */}
+              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:14,padding:'10px 14px',borderRadius:10,background:payStatus==='Paid'?'rgba(52,199,89,0.08)':payStatus==='Partial'?'rgba(88,86,214,0.08)':'rgba(255,149,0,0.08)',border:`1px solid ${payStatus==='Paid'?'rgba(52,199,89,0.25)':payStatus==='Partial'?'rgba(88,86,214,0.25)':'rgba(255,149,0,0.25)'}`}}>
+                <span style={{fontSize:16}}>{payStatus==='Paid'?'✅':payStatus==='Partial'?'◐':'⏳'}</span>
+                <span style={{fontSize:14,fontWeight:800,color:payStatus==='Paid'?'#1a7a34':payStatus==='Partial'?'#5856d6':'#b45309'}}>
+                  {payStatus==='Paid'?'Paid':payStatus==='Partial'?'Partially Paid':'Pending'}
+                </span>
+                <span style={{fontSize:12,color:'var(--text-secondary)',marginLeft:'auto'}}>{new Date(month+'-01').toLocaleDateString('en-IN',{month:'long',year:'numeric'})}</span>
+              </div>
               {/* identity strip */}
               <div style={{display:'flex',alignItems:'center',gap:14,padding:'14px 16px',borderRadius:14,marginBottom:16,background:'rgba(255,149,0,0.06)',border:'1px solid rgba(255,149,0,0.2)'}}>
                 <div style={{width:52,height:52,borderRadius:'50%',background:'linear-gradient(135deg,#ff9500,#ff6b00)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:20,fontWeight:800,color:'#fff',flexShrink:0}}>{(modal.borrowerName||'?')[0].toUpperCase()}</div>

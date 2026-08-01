@@ -126,12 +126,22 @@ export default function CollectEMI() {
         setCollectLoan(null); setSaving(false); return;
       }
 
+      // EMI amount and fine are recorded as SEPARATE ledger entries — fine income never
+      // mixes into EMI/loan accounting, it flows straight to net profit on its own.
       const ledgerRef = await addDoc(collection(db, 'finance_ledger_entries'), {
         type: 'Credit', category: 'EMI Collection',
-        description: `EMI #${paidPeriods} from ${loan.borrowerName}${fine > 0 ? ` + Fine ${formatCurrency(fine)}` : ''}${isPartial ? ' (partial)' : ''}`,
-        amount: totalCollected, paymentMode: cpf.mode, date: cpf.date,
+        description: `EMI #${paidPeriods} from ${loan.borrowerName}${isPartial ? ' (partial)' : ''}`,
+        amount: parseFloat(cpf.amount) || 0, paymentMode: cpf.mode, date: cpf.date,
         borrowerName: loan.borrowerName, loanId: loan.id, createdAt: serverTimestamp(), createdBy: user?.uid || null,
       });
+      if (fine > 0) {
+        await addDoc(collection(db, 'finance_ledger_entries'), {
+          type: 'Credit', category: 'Fine Income',
+          description: `Late-payment fine from ${loan.borrowerName} — EMI #${paidPeriods}`,
+          amount: fine, paymentMode: cpf.mode, date: cpf.date,
+          borrowerName: loan.borrowerName, loanId: loan.id, createdAt: serverTimestamp(), createdBy: user?.uid || null,
+        });
+      }
       await addDoc(collection(db, 'emi_collections'), {
         loanId: loan.id, borrowerName: loan.borrowerName, emiId: loan.emiId,
         amount: parseFloat(cpf.amount), fine, totalCollected, expectedEMI: loan.emiAmount, date: cpf.date, mode: cpf.mode,
@@ -286,6 +296,12 @@ export default function CollectEMI() {
         )}>
         {collectLoan && (
           <>
+            {/* Status shown first — before anything else */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, padding: '10px 14px', borderRadius: 10, background: cpf.editingId ? 'rgba(52,199,89,0.08)' : 'rgba(255,149,0,0.08)', border: `1px solid ${cpf.editingId ? 'rgba(52,199,89,0.25)' : 'rgba(255,149,0,0.25)'}` }}>
+              <span style={{ fontSize: 16 }}>{cpf.editingId ? '✅' : '⏳'}</span>
+              <span style={{ fontSize: 14, fontWeight: 800, color: cpf.editingId ? '#1a7a34' : '#b45309' }}>{cpf.editingId ? 'Already Recorded' : 'Pending'}</span>
+              <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginLeft: 'auto' }}>EMI #{cpf.periodNo}</span>
+            </div>
             <div style={{ background: 'linear-gradient(135deg,#007aff,#34aadc)', borderRadius: 12, padding: '16px', marginBottom: 16 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
                 {collectLoan.photo

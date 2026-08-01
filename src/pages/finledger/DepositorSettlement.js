@@ -86,11 +86,16 @@ export default function DepositorSettlement(){
     const daysOD=getDaysOverdue(slot.dueDate);
     const fine=daysOD>2?(daysOD-2)*DAILY_FINE:0;
     setModal({depositor,slot});
+    const interestDue=Math.round(calcPeriodInt(depositor));
+    // Split settlement: how much of the interest is paid out in cash vs added back to
+    // the deposit principal (compound) — any ratio, not just all-or-nothing.
+    const prevAdded=existing?.addedAmount||0;
+    const prevCash=existing?.amountPaid||0;
     setPf({
       date:new Date().toISOString().split('T')[0],
       mode:existing?.paymentMode||'Cash',
-      amount:String(Math.round(calcPeriodInt(depositor))),
-      addToDeposit:existing?.addedToDeposit||false,
+      cashAmount:String(existing?(prevCash):interestDue),
+      compoundAmount:String(existing?prevAdded:0),
       fine:String(fine),
       collectFine:false,
       remarks:existing?.remarks||''
@@ -104,23 +109,25 @@ export default function DepositorSettlement(){
       const key=`${depositor.id}_${slot.month}`;
       const existing=payments[key];
       const interest=calcPeriodInt(depositor);
-      const addAmt=Math.round(interest);
-      const wasAdded=existing?.addedToDeposit===true;
-      const wantAdd=pf.addToDeposit&&!paid;
-      let principalDelta=0;
-      if(wantAdd&&!wasAdded)principalDelta=addAmt;
-      else if(!wantAdd&&wasAdded)principalDelta=-(existing.addedAmount||addAmt);
-      const finalAddedAmount=wantAdd?(wasAdded?(existing.addedAmount||addAmt):addAmt):0;
       const fine=pf.collectFine?parseFloat(pf.fine)||0:0;
-      const totalPayout=paid?(parseFloat(pf.amount)||0)+fine:0;
+
+      // Split settlement: cash portion (paid out) + compound portion (added to principal).
+      // Both can be any amount — e.g. ₹12,000 due → ₹2,000 cash + ₹10,000 compounded,
+      // or the depositor tops up with their OWN extra cash to compound a larger amount.
+      const cashVal=paid?(parseFloat(pf.cashAmount)||0):0;
+      const compoundVal=paid?(parseFloat(pf.compoundAmount)||0):0;
+      const totalPayout=cashVal+fine; // only the CASH portion is an actual outflow
+
+      const prevCompound=existing?.addedAmount||0;
+      const principalDelta=compoundVal-prevCompound; // reverses cleanly if edited or unpaid
 
       const data={
         depositId:depositor.id,depositorName:depositor.name,
         depositAmount:depositor.depositAmount,interestRate:depositor.interestRate,
         amountDue:Math.round(interest),
-        amountPaid:paid?(parseFloat(pf.amount)||0):0,
+        amountPaid:cashVal,
         fine:paid?fine:0,totalPayout,
-        status:paid?'Paid':'Unpaid',addedToDeposit:wantAdd,addedAmount:finalAddedAmount,
+        status:paid?'Paid':'Unpaid',addedToDeposit:compoundVal>0,addedAmount:compoundVal,
         paymentDate:paid?pf.date:null,paymentMode:paid?pf.mode:null,
         remarks:pf.remarks,month:slot.month,updatedAt:serverTimestamp()
       };
@@ -129,10 +136,10 @@ export default function DepositorSettlement(){
       if(existing){await updateDoc(doc(db,'deposit_payments',existing.id),data);}
       else{data.createdAt=serverTimestamp();data.createdBy=user?.uid||null;const r=await addDoc(collection(db,'deposit_payments'),data);payDocId=r.id;}
 
-      if(paid){
+      if(paid&&cashVal>0){
         const lData={
           type:'Debit',category:'Deposit Settlement',
-          description:`Interest payout to ${depositor.name} — ${slot.label}${fine>0?` + Fine ₹${fine}`:''}`,
+          description:`Interest payout to ${depositor.name} — ${slot.label}${compoundVal>0?` (₹${compoundVal} compounded separately)`:''}${fine>0?` + Fine ₹${fine}`:''}`,
           amount:totalPayout,paymentMode:pf.mode,date:pf.date,
           depositorName:depositor.name,depositId:depositor.id,
           linkedDepositPaymentId:payDocId,createdAt:serverTimestamp(),createdBy:user?.uid||null
@@ -141,7 +148,7 @@ export default function DepositorSettlement(){
         else{await addDoc(collection(db,'finance_ledger_entries'),lData);}
       }
 
-      // Compound: apply principal delta ONCE, reverse when marked unpaid
+      // Compound portion: apply the principal delta, cleanly reversible if edited/unpaid
       if(principalDelta!==0){
         const newAmt=Math.max(0,(depositor.depositAmount||0)+principalDelta);
         await updateDoc(doc(db,'deposit_master',depositor.id),{
@@ -149,10 +156,11 @@ export default function DepositorSettlement(){
           periodInterest:calcPeriodInt({...depositor,depositAmount:newAmt}),
           updatedAt:serverTimestamp()
         });
-        toast.success(principalDelta>0?`Interest ${formatCurrency(addAmt)} added once → principal ${formatCurrency(newAmt)}`:`Reversed ${formatCurrency(-principalDelta)} → principal ${formatCurrency(newAmt)}`);
-      } else {
-        toast.success(paid?'Settlement recorded!':(wantAdd&&wasAdded?'Already added once — no double credit':'Marked as unpaid'));
       }
+      toast.success(paid
+        ?(compoundVal>0&&cashVal>0?`✓ Settled — ${formatCurrency(cashVal)} in hand + ${formatCurrency(compoundVal)} compounded`:compoundVal>0?`✓ ${formatCurrency(compoundVal)} added to deposit principal`:'✓ Settlement recorded!')
+        :'Marked as unpaid'
+      );
       setModal(null);
     }catch(e){toast.error('Failed: '+e.message);}finally{setSaving(false);}
   }
@@ -254,6 +262,10 @@ export default function DepositorSettlement(){
           const periodInt=calcPeriodInt(dep);
           const t=parseInt(dep.interestTenure)||1;
           const tenureLabel=t===1?'Monthly':t===3?'Quarterly':t===6?'Half-Yearly':t===12?'Yearly':`Every ${t}mo`;
+          // Same clear format as Borrowers: Total Due − Collected = Remaining
+          const nonFutureSlots=slots.filter(sl=>!sl.isFuture);
+          const totalInterestDue=nonFutureSlots.length*periodInt;
+          const remainingInterestToPay=Math.max(0,totalInterestDue-totalColl);
 
           return(
             <Card key={dep.id} style={{padding:0,overflow:'visible'}}>
@@ -264,7 +276,14 @@ export default function DepositorSettlement(){
                     :<div style={{width:44,height:44,borderRadius:'50%',background:'rgba(88,86,214,0.12)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,fontWeight:700,color:'#5856d6',flexShrink:0}}>{dep.name?.[0]?.toUpperCase()}</div>}
                   <div>
                     <div style={{fontWeight:700,fontSize:15,marginBottom:2}}>{dep.name}</div>
-                    <div style={{fontSize:12,color:'var(--text-secondary)'}}>{dep.depositId} · {formatCurrency(dep.depositAmount)} · {dep.interestRate}%/mo · {tenureLabel} · {dep.compounding?'Compound':'Simple'}</div>
+                    <div style={{fontSize:12,color:'var(--text-secondary)'}}>
+                      Deposit from {dep.startDate||'—'} · {formatCurrency(dep.depositAmount)} · {dep.interestRate}%/mo · {tenureLabel} · {dep.compounding?'Compound':'Simple'}
+                    </div>
+                    <div style={{fontSize:11.5,color:'var(--text-secondary)',marginTop:3}}>
+                      Interest — Total Due: <strong style={{color:'var(--text-primary)'}}>{formatCurrency(Math.round(totalInterestDue))}</strong>
+                      {' − '}Collected: <strong style={{color:'#34c759'}}>{formatCurrency(Math.round(totalColl))}</strong>
+                      {' = '}Remaining to Pay: <strong style={{color:remainingInterestToPay>0?'#ff3b30':'#34c759'}}>{formatCurrency(Math.round(remainingInterestToPay))}</strong>
+                    </div>
                   </div>
                 </div>
                 <div style={{display:'flex',gap:20,alignItems:'center'}}>
@@ -365,11 +384,8 @@ export default function DepositorSettlement(){
       <Modal open={!!modal} onClose={()=>setModal(null)} title={`Settle Interest — ${modal?.depositor?.name}`} width={500}
         footer={modal&&(
           <div style={{display:'flex',gap:10,width:'100%'}}>
-            {pf.addToDeposit
-              ?<Button onClick={()=>savePay(false)} disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?'Saving…':'Add to Deposit Principal'}</Button>
-              :<><Button onClick={()=>savePay(true)} disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?'Saving…':'✓ Settle Payout'}</Button>
-              <Button variant="danger" onClick={()=>savePay(false)} disabled={saving}>Mark Unpaid</Button></>
-            }
+            <Button onClick={()=>savePay(true)} disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?'Saving…':'✓ Settle'}</Button>
+            <Button variant="danger" onClick={()=>savePay(false)} disabled={saving}>Mark Unpaid</Button>
           </div>
         )}>
         {modal&&(()=>{
@@ -377,8 +393,17 @@ export default function DepositorSettlement(){
           const interest=calcPeriodInt(depositor);
           const daysOD=getDaysOverdue(slot.dueDate);
           const fineAmt=parseFloat(pf.fine)||0;
+          const existingKey=`${depositor.id}_${slot.month}`;
+          const existingPay=payments[existingKey];
+          const payStatus=existingPay?.status; // 'Paid' | undefined (pending)
           return(
             <>
+              {/* Status shown first — before anything else */}
+              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:14,padding:'10px 14px',borderRadius:10,background:payStatus==='Paid'?'rgba(52,199,89,0.08)':'rgba(255,149,0,0.08)',border:`1px solid ${payStatus==='Paid'?'rgba(52,199,89,0.25)':'rgba(255,149,0,0.25)'}`}}>
+                <span style={{fontSize:16}}>{payStatus==='Paid'?'✅':'⏳'}</span>
+                <span style={{fontSize:14,fontWeight:800,color:payStatus==='Paid'?'#1a7a34':'#b45309'}}>{payStatus==='Paid'?'Paid':'Pending'}</span>
+                <span style={{fontSize:12,color:'var(--text-secondary)',marginLeft:'auto'}}>{slot.label}</span>
+              </div>
               {/* depSettleV3 — identity + stats strip */}
               <div style={{display:'flex',alignItems:'center',gap:14,padding:'14px 16px',borderRadius:14,marginBottom:14,background:'rgba(88,86,214,0.06)',border:'1px solid rgba(88,86,214,0.18)'}}>
                 <div style={{width:52,height:52,borderRadius:'50%',background:'linear-gradient(135deg,#5856d6,#bf5af2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:20,fontWeight:800,color:'#fff',flexShrink:0}}>{(depositor.name||'?')[0].toUpperCase()}</div>
@@ -409,54 +434,62 @@ export default function DepositorSettlement(){
                 </div>
               )}
 
-              {/* Compound: add to deposit */}
-              {depositor.compounding&&(
-                <div style={{background:'rgba(88,86,214,0.06)',border:'1px solid rgba(88,86,214,0.15)',borderRadius:10,padding:'12px 14px',marginBottom:14}}>
-                  <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:13}}>
-                    <input type="checkbox" checked={pf.addToDeposit} onChange={e=>setPf(p=>({...p,addToDeposit:e.target.checked}))} style={{width:15,height:15,accentColor:'#5856d6'}}/>
-                    <span>Add interest <strong>{formatCurrency(Math.round(interest))}</strong> back to deposit principal (compound)</span>
-                  </label>
-                  {pf.addToDeposit&&(
+              {/* Split settlement — cash in hand vs added to deposit (compound), any ratio */}
+              {(() => {
+                const cashV=parseFloat(pf.cashAmount)||0, compV=parseFloat(pf.compoundAmount)||0;
+                const splitTotal=cashV+compV;
+                const mismatch=Math.round(splitTotal)!==Math.round(interest);
+                return (
+                <div style={{background:'rgba(88,86,214,0.05)',border:'1px solid rgba(88,86,214,0.15)',borderRadius:12,padding:'12px 14px',marginBottom:14}}>
+                  <div style={{fontSize:12,color:'var(--text-secondary)',marginBottom:10}}>Split how the interest is handled — cash in hand vs added back to the deposit{depositor.compounding?' (compound)':''}.</div>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:mismatch?8:0}}>
+                    <div>
+                      <label style={{fontSize:11.5,fontWeight:700,color:'var(--text-secondary)',display:'block',marginBottom:5}}>💵 Cash in Hand (₹)</label>
+                      <input type="number" value={pf.cashAmount} onChange={e=>setPf(p=>({...p,cashAmount:e.target.value}))}
+                        style={{width:'100%',boxSizing:'border-box',height:38,padding:'0 12px',borderRadius:9,border:'1.5px solid rgba(0,0,0,0.1)',fontSize:14,fontFamily:'inherit',outline:'none'}}/>
+                    </div>
+                    <div>
+                      <label style={{fontSize:11.5,fontWeight:700,color:'#5856d6',display:'block',marginBottom:5}}>🏦 Add to Deposit (₹)</label>
+                      <input type="number" value={pf.compoundAmount} onChange={e=>setPf(p=>({...p,compoundAmount:e.target.value}))}
+                        style={{width:'100%',boxSizing:'border-box',height:38,padding:'0 12px',borderRadius:9,border:'1.5px solid rgba(88,86,214,0.3)',fontSize:14,fontFamily:'inherit',outline:'none'}}/>
+                    </div>
+                  </div>
+                  {mismatch && (
+                    <div style={{fontSize:11.5,color:'#b45309'}}>⚠ Cash + Compound ({formatCurrency(splitTotal)}) doesn't match interest due ({formatCurrency(Math.round(interest))}). You can still save if this is intentional (e.g. topping up with extra cash).</div>
+                  )}
+                  {compV>0 && (
                     <div style={{marginTop:8,fontSize:12,color:'#5856d6',background:'rgba(88,86,214,0.08)',borderRadius:8,padding:'8px 10px'}}>
-                      New deposit principal: {formatCurrency((depositor.depositAmount||0)+Math.round(interest))}
+                      New deposit principal: {formatCurrency((depositor.depositAmount||0)+compV)}
                     </div>
                   )}
                 </div>
-              )}
+                );
+              })()}
 
-              {!pf.addToDeposit&&(
-                <>
-                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
-                    <div>
-                      <label style={{fontSize:12,fontWeight:500,color:'var(--text-primary)',display:'block',marginBottom:5}}>Date</label>
-                      <input type="date" value={pf.date} onChange={e=>setPf(p=>({...p,date:e.target.value}))}
-                        style={{width:'100%',height:38,padding:'0 12px',borderRadius:10,border:'1.5px solid rgba(0,0,0,0.08)',fontSize:14,fontFamily:'inherit',background:'rgba(118,118,128,0.07)',color:'var(--text-primary)',outline:'none'}}/>
-                    </div>
-                    <div>
-                      <label style={{fontSize:12,fontWeight:500,color:'var(--text-primary)',display:'block',marginBottom:5}}>Mode</label>
-                      <select value={pf.mode} onChange={e=>setPf(p=>({...p,mode:e.target.value}))}
-                        style={{width:'100%',height:38,padding:'0 12px',borderRadius:10,border:'1.5px solid rgba(0,0,0,0.08)',fontSize:14,fontFamily:'inherit',background:'rgba(118,118,128,0.07)',color:'var(--text-primary)',outline:'none',appearance:'none',cursor:'pointer'}}>
-                        <option>Cash</option><option>Bank Transfer</option><option>UPI</option><option>Cheque</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div style={{marginBottom:12}}>
-                    <label style={{fontSize:12,fontWeight:500,color:'var(--text-primary)',display:'block',marginBottom:5}}>Amount (₹)</label>
-                    <input type="number" value={pf.amount} onChange={e=>setPf(p=>({...p,amount:e.target.value}))}
-                      style={{width:'100%',height:38,padding:'0 12px',borderRadius:10,border:'1.5px solid rgba(0,0,0,0.08)',fontSize:14,fontFamily:'inherit',background:'rgba(118,118,128,0.07)',color:'var(--text-primary)',outline:'none'}}/>
-                  </div>
-                  {pf.collectFine&&fineAmt>0&&(
-                    <div style={{padding:'8px 12px',background:'rgba(52,199,89,0.06)',borderRadius:8,fontSize:13,color:'#1a7a34',marginBottom:12}}>
-                      Total payout: {formatCurrency(parseFloat(pf.amount)||0)} + Fine {formatCurrency(fineAmt)} = <strong>{formatCurrency((parseFloat(pf.amount)||0)+fineAmt)}</strong>
-                    </div>
-                  )}
-                  <div>
-                    <label style={{fontSize:12,fontWeight:500,color:'var(--text-primary)',display:'block',marginBottom:5}}>Remarks</label>
-                    <input value={pf.remarks} onChange={e=>setPf(p=>({...p,remarks:e.target.value}))}
-                      style={{width:'100%',height:38,padding:'0 12px',borderRadius:10,border:'1.5px solid rgba(0,0,0,0.08)',fontSize:14,fontFamily:'inherit',background:'rgba(118,118,128,0.07)',color:'var(--text-primary)',outline:'none'}}/>
-                  </div>
-                </>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+                <div>
+                  <label style={{fontSize:12,fontWeight:500,color:'var(--text-primary)',display:'block',marginBottom:5}}>Date</label>
+                  <input type="date" value={pf.date} onChange={e=>setPf(p=>({...p,date:e.target.value}))}
+                    style={{width:'100%',height:38,padding:'0 12px',borderRadius:10,border:'1.5px solid rgba(0,0,0,0.08)',fontSize:14,fontFamily:'inherit',background:'rgba(118,118,128,0.07)',color:'var(--text-primary)',outline:'none'}}/>
+                </div>
+                <div>
+                  <label style={{fontSize:12,fontWeight:500,color:'var(--text-primary)',display:'block',marginBottom:5}}>Mode (for cash portion)</label>
+                  <select value={pf.mode} onChange={e=>setPf(p=>({...p,mode:e.target.value}))}
+                    style={{width:'100%',height:38,padding:'0 12px',borderRadius:10,border:'1.5px solid rgba(0,0,0,0.08)',fontSize:14,fontFamily:'inherit',background:'rgba(118,118,128,0.07)',color:'var(--text-primary)',outline:'none',appearance:'none',cursor:'pointer'}}>
+                    <option>Cash</option><option>Bank Transfer</option><option>UPI</option><option>Cheque</option>
+                  </select>
+                </div>
+              </div>
+              {pf.collectFine&&fineAmt>0&&(
+                <div style={{padding:'8px 12px',background:'rgba(52,199,89,0.06)',borderRadius:8,fontSize:13,color:'#1a7a34',marginBottom:12}}>
+                  Cash payout: {formatCurrency(parseFloat(pf.cashAmount)||0)} + Fine {formatCurrency(fineAmt)} = <strong>{formatCurrency((parseFloat(pf.cashAmount)||0)+fineAmt)}</strong>
+                </div>
               )}
+              <div>
+                <label style={{fontSize:12,fontWeight:500,color:'var(--text-primary)',display:'block',marginBottom:5}}>Remarks</label>
+                <input value={pf.remarks} onChange={e=>setPf(p=>({...p,remarks:e.target.value}))}
+                  style={{width:'100%',height:38,padding:'0 12px',borderRadius:10,border:'1.5px solid rgba(0,0,0,0.08)',fontSize:14,fontFamily:'inherit',background:'rgba(118,118,128,0.07)',color:'var(--text-primary)',outline:'none'}}/>
+              </div>
 
             </>
           );

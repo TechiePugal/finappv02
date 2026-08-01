@@ -29,20 +29,23 @@ export default function Dashboard(){
       const now = new Date();
       const curMo = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
 
-      const [depSnap,borSnap,paySnap,repSnap,setSnap,emiSnap] = await Promise.all([
+      const [depSnap,borSnap,paySnap,repSnap,setAllSnap,emiSnap,emiColSnap,fineSnap] = await Promise.all([
         getDocs(collection(db,'deposit_master')),
         getDocs(collection(db,'borrower_master')),
-        getDocs(collection(db,'borrower_interest_payments')), // fetch all for overdue calc
+        getDocs(collection(db,'borrower_interest_payments')), // fetch all — needed for both overall and monthly figures
         getDocs(collection(db,'loan_repayments')),
-        getDocs(query(collection(db,'deposit_payments'),where('month','==',curMo))),
+        getDocs(collection(db,'deposit_payments')), // fetch ALL, not just current month — overall dashboard needs full history
         getDocs(collection(db,'emi_loans')),
+        getDocs(collection(db,'emi_collections')),
+        getDocs(collection(db,'finance_ledger_entries')), // for Fine Income — kept separate from loan/EMI profit
       ]);
 
       const deps = scopeToUser(depSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid);
       const bors = scopeToUser(borSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid);
-      // Scoped, plain-object arrays for the collections still read as raw .docs elsewhere below
-      const payDocs = scopeToUser(paySnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid);
-      const setDocs = scopeToUser(setSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid);
+      const payDocs = scopeToUser(paySnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid); // ALL borrower_interest_payments
+      const setDocs = scopeToUser(setAllSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid); // ALL deposit_payments
+      const emiColDocs = scopeToUser(emiColSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid); // ALL emi_collections
+      const fineDocs = scopeToUser(fineSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).filter(e=>e.category==='Fine Income');
 
       // Build repayment map
       const repsByBorrower = {};
@@ -75,11 +78,28 @@ export default function Dashboard(){
       const curMonthSettled   = setDocs.filter(d=>d.status==='Paid'||d.addedToDeposit).reduce((s,d)=>s+(d.addedToDeposit?(d.addedAmount||0):(d.amountPaid||0)),0);
 
       const secVal = bors.reduce((s,b)=>s+(b.securityValue||0),0);
-      // Genuinely overdue = Unpaid records from PREVIOUS months (not current month)
       const overdue = payDocs.filter(d=>d.status==='Unpaid'&&d.month&&d.month<curMo).reduce((s,d)=>s+(d.amountDue||0),0);
-      // Current month: only records explicitly saved this month
       const curMonthPays = payDocs.filter(d=>d.month===curMo);
       const uncollectedThisMonth = curMonthPays.filter(d=>d.status==='Unpaid').reduce((s,d)=>s+(d.amountDue||0),0);
+
+      // ══ LOAN (interest business) — Total to Collect / Collected / Balance / Net Profit ══
+      // Fine amounts are NEVER included here — amountPaid/amountDue already exclude fine
+      // by design (fine is its own field on the payment record).
+      const loanTotalDue = payDocs.reduce((s,p)=>s+(p.amountDue||0),0);
+      const loanTotalCollected = payDocs.filter(p=>p.status==='Paid'||p.status==='Partial').reduce((s,p)=>s+(p.amountPaid||0),0);
+      const loanBalance = Math.max(0,loanTotalDue-loanTotalCollected);
+      const loanNetProfit = loanTotalCollected; // interest collected IS the profit on a loan
+
+      // ══ DEPOSITOR — Total Deposit / Interest to Give / Interest Given / Remaining ══
+      const depTotalDeposit = totalDeposits;
+      const depInterestToGive = setDocs.reduce((s,p)=>s+(p.amountDue||0),0);
+      const depInterestGiven = setDocs.filter(p=>p.status==='Paid'||p.addedToDeposit).reduce((s,p)=>s+(p.amountPaid||0)+(p.addedAmount||0),0);
+      const depInterestRemaining = Math.max(0,depInterestToGive-depInterestGiven);
+
+      // ══ FINE INCOME — kept OUT of loan/EMI/deposit figures above, flows ONLY into
+      // the combined Net Profit bar at the very bottom, exactly as requested. ══
+      const totalFineIncomeAllTime = fineDocs.reduce((s,e)=>s+(e.amount||0),0);
+      const curMonthFineIncome = fineDocs.filter(e=>e.date&&e.date.startsWith(curMo)).reduce((s,e)=>s+(e.amount||0),0);
 
       // 6-month chart data (use actual totals for current month)
       const chartData = Array.from({length:6},(_,i)=>{
@@ -113,6 +133,24 @@ export default function Dashboard(){
         },0);
         return {label, expected:Math.round(expectedCol)};
       });
+      // ══ EMI LOAN — Total to Collect / Collected / Balance / Net Profit ══
+      // Fine is stored separately on emi_collections (its own 'fine' field, distinct from
+      // 'amount') and is NEVER counted here — matching the loan-side rule exactly.
+      const emiTotalToCollect = emiLoans.reduce((s,l)=>s+((l.emiAmount||0)*(l.totalPeriods||0)),0); // full schedule value
+      const emiTotalCollected = emiColDocs.filter(c=>c.status==='Paid').reduce((s,c)=>s+(c.amount||0),0); // fine excluded
+      const emiBalance = Math.max(0,emiTotalToCollect-emiTotalCollected);
+      // Net profit on EMI = collected amount minus the PRINCIPAL portion of what's been paid
+      // (principal recovery isn't profit — only the interest portion collected is).
+      const emiPrincipalCollected = emiLoans.reduce((s,l)=>{
+        const perPeriodPrincipal=(l.loanAmount||0)/(l.totalPeriods||1);
+        return s+(perPeriodPrincipal*(l.paidPeriods||0));
+      },0);
+      const emiNetProfit = Math.max(0,emiTotalCollected-emiPrincipalCollected);
+
+      // ══ Combined Net Profit bar — Loan + EMI profit, minus interest paid to depositors,
+      // PLUS fine income added separately here (never inside the per-category figures above) ══
+      const combinedNetProfit = loanNetProfit + emiNetProfit - depInterestGiven + totalFineIncomeAllTime;
+
       const recent=[...bors].sort((a,b)=>(b.createdAt?.toMillis?.()??0)-(a.createdAt?.toMillis?.()??0)).slice(0,5);
 
       setData({
@@ -126,6 +164,10 @@ export default function Dashboard(){
         coverage:totalOutstanding>0?((secVal/totalOutstanding)*100).toFixed(0):100,
         chartData, recent, emiProjData, emiMonthlyTotal, emiLoanCount:activeEmi.length,
         emiClosedCount:closedEmi.length, emiTotalIssued, emiTotalOutstanding,
+        loanTotalDue, loanTotalCollected, loanBalance, loanNetProfit,
+        depTotalDeposit, depInterestToGive, depInterestGiven, depInterestRemaining,
+        emiTotalToCollect, emiTotalCollected, emiBalance, emiNetProfit,
+        totalFineIncomeAllTime, curMonthFineIncome, combinedNetProfit,
       });
     }catch(e){console.error(e);}finally{setLoading(false);}
   }
@@ -144,42 +186,83 @@ export default function Dashboard(){
         </p>
       </div>
 
-      {/* LOANS — overall, all-time figures only */}
+      {/* LOANS — Total to Collect / Collected / Balance / Net Profit (fine excluded) */}
       <SectionHeader title="📋 Loans — Overview"/>
       <div className="grid-4" style={{marginBottom:20}}>
-        <StatCard label="Outstanding Loans" value={formatCurrency(d.totalOutstanding)} sub={`${d.activeBorrowers||0} active · ₹${Math.round((d.totalRepaid||0)/1000)}k repaid`} color="#0a84ff"
-          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M16 10a2 2 0 1 1-4 0 2 2 0 0 1 4 0"/></svg>}/>
-        <StatCard label="Security Coverage" value={`${d.coverage||100}%`} sub="Security vs outstanding" color="#5e5ce6"
-          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>}/>
-        <StatCard label="Non-Active Loans" value={d.nonActive||0} sub={d.nonActive?'Needs immediate attention':'All accounts current'} color={d.nonActive?'#ff453a':'#30d158'}
-          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>}/>
-        <StatCard label="Loans Closed" value={d.closedLoans||0} sub="Fully settled accounts" color="#30d158"
-          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>}/>
+        <StatCard label="Total to Collect" value={formatCurrency(Math.round(d.loanTotalDue||0))} sub="All-time interest recorded due" color="#ff9500"
+          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/></svg>}/>
+        <StatCard label="Total Collected" value={formatCurrency(Math.round(d.loanTotalCollected||0))} sub="Interest only — fine excluded" color="#0a84ff"
+          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="20 6 9 17 4 12"/></svg>}/>
+        <StatCard label="Balance to Collect" value={formatCurrency(Math.round(d.loanBalance||0))} sub={`${d.activeBorrowers||0} active loans`} color="#ff453a"
+          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>}/>
+        <StatCard label="Net Profit (Loans)" value={formatCurrency(Math.round(d.loanNetProfit||0))} sub="Interest collected = profit" color="#30d158"
+          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>}/>
       </div>
 
-      {/* DEPOSITS — overall, all-time figures only */}
+      {/* DEPOSITS — Total Deposit / Interest to Give / Interest Given / Remaining */}
       <SectionHeader title="🏦 Deposits — Overview"/>
       <div className="grid-4" style={{marginBottom:20}}>
-        <StatCard label="Deposit Liability" value={formatCurrency(d.totalDeposits)} sub={`${d.activeDeposits||0} active investors`} color="#bf5af2"
+        <StatCard label="Total Deposit Amount" value={formatCurrency(Math.round(d.depTotalDeposit||0))} sub={`${d.activeDeposits||0} active investors`} color="#bf5af2"
           icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>}/>
-        <StatCard label="Total Depositors" value={d.totalDepositors||0} sub="All-time records" color="#5e5ce6"
-          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>}/>
+        <StatCard label="Interest to Give" value={formatCurrency(Math.round(d.depInterestToGive||0))} sub="All-time, recorded due" color="#ff9500"
+          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/></svg>}/>
+        <StatCard label="Interest Given" value={formatCurrency(Math.round(d.depInterestGiven||0))} sub="Cash paid + compounded" color="#5e5ce6"
+          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="20 6 9 17 4 12"/></svg>}/>
+        <StatCard label="Interest Remaining" value={formatCurrency(Math.round(d.depInterestRemaining||0))} sub="Still owed to depositors" color="#ff453a"
+          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>}/>
       </div>
 
-      {/* EMI LOANS — overall, all-time figures only */}
+      {/* EMI LOANS — Total to Collect / Collected / Balance / Net Profit (fine excluded) */}
       {(d.emiLoanCount||0)+(d.emiClosedCount||0)>0&&(
         <>
         <SectionHeader title="📆 EMI Loans — Overview"/>
         <div className="grid-4" style={{marginBottom:20}}>
-          <StatCard label="EMI Outstanding" value={formatCurrency(Math.round(d.emiTotalOutstanding||0))} sub={`${d.emiLoanCount||0} active EMI loan${(d.emiLoanCount||0)!==1?'s':''}`} color="#5e5ce6"
-            icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M12 10v4M10 12h4"/></svg>}/>
-          <StatCard label="EMI Total Issued" value={formatCurrency(Math.round(d.emiTotalIssued||0))} sub="All-time, all EMI loans" color="#007aff"
+          <StatCard label="Total to Collect" value={formatCurrency(Math.round(d.emiTotalToCollect||0))} sub="Full schedule value, all EMI loans" color="#ff9500"
             icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/></svg>}/>
-          <StatCard label="EMI Closed" value={d.emiClosedCount||0} sub="Fully settled EMI loans" color="#30d158"
+          <StatCard label="Total Collected" value={formatCurrency(Math.round(d.emiTotalCollected||0))} sub="Fine excluded" color="#0a84ff"
+            icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="20 6 9 17 4 12"/></svg>}/>
+          <StatCard label="Balance to Collect" value={formatCurrency(Math.round(d.emiBalance||0))} sub={`${d.emiLoanCount||0} active EMI loan${(d.emiLoanCount||0)!==1?'s':''}`} color="#ff453a"
+            icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 10v4M10 12h4"/></svg>}/>
+          <StatCard label="Net Profit (EMI)" value={formatCurrency(Math.round(d.emiNetProfit||0))} sub="Collected minus principal recovered" color="#30d158"
             icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>}/>
         </div>
         </>
       )}
+
+      {/* Combined Net Profit bar — Loan + EMI profit − depositor interest paid,
+          PLUS fine income (kept OUT of every figure above, added here only) */}
+      <Card style={{marginBottom:20, background:'linear-gradient(135deg,rgba(48,209,88,0.06),rgba(10,132,255,0.04))', border:'1px solid rgba(48,209,88,0.18)'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:14}}>
+          <div>
+            <div style={{fontSize:12,fontWeight:700,color:'var(--text-secondary)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:4}}>Combined Net Profit</div>
+            <div style={{fontSize:30,fontWeight:900,color:(d.combinedNetProfit||0)>=0?'var(--green)':'var(--red)',letterSpacing:'-0.6px'}}>
+              {(d.combinedNetProfit||0)>=0?'+':'-'}{formatCurrency(Math.round(Math.abs(d.combinedNetProfit||0)))}
+            </div>
+          </div>
+          <div style={{display:'flex',gap:20,flexWrap:'wrap',fontSize:12.5,color:'var(--text-secondary)'}}>
+            <span>Loan Profit: <strong style={{color:'var(--text-primary)'}}>{formatCurrency(Math.round(d.loanNetProfit||0))}</strong></span>
+            <span>EMI Profit: <strong style={{color:'var(--text-primary)'}}>{formatCurrency(Math.round(d.emiNetProfit||0))}</strong></span>
+            <span>− Interest Paid: <strong style={{color:'#ff453a'}}>{formatCurrency(Math.round(d.depInterestGiven||0))}</strong></span>
+            <span>+ Fine Income: <strong style={{color:'#ff9500'}}>{formatCurrency(Math.round(d.totalFineIncomeAllTime||0))}</strong></span>
+          </div>
+        </div>
+        <div style={{marginTop:14,height:10,borderRadius:99,background:'rgba(0,0,0,0.06)',overflow:'hidden',display:'flex'}}>
+          {(() => {
+            const parts=[
+              {v:Math.max(0,d.loanNetProfit||0),c:'#0a84ff'},
+              {v:Math.max(0,d.emiNetProfit||0),c:'#5e5ce6'},
+              {v:Math.max(0,d.totalFineIncomeAllTime||0),c:'#ff9500'},
+            ];
+            const total=parts.reduce((s,p)=>s+p.v,0)||1;
+            return parts.map((p,i)=>(<div key={i} style={{width:`${(p.v/total)*100}%`,background:p.c}}/>));
+          })()}
+        </div>
+        <div style={{display:'flex',gap:16,marginTop:8}}>
+          <Leg color="#0a84ff" label="Loan Interest"/>
+          <Leg color="#5e5ce6" label="EMI Interest"/>
+          <Leg color="#ff9500" label="Fine Income"/>
+        </div>
+      </Card>
 
       {/* Charts */}
       <div className="grid-2" style={{marginBottom:14}}>

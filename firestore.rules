@@ -43,6 +43,7 @@ service cloud.firestore {
     match /loan_repayments/{id}        { allow read, write: if signedIn(); }
     match /loan_additions/{id}         { allow read, write: if signedIn(); }
     match /deposit_additions/{id}      { allow read, write: if signedIn(); }
+    match /deposit_refunds/{id}        { allow read, write: if signedIn(); }
     match /deposit_payments/{id}       { allow read, write: if signedIn(); }
     match /deposit_interest_schedule/{id} { allow read, write: if signedIn(); }
     match /borrower_interest_payments/{id} { allow read, write: if signedIn(); }
