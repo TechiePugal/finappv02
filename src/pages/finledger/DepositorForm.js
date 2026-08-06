@@ -228,7 +228,7 @@ export default function DepositorForm(){
               <FormField label="Email"><Input value={form.email} onChange={e=>set('email',e.target.value)} placeholder="email@example.com" type="email"/></FormField>
               <FormField label="Address"><Input value={form.address} onChange={e=>set('address',e.target.value)} placeholder="Full address"/></FormField>
               <FormField label="Deposit Amount (₹)" required><Input value={form.depositAmount} onChange={e=>set('depositAmount',e.target.value)} placeholder="500000" type="number" min="1"/></FormField>
-              <FormField label="Monthly Interest Rate (%)" required><Input value={form.interestRate} onChange={e=>set('interestRate',e.target.value)} placeholder="1.5" type="number" step="0.01" min="0"/></FormField>
+              <FormField label="Monthly Interest Rate (%)" required><Input value={form.interestRate} onChange={e=>set('interestRate',e.target.value)} placeholder="1.5" type="number" step="any" min="0"/></FormField>
               <FormField label="Interest Payout Tenure (months)" required
                 hint="Enter number of months between each payout — 1=Monthly, 3=Quarterly, 6=Half-Yearly, 12=Yearly">
                 <Input value={form.interestTenure} onChange={e=>set('interestTenure',e.target.value)} placeholder="1" type="number" min="1" max="60"/>

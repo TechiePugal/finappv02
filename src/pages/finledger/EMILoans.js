@@ -334,7 +334,7 @@ function LoanForm({ form, setForm, photoPreview, onPhotoChange, onPhotoRemove, d
           <Input type="number" value={form.loanAmount} onChange={e => set('loanAmount', e.target.value)} placeholder="50000" min="1" />
         </FormField>
         <FormField label="Interest Rate (% per month)" required>
-          <Input type="number" value={form.interestRate} onChange={e => set('interestRate', e.target.value)} placeholder="2" step="0.01" min="0" />
+          <Input type="number" value={form.interestRate} onChange={e => set('interestRate', e.target.value)} placeholder="2" step="any" min="0" />
         </FormField>
         <FormField label="EMI Frequency" required>
           <Select value={form.frequency} onChange={e => set('frequency', e.target.value)}>

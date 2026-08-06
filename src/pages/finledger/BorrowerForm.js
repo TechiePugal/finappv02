@@ -191,7 +191,7 @@ export default function BorrowerForm(){
               <FormField label="Phone Number" required><Input value={form.phone} onChange={e=>set('phone',e.target.value)} placeholder="9876543210" type="tel"/></FormField>
               <FormField label="Email"><Input value={form.email} onChange={e=>set('email',e.target.value)} placeholder="email@example.com" type="email"/></FormField>
               <FormField label="Loan Amount (₹)" required><Input value={form.loanAmount} onChange={e=>set('loanAmount',e.target.value)} placeholder="500000" type="number" min="1"/></FormField>
-              <FormField label="Interest Rate (% per month)" required><Input value={form.interestRate} onChange={e=>set('interestRate',e.target.value)} placeholder="2" type="number" step="0.01" min="0"/></FormField>
+              <FormField label="Interest Rate (% per month)" required><Input value={form.interestRate} onChange={e=>set('interestRate',e.target.value)} placeholder="2" type="number" step="any" min="0"/></FormField>
               <FormField label="Loan Start Date" required><Input value={form.loanStartDate} onChange={e=>set('loanStartDate',e.target.value)} type="date"/></FormField>
               <FormField label="Agreement Date" hint="Date the agreement was signed">
                 <Input value={form.agreementDate} onChange={e=>set('agreementDate',e.target.value)} type="date"/>

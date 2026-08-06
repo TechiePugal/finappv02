@@ -211,8 +211,6 @@ export default function InterestCollection(){
                 </button>
               ))}
             </div>
-            <input type="month" value={month} onChange={e=>setMonth(e.target.value)}
-              style={{padding:'8px 14px',background:'#fff',border:'1px solid rgba(0,0,0,0.1)',borderRadius:10,fontSize:14,color:'var(--text-primary)',outline:'none',fontFamily:'inherit'}}/>
             <Button variant="secondary" onClick={()=>printCollectInterestSummary(filtBorrowers, payments, month, getOutstanding, calcInterest)}>Export PDF</Button>
           </div>
         }/>
@@ -341,9 +339,9 @@ export default function InterestCollection(){
                         Loan from {b.loanStartDate||'—'} · {formatCurrency(b.loanAmount)} · Outstanding: <strong style={{color:'#ff9500'}}>{formatCurrency(Math.round(outstanding))}</strong>
                       </div>
                       <div style={{fontSize:11.5,color:'var(--text-secondary)',marginTop:3}}>
-                        Interest — Total Due: <strong style={{color:'var(--text-primary)'}}>{formatCurrency(Math.round(totalInterestDue))}</strong>
-                        {' − '}Collected: <strong style={{color:'#34c759'}}>{formatCurrency(Math.round(totalInterestCollected))}</strong>
-                        {' = '}Remaining to Pay: <strong style={{color:remainingInterestToPay>0?'#ff3b30':'#34c759'}}>{formatCurrency(Math.round(remainingInterestToPay))}</strong>
+                        Interest — Total Due: <strong style={{color:'var(--text-primary)'}}>₹{totalInterestDue.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</strong>
+                        {' − '}Collected: <strong style={{color:'#34c759'}}>₹{totalInterestCollected.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</strong>
+                        {' = '}Remaining to Pay: <strong style={{color:remainingInterestToPay>0?'#ff3b30':'#34c759'}}>₹{remainingInterestToPay.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</strong>
                       </div>
                     </div>
                     <div style={{display:'flex',gap:16,alignItems:'center'}}>

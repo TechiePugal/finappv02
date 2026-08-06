@@ -116,7 +116,7 @@ export default function DepositorSettlement(){
       // or the depositor tops up with their OWN extra cash to compound a larger amount.
       const cashVal=paid?(parseFloat(pf.cashAmount)||0):0;
       const compoundVal=paid?(parseFloat(pf.compoundAmount)||0):0;
-      const totalPayout=cashVal+fine; // only the CASH portion is an actual outflow
+      const totalPayout=cashVal; // fine is recorded SEPARATELY below — never mixed into the payout itself
 
       const prevCompound=existing?.addedAmount||0;
       const principalDelta=compoundVal-prevCompound; // reverses cleanly if edited or unpaid
@@ -139,13 +139,22 @@ export default function DepositorSettlement(){
       if(paid&&cashVal>0){
         const lData={
           type:'Debit',category:'Deposit Settlement',
-          description:`Interest payout to ${depositor.name} — ${slot.label}${compoundVal>0?` (₹${compoundVal} compounded separately)`:''}${fine>0?` + Fine ₹${fine}`:''}`,
+          description:`Interest payout to ${depositor.name} — ${slot.label}${compoundVal>0?` (₹${compoundVal} compounded separately)`:''}`,
           amount:totalPayout,paymentMode:pf.mode,date:pf.date,
           depositorName:depositor.name,depositId:depositor.id,
           linkedDepositPaymentId:payDocId,createdAt:serverTimestamp(),createdBy:user?.uid||null
         };
         if(existing?.ledgerEntryId){await updateDoc(doc(db,'finance_ledger_entries',existing.ledgerEntryId),{...lData,createdAt:undefined,updatedAt:serverTimestamp()});}
         else{await addDoc(collection(db,'finance_ledger_entries'),lData);}
+      }
+      if(paid&&fine>0){
+        await addDoc(collection(db,'finance_ledger_entries'),{
+          type:'Credit',category:'Fine Income',
+          description:`Late-settlement fine from ${depositor.name} — ${slot.label}`,
+          amount:fine,paymentMode:pf.mode,date:pf.date,
+          depositorName:depositor.name,depositId:depositor.id,
+          linkedDepositPaymentId:payDocId,createdAt:serverTimestamp(),createdBy:user?.uid||null
+        });
       }
 
       // Compound portion: apply the principal delta, cleanly reversible if edited/unpaid
@@ -280,9 +289,9 @@ export default function DepositorSettlement(){
                       Deposit from {dep.startDate||'—'} · {formatCurrency(dep.depositAmount)} · {dep.interestRate}%/mo · {tenureLabel} · {dep.compounding?'Compound':'Simple'}
                     </div>
                     <div style={{fontSize:11.5,color:'var(--text-secondary)',marginTop:3}}>
-                      Interest — Total Due: <strong style={{color:'var(--text-primary)'}}>{formatCurrency(Math.round(totalInterestDue))}</strong>
-                      {' − '}Collected: <strong style={{color:'#34c759'}}>{formatCurrency(Math.round(totalColl))}</strong>
-                      {' = '}Remaining to Pay: <strong style={{color:remainingInterestToPay>0?'#ff3b30':'#34c759'}}>{formatCurrency(Math.round(remainingInterestToPay))}</strong>
+                      Interest — Total Due: <strong style={{color:'var(--text-primary)'}}>₹{totalInterestDue.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</strong>
+                      {' − '}Collected: <strong style={{color:'#34c759'}}>₹{totalColl.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</strong>
+                      {' = '}Remaining to Pay: <strong style={{color:remainingInterestToPay>0?'#ff3b30':'#34c759'}}>₹{remainingInterestToPay.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</strong>
                     </div>
                   </div>
                 </div>
@@ -445,12 +454,20 @@ export default function DepositorSettlement(){
                   <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:mismatch?8:0}}>
                     <div>
                       <label style={{fontSize:11.5,fontWeight:700,color:'var(--text-secondary)',display:'block',marginBottom:5}}>💵 Cash in Hand (₹)</label>
-                      <input type="number" value={pf.cashAmount} onChange={e=>setPf(p=>({...p,cashAmount:e.target.value}))}
+                      <input type="number" value={pf.cashAmount} onChange={e=>{
+                        const v=e.target.value;
+                        const remainder=Math.max(0,Math.round(interest)-(parseFloat(v)||0));
+                        setPf(p=>({...p,cashAmount:v,compoundAmount:String(remainder)}));
+                      }}
                         style={{width:'100%',boxSizing:'border-box',height:38,padding:'0 12px',borderRadius:9,border:'1.5px solid rgba(0,0,0,0.1)',fontSize:14,fontFamily:'inherit',outline:'none'}}/>
                     </div>
                     <div>
                       <label style={{fontSize:11.5,fontWeight:700,color:'#5856d6',display:'block',marginBottom:5}}>🏦 Add to Deposit (₹)</label>
-                      <input type="number" value={pf.compoundAmount} onChange={e=>setPf(p=>({...p,compoundAmount:e.target.value}))}
+                      <input type="number" value={pf.compoundAmount} onChange={e=>{
+                        const v=e.target.value;
+                        const remainder=Math.max(0,Math.round(interest)-(parseFloat(v)||0));
+                        setPf(p=>({...p,compoundAmount:v,cashAmount:String(remainder)}));
+                      }}
                         style={{width:'100%',boxSizing:'border-box',height:38,padding:'0 12px',borderRadius:9,border:'1.5px solid rgba(88,86,214,0.3)',fontSize:14,fontFamily:'inherit',outline:'none'}}/>
                     </div>
                   </div>
