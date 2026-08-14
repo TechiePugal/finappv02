@@ -48,7 +48,7 @@ export default function CollectEMI() {
 
   const activeLoans = loans.filter(l => l.status === 'Active');
   const totalDue = activeLoans.reduce((s, l) => s + (l.emiAmount || 0), 0);
-  const totalCollectedAllTime = Object.values(collections).flat().filter(c => c.status === 'Paid').reduce((s, c) => s + (c.totalCollected || c.amount || 0), 0);
+  const totalCollectedAllTime = Object.values(collections).flat().filter(c => c.status === 'Paid').reduce((s, c) => s + (c.amount || 0), 0); // fine excluded
   const totalPendingCount = activeLoans.reduce((s, l) => {
     const cols = collections[l.id] || [];
     const paid = cols.filter(c => c.status === 'Paid').length;
@@ -261,7 +261,7 @@ export default function CollectEMI() {
                                   style={{ padding: '10px 12px', borderRadius: 10, border: `1px solid ${border}`, background: bg, cursor: 'pointer' }}>
                                   <div style={{ fontSize: 12, fontWeight: 600, color: textCol, marginBottom: 4 }}>{label}</div>
                                   <div style={{ fontSize: 13, fontWeight: 700, color: isPaid ? '#34c759' : isPartial ? '#5856d6' : isOverdue ? '#ff3b30' : 'var(--text-secondary)' }}>
-                                    {isPaid ? formatCurrency(slot.col.totalCollected || slot.col.amount) : isPartial ? `${formatCurrency(slot.col.amount)} (partial)` : isOverdue ? `${slot.overdue}d overdue` : 'Pending'}
+                                    {isPaid ? formatCurrency(slot.col.amount) : isPartial ? `${formatCurrency(slot.col.amount)} (partial)` : isOverdue ? `${slot.overdue}d overdue` : 'Pending'}
                                   </div>
                                 </div>
                               );

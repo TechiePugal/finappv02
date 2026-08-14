@@ -169,7 +169,7 @@ export default function InterestCollection(){
   }
 
   const totalDue=borrowers.reduce((s,b)=>s+calcInterest(b),0);
-  const totalColl=borrowers.filter(b=>['Paid','Partial'].includes(payments[b.id]?.[month]?.status)).reduce((s,b)=>s+(payments[b.id]?.[month]?.totalCollected||payments[b.id]?.[month]?.amountPaid||0),0);
+  const totalColl=borrowers.filter(b=>['Paid','Partial'].includes(payments[b.id]?.[month]?.status)).reduce((s,b)=>s+(payments[b.id]?.[month]?.amountPaid||0),0); // fine excluded
   const pending=totalDue-totalColl;
   const rate=totalDue>0?Math.round((totalColl/totalDue)*100):0;
 
@@ -308,7 +308,7 @@ export default function InterestCollection(){
               const slots=getMonths(b.loanStartDate);
               const isOpen=selected===b.id;
               const outstanding=getOutstanding(b);
-              const totalColl=slots.reduce((s,mo)=>s+(payments[b.id]?.[mo]?.totalCollected||payments[b.id]?.[mo]?.amountPaid||0),0);
+              const totalColl=slots.reduce((s,mo)=>s+(payments[b.id]?.[mo]?.amountPaid||0),0); // fine excluded
               const paidCount=slots.filter(mo=>payments[b.id]?.[mo]?.status==='Paid').length;
               // Total interest owed from loan START to END (now): use the STORED amountDue for months
               // that already have a record (historically accurate for that point in time); for months
@@ -322,8 +322,7 @@ export default function InterestCollection(){
               const totalInterestCollected=slots.reduce((s,mo)=>{
                 const pp=payments[b.id]?.[mo];
                 if(!pp)return s;
-                if(pp.status==='Paid')return s+(pp.totalCollected||pp.amountPaid||0);
-                if(pp.status==='Partial')return s+(pp.amountPaid||0);
+                if(pp.status==='Paid'||pp.status==='Partial')return s+(pp.amountPaid||0); // fine excluded — never counted as interest
                 return s;
               },0);
               const remainingInterestToPay=Math.max(0,totalInterestDue-totalInterestCollected);
@@ -373,7 +372,7 @@ export default function InterestCollection(){
                               <div key={mo} onClick={()=>openModal(b,mo)}
                                 style={{padding:'10px 12px',borderRadius:10,border:`1px solid ${isPaid?'rgba(52,199,89,0.25)':mo===month?'rgba(0,122,255,0.3)':'rgba(0,0,0,0.07)'}`,background:isPaid?'rgba(52,199,89,0.04)':mo===month?'rgba(0,122,255,0.04)':'#fafafa',cursor:'pointer'}}>
                                 <div style={{fontSize:12,fontWeight:600,color:isPaid?'#1a7a34':mo===month?'#007aff':'var(--text-primary)',marginBottom:4}}>{label}</div>
-                                <div style={{fontSize:13,fontWeight:700,color:isPaid?'#34c759':'var(--text-secondary)'}}>{isPaid?formatCurrency(p.totalCollected||p.amountPaid):'Pending'}</div>
+                                <div style={{fontSize:13,fontWeight:700,color:isPaid?'#34c759':'var(--text-secondary)'}}>{isPaid?formatCurrency(p.amountPaid):'Pending'}</div>
                                 {p?.addedToLoan&&<div style={{fontSize:10,color:'#5856d6',marginTop:2}}>Added to principal</div>}
                               </div>
                             );

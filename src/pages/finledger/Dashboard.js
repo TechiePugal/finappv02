@@ -82,9 +82,10 @@ export default function Dashboard(){
       const curMonthPays = payDocs.filter(d=>d.month===curMo);
       const uncollectedThisMonth = curMonthPays.filter(d=>d.status==='Unpaid').reduce((s,d)=>s+(d.amountDue||0),0);
 
-      // ══ LOAN (interest business) — Total to Collect / Collected / Balance / Net Profit ══
+      // ══ LOAN (interest business) — Total Loan Amount / Collected / Balance / Net Profit ══
       // Fine amounts are NEVER included here — amountPaid/amountDue already exclude fine
       // by design (fine is its own field on the payment record).
+      const loanTotalPrincipal = activeBors.reduce((s,b)=>s+(b.loanAmount||0),0); // sum of all active loan principal issued
       const loanTotalDue = payDocs.reduce((s,p)=>s+(p.amountDue||0),0);
       const loanTotalCollected = payDocs.filter(p=>p.status==='Paid'||p.status==='Partial').reduce((s,p)=>s+(p.amountPaid||0),0);
       const loanBalance = Math.max(0,loanTotalDue-loanTotalCollected);
@@ -136,6 +137,7 @@ export default function Dashboard(){
       // ══ EMI LOAN — Total to Collect / Collected / Balance / Net Profit ══
       // Fine is stored separately on emi_collections (its own 'fine' field, distinct from
       // 'amount') and is NEVER counted here — matching the loan-side rule exactly.
+      const emiTotalPrincipal = emiLoans.filter(l=>l.status==='Active').reduce((s,l)=>s+(l.loanAmount||0),0); // sum of active EMI loan principal issued
       const emiTotalToCollect = emiLoans.reduce((s,l)=>s+((l.emiAmount||0)*(l.totalPeriods||0)),0); // full schedule value
       const emiTotalCollected = emiColDocs.filter(c=>c.status==='Paid').reduce((s,c)=>s+(c.amount||0),0); // fine excluded
       const emiBalance = Math.max(0,emiTotalToCollect-emiTotalCollected);
@@ -164,9 +166,9 @@ export default function Dashboard(){
         coverage:totalOutstanding>0?((secVal/totalOutstanding)*100).toFixed(0):100,
         chartData, recent, emiProjData, emiMonthlyTotal, emiLoanCount:activeEmi.length,
         emiClosedCount:closedEmi.length, emiTotalIssued, emiTotalOutstanding,
-        loanTotalDue, loanTotalCollected, loanBalance, loanNetProfit,
+        loanTotalDue, loanTotalCollected, loanBalance, loanNetProfit, loanTotalPrincipal,
         depTotalDeposit, depInterestToGive, depInterestGiven, depInterestRemaining,
-        emiTotalToCollect, emiTotalCollected, emiBalance, emiNetProfit,
+        emiTotalToCollect, emiTotalCollected, emiBalance, emiNetProfit, emiTotalPrincipal,
         totalFineIncomeAllTime, curMonthFineIncome, combinedNetProfit,
       });
     }catch(e){console.error(e);}finally{setLoading(false);}
@@ -189,7 +191,7 @@ export default function Dashboard(){
       {/* LOANS — Total to Collect / Collected / Balance / Net Profit (fine excluded) */}
       <SectionHeader title="📋 Loans — Overview"/>
       <div className="grid-4" style={{marginBottom:20}}>
-        <StatCard label="Total to Collect" value={formatCurrency(Math.round(d.loanTotalDue||0))} sub="All-time interest recorded due" color="#ff9500"
+        <StatCard label="Total Loan Amount" value={formatCurrency(Math.round(d.loanTotalPrincipal||0))} sub={`${d.activeBorrowers||0} active loans — principal issued`} color="#ff9500"
           icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/></svg>}/>
         <StatCard label="Total Collected" value={formatCurrency(Math.round(d.loanTotalCollected||0))} sub="Interest only — fine excluded" color="#0a84ff"
           icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="20 6 9 17 4 12"/></svg>}/>
@@ -217,7 +219,7 @@ export default function Dashboard(){
         <>
         <SectionHeader title="📆 EMI Loans — Overview"/>
         <div className="grid-4" style={{marginBottom:20}}>
-          <StatCard label="Total to Collect" value={formatCurrency(Math.round(d.emiTotalToCollect||0))} sub="Full schedule value, all EMI loans" color="#ff9500"
+          <StatCard label="Total Loan Amount" value={formatCurrency(Math.round(d.emiTotalPrincipal||0))} sub={`${d.emiLoanCount||0} active EMI loans — principal issued`} color="#ff9500"
             icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/></svg>}/>
           <StatCard label="Total Collected" value={formatCurrency(Math.round(d.emiTotalCollected||0))} sub="Fine excluded" color="#0a84ff"
             icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="20 6 9 17 4 12"/></svg>}/>

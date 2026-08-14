@@ -896,7 +896,7 @@ export default function EMILoans() {
                     </tr>
                     {expandedLoan === l.id && (() => {
                       const sched = getScheduleWithStatus(l);
-                      const paidAmt = cols.filter(x => x.status === 'Paid').reduce((s, x) => s + (x.totalCollected || x.amount || 0), 0);
+                      const paidAmt = cols.filter(x => x.status === 'Paid').reduce((s, x) => s + (x.amount || 0), 0); // fine excluded
                       return (
                         <tr>
                           <td colSpan={11} style={{ padding: 0, background: '#fafafa', borderTop: '1px solid rgba(0,0,0,0.06)' }}>
@@ -938,7 +938,7 @@ export default function EMILoans() {
                                           style={{ padding: '10px 12px', borderRadius: 10, border: `1px solid ${border}`, background: bg, cursor: 'pointer' }}>
                                           <div style={{ fontSize: 12, fontWeight: 600, color: textCol, marginBottom: 4 }}>{label}</div>
                                           <div style={{ fontSize: 13, fontWeight: 700, color: isPaid ? '#34c759' : isPartial ? '#5856d6' : isOverdue ? '#ff3b30' : 'var(--text-secondary)' }}>
-                                            {isPaid ? formatCurrency(slot.col.totalCollected || slot.col.amount) : isPartial ? `${formatCurrency(slot.col.amount)} (partial)` : isOverdue ? `${slot.overdue}d overdue` : 'Pending'}
+                                            {isPaid ? formatCurrency(slot.col.amount) : isPartial ? `${formatCurrency(slot.col.amount)} (partial)` : isOverdue ? `${slot.overdue}d overdue` : 'Pending'}
                                           </div>
                                         </div>
                                       );
@@ -1152,7 +1152,7 @@ export default function EMILoans() {
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>{histLoan.loan.borrowerName}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                  {histLoan.cols.length} payments · Total collected: {formatCurrency(histLoan.cols.reduce((s, c) => s + (c.totalCollected || c.amount || 0), 0))}
+                  {histLoan.cols.length} payments · Total collected: {formatCurrency(histLoan.cols.reduce((s, c) => s + (c.amount || 0), 0))}
                 </div>
               </div>
             </div>

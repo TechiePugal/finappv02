@@ -79,7 +79,7 @@ export function printBorrowerReport(borrower, repayments, interestPayments){
   const totalRepaid = reps.reduce((s,r)=>s+(r.repaidAmount||r.amount||0),0);
   const outstanding = Math.max(0,(borrower.loanAmount||0)-totalRepaid);
   const monthlyInterest = outstanding*(borrower.interestRate||0)/100;
-  const totalInterestColl = ints.filter(i=>i.status==='Paid').reduce((s,i)=>s+(i.totalCollected||i.amountPaid||0),0);
+  const totalInterestColl = ints.filter(i=>i.status==='Paid').reduce((s,i)=>s+(i.amountPaid||0),0); // fine excluded
 
   const badgeSt = s => {
     if(s==='Active')return'<span class="badge badge-green">Active</span>';
@@ -726,7 +726,7 @@ export function printCollectInterestSummary(borrowers, payments, month, getOutst
   });
   const paid = rows.filter(r=>r.status==='Paid');
   const totalDue = rows.reduce((s,r)=>s+r.interest,0);
-  const totalCollected = paid.reduce((s,r)=>s+(r.p?.totalCollected||r.p?.amountPaid||0),0);
+  const totalCollected = paid.reduce((s,r)=>s+(r.p?.amountPaid||0),0); // fine excluded
 
   const body = `
     <div class="header">
@@ -871,7 +871,7 @@ export function printJournalReport(entries, fromDate, toDate){
 export function printEMILoanReport(loan, sched){
   const rows = (sched||[]).slice().reverse(); // most recent period first
   const paidRows = rows.filter(r=>r.status==='Paid');
-  const totalCollected = paidRows.reduce((s,r)=>s+(r.col?.totalCollected||r.col?.amount||0),0);
+  const totalCollected = paidRows.reduce((s,r)=>s+(r.col?.amount||0),0); // fine excluded — tracked separately below as totalFine
   const totalFine = rows.reduce((s,r)=>s+(r.col?.fine||0),0);
   // BUG FIX: this used to compute outstanding purely from periods-paid arithmetic
   // (loanAmount − paidCount × principal-per-period), which is wrong for a loan that
@@ -957,7 +957,7 @@ export function printEMILoanReport(loan, sched){
           <td style="font-weight:600;">${fmtDate(r.dueDate)}</td>
           <td class="${r.status==='Overdue'?'text-red':'text-green'}">${delay}</td>
           <td>${rowBadge(r.status)}</td>
-          <td class="${r.status==='Paid'?'text-green':'text-red'}">${r.col?INR(r.col.totalCollected||r.col.amount||0):'—'}</td>
+          <td class="${r.status==='Paid'?'text-green':'text-red'}">${r.col?INR(r.col.amount||0):'—'}</td>
           <td>${(r.col?.fine||0)>0?INR(r.col.fine):'—'}</td>
           <td>${r.col?.date?fmtDate(r.col.date):'—'}</td>
           <td>${r.col?.mode||'—'}</td>

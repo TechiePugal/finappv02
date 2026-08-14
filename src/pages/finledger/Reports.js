@@ -57,6 +57,7 @@ export default function Reports() {
   const [depPayments,  setDepPayments]  = useState([]);
   const [expenses,     setExpenses]     = useState([]);
   const [emiCols,      setEmiCols]      = useState([]);
+  const [ledgerEntries, setLedgerEntries] = useState([]); // Fine Income entries only
   const [loading,      setLoading]      = useState(true);
 
   const [activePreset, setActivePreset] = useState(0);
@@ -71,17 +72,18 @@ export default function Reports() {
 
   useEffect(() => {
     let done = 0;
-    const setDone = () => { done++; if (done >= 6) setLoading(false); };
+    const setDone = () => { done++; if (done >= 7) setLoading(false); };
     const u1 = onSnapshot(query(collection(db,'borrower_master'), orderBy('createdAt','desc')), s => { setBorrowers(scopeToUser(s.docs.map(d=>({id:d.id,...d.data()})),user?.uid)); setDone(); });
     const u2 = onSnapshot(collection(db,'deposit_master'), s => { setDepositors(scopeToUser(s.docs.map(d=>({id:d.id,...d.data()})),user?.uid)); setDone(); });
     const u3 = onSnapshot(collection(db,'loan_repayments'), s => { setRepayments(scopeToUser(s.docs.map(d=>({id:d.id,...d.data()})),user?.uid)); setDone(); });
     const u4 = onSnapshot(collection(db,'borrower_interest_payments'), s => { setIntPayments(scopeToUser(s.docs.map(d=>({id:d.id,...d.data()})),user?.uid)); setDone(); });
     const u5 = onSnapshot(collection(db,'finance_expenses'), s => { setExpenses(scopeToUser(s.docs.map(d=>({id:d.id,...d.data()})),user?.uid)); setDone(); });
     const u6 = onSnapshot(collection(db,'emi_collections'), s => { setEmiCols(scopeToUser(s.docs.map(d=>({id:d.id,...d.data()})),user?.uid)); setDone(); });
+    const u7 = onSnapshot(collection(db,'finance_ledger_entries'), s => { setLedgerEntries(scopeToUser(s.docs.map(d=>({id:d.id,...d.data()})),user?.uid).filter(e=>e.category==='Fine Income')); setDone(); });
     // Point-in-time status resolution — see utils/statusHistory.js for why this exists
     getAllStatusHistory('loan').then(setLoanHistory);
     getAllStatusHistory('deposit').then(setDepHistory);
-    return () => { u1(); u2(); u3(); u4(); u5(); u6(); };
+    return () => { u1(); u2(); u3(); u4(); u5(); u6(); u7(); };
   }, []);
 
   function applyPreset(idx) {
@@ -99,11 +101,13 @@ export default function Reports() {
   const filtExps    = expenses.filter(e => e.date >= fromDate && e.date <= toDate);
   const filtEmi     = emiCols.filter(e => e.date >= fromDate && e.date <= toDate);
   const filtDepPays = depPayments.filter(p => p.status === 'Paid' && p.paymentDate >= fromDate && p.paymentDate <= toDate);
+  const filtFineIncome = ledgerEntries.filter(e => e.date >= fromDate && e.date <= toDate);
 
-  const totalInterest = filtIntPays.reduce((s,p) => s + (p.totalCollected || p.amountPaid || 0), 0);
+  const totalInterest = filtIntPays.reduce((s,p) => s + (p.amountPaid || 0), 0); // fine excluded — tracked separately
   const totalRepaid   = filtReps.reduce((s,r) => s + (r.repaidAmount || r.amount || 0), 0);
-  const totalEMI      = filtEmi.reduce((s,e) => s + (e.totalCollected || e.amount || 0), 0);
+  const totalEMI      = filtEmi.reduce((s,e) => s + (e.amount || 0), 0); // fine excluded — tracked separately
   const totalExpense  = filtExps.reduce((s,e) => s + (e.amount || 0), 0);
+  const totalFineIncome = filtFineIncome.reduce((s,e) => s + (e.amount || 0), 0); // own line — never mixed into interest/EMI above
   const totalIncome   = totalInterest + totalRepaid + totalEMI;
   const netInterestIncome = totalInterest - totalExpense; // Monthly Net Int. Income net of expenses
   const netFlow       = totalIncome - totalExpense;
@@ -130,6 +134,14 @@ export default function Reports() {
     return true;
   });
   const activeB = periodActiveB; // keep activeB name for rest of render
+  // Total Loan Amount = principal issued to loans active during this period; Balance = interest still to collect
+  const totalLoanAmount = periodActiveB.reduce((s,b) => s + (b.loanAmount || 0), 0);
+  const totalInterestBalance = Math.max(0, periodActiveB.reduce((s,b) => {
+    const bPays = intPayments.filter(p => p.borrowerId === b.id);
+    const due = bPays.reduce((ss,p) => ss + (p.amountDue || 0), 0);
+    const paid = bPays.filter(p => p.status==='Paid'||p.status==='Partial').reduce((ss,p) => ss + (p.amountPaid || 0), 0);
+    return s + Math.max(0, due - paid);
+  }, 0));
   // Same point-in-time fix for depositors — "Active Depositors" used to always show
   // TODAY's active depositors regardless of what period the report was for.
   const periodActiveD = depositors.filter(d => {
@@ -154,9 +166,9 @@ export default function Reports() {
 
   // Monthly breakdown
   const months = {};
-  filtIntPays.forEach(p => { const m = p.month || p.paymentDate?.slice(0,7); if(!m) return; if(!months[m]) months[m] = {interest:0,repaid:0,emi:0,expenses:0}; months[m].interest += p.totalCollected||p.amountPaid||0; });
+  filtIntPays.forEach(p => { const m = p.month || p.paymentDate?.slice(0,7); if(!m) return; if(!months[m]) months[m] = {interest:0,repaid:0,emi:0,expenses:0}; months[m].interest += p.amountPaid||0; });
   filtReps.forEach(r => { const m = r.date?.slice(0,7); if(!m) return; if(!months[m]) months[m] = {interest:0,repaid:0,emi:0,expenses:0}; months[m].repaid += r.repaidAmount||r.amount||0; });
-  filtEmi.forEach(e => { const m = e.date?.slice(0,7); if(!m) return; if(!months[m]) months[m] = {interest:0,repaid:0,emi:0,expenses:0}; months[m].emi += e.totalCollected||e.amount||0; });
+  filtEmi.forEach(e => { const m = e.date?.slice(0,7); if(!m) return; if(!months[m]) months[m] = {interest:0,repaid:0,emi:0,expenses:0}; months[m].emi += e.amount||0; });
   filtExps.forEach(e => { const m = e.date?.slice(0,7); if(!m) return; if(!months[m]) months[m] = {interest:0,repaid:0,emi:0,expenses:0}; months[m].expenses += e.amount||0; });
   const monthKeys = Object.keys(months).sort();
 
@@ -231,12 +243,18 @@ export default function Reports() {
         )}
       </Card>
 
-      {/* Summary KPIs */}
+      {/* Summary KPIs — Total Loan / Interest Collected / Balance / Fine (kept separate) */}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:14, marginBottom:14 }}>
+        <StatCard label="Total Loan Amount" value={formatCurrency(Math.round(totalLoanAmount))} sub={`${periodActiveB.length} loans this period`} color="#ff9500" />
+        <StatCard label="Interest Collected" value={formatCurrency(Math.round(totalInterest))} sub={`${filtIntPays.length} payments — fine excluded`} color="#007aff" />
+        <StatCard label="Interest Balance" value={formatCurrency(Math.round(totalInterestBalance))} sub="Still to be collected" color="#ff453a" />
+        <StatCard label="Fine Income" value={formatCurrency(Math.round(totalFineIncome))} sub="Kept separate — flows to net profit only" color="#af52de" />
+      </div>
       <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:14, marginBottom:16 }}>
-        <StatCard label="Interest Collected" value={formatCurrency(Math.round(totalInterest))} sub={`${filtIntPays.length} payments`} color="#007aff" />
         <StatCard label="Principal Repaid" value={formatCurrency(Math.round(totalRepaid))} sub={`${filtReps.length} repayments`} color="#34c759" />
         <StatCard label="EMI Collected" value={formatCurrency(Math.round(totalEMI))} sub={`${filtEmi.length} collections`} color="#5856d6" />
         <StatCard label="Expenses" value={formatCurrency(Math.round(totalExpense))} sub={`${filtExps.length} entries`} color="#ff3b30" />
+        <StatCard label="Net Interest Income" value={formatCurrency(Math.round(netInterestIncome))} sub="Interest minus expenses" color="#34c759" />
       </div>
       <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:14, marginBottom:22 }}>
         <StatCard label="Total Income" value={formatCurrency(Math.round(totalIncome))} sub="Interest + Principal + EMI" color="#34c759" />

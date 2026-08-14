@@ -17,6 +17,9 @@ export default function Refunding() {
   const [refundModal, setRefundModal] = useState(null); // depositor being refunded
   const [rf, setRf] = useState({ amount: '', date: '', mode: 'Cash', remarks: '', full: true });
   const [saving, setSaving] = useState(false);
+  const [addModal, setAddModal] = useState(null); // depositor currently getting extra principal added
+  const [af, setAf] = useState({ amount: '', date: '', remarks: '' });
+  const [addSaving, setAddSaving] = useState(false);
 
   useEffect(() => {
     const d = onSnapshot(collection(db, 'deposit_master'), snap => {
@@ -95,11 +98,44 @@ export default function Refunding() {
     } catch (e) { toast.error('Failed: ' + e.message); } finally { setSaving(false); }
   }
 
+  function openAdd(dep) {
+    setAddModal(dep);
+    setAf({ amount: '', date: new Date().toISOString().split('T')[0], remarks: '' });
+  }
+
+  // Add extra principal to an existing deposit — same logic as Settle Interest's
+  // "+ Add Amount", now available here too so Refunding handles BOTH directions
+  // (adding and withdrawing deposit principal) in one place, like Loan Repayment does.
+  async function saveAddAmount() {
+    if (!af.amount || parseFloat(af.amount) <= 0) return toast.error('Enter a valid amount');
+    const extra = parseFloat(af.amount);
+    const prevAmount = addModal.depositAmount || 0;
+    const newAmount = prevAmount + extra;
+    setAddSaving(true);
+    try {
+      await addDoc(collection(db, 'deposit_additions'), {
+        depositorId: addModal.id, depositorName: addModal.name, depositId: addModal.depositId || addModal.id,
+        amount: extra, previousAmount: prevAmount, newAmount, date: af.date, remarks: af.remarks,
+        createdAt: serverTimestamp(), createdBy: user?.uid || null,
+      });
+      await addDoc(collection(db, 'finance_ledger_entries'), {
+        type: 'Debit', category: 'Deposit Amount Increased',
+        description: `Additional ${formatCurrency(extra)} deposited by ${addModal.name} — ${formatCurrency(prevAmount)} → ${formatCurrency(newAmount)}${af.remarks ? ' · ' + af.remarks : ''}`,
+        amount: extra, date: af.date,
+        borrowerName: addModal.name, depositorId: addModal.id, depositId: addModal.depositId || addModal.id,
+        createdAt: serverTimestamp(), createdBy: user?.uid || null,
+      });
+      await updateDoc(doc(db, 'deposit_master', addModal.id), { depositAmount: newAmount, updatedAt: serverTimestamp() });
+      toast.success(`✓ ₹${extra.toLocaleString('en-IN')} added — new deposit total: ${formatCurrency(newAmount)}`);
+      setAddModal(null);
+    } catch (err) { toast.error('Failed: ' + err.message); } finally { setAddSaving(false); }
+  }
+
   if (loading) return <PageLoader stats={3} />;
 
   return (
     <div className="page-enter">
-      <PageHeader title="Refunding" subtitle="Pay out deposit principal — full or partial withdrawal, separate from interest settlement" />
+      <PageHeader title="Refunding" subtitle="Add extra principal or pay out deposit principal — full or partial, separate from interest settlement" />
 
       <div className="grid-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 14, marginBottom: 20 }}>
         <StatCard label="Active Deposits" value={deposits.length} sub="Eligible for refund" color="#5856d6" />
@@ -126,6 +162,7 @@ export default function Refunding() {
                     <div style={{ fontWeight: 700, fontSize: 14.5 }}>{dep.name}</div>
                     <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>{dep.depositId} · Current: <strong style={{ color: 'var(--text-primary)' }}>{formatCurrency(dep.depositAmount)}</strong>{totalRefunded > 0 && <span> · Refunded so far: {formatCurrency(totalRefunded)}</span>}</div>
                   </div>
+                  <Button size="sm" variant="secondary" onClick={() => openAdd(dep)}>+ Add Amount</Button>
                   <Button size="sm" onClick={() => openRefund(dep)}>Refund</Button>
                 </div>
               );
@@ -135,6 +172,30 @@ export default function Refunding() {
       </Card>
 
       {/* Refund modal */}
+      {/* Add Extra Amount modal */}
+      <Modal open={!!addModal} onClose={() => setAddModal(null)} title={`Add Amount — ${addModal?.name}`} width={460}
+        footer={addModal && (
+          <Button full onClick={saveAddAmount} disabled={addSaving}>{addSaving ? 'Saving…' : '✓ Add to Deposit'}</Button>
+        )}>
+        {addModal && (
+          <div>
+            <div style={{ padding: '12px 14px', background: 'rgba(88,86,214,0.06)', borderRadius: 10, marginBottom: 16, fontSize: 13 }}>
+              Current deposit: <strong>{formatCurrency(addModal.depositAmount || 0)}</strong>
+              {af.amount && parseFloat(af.amount) > 0 && (<> → New total: <strong style={{ color: '#5856d6' }}>{formatCurrency((addModal.depositAmount || 0) + parseFloat(af.amount))}</strong></>)}
+            </div>
+            <FormField label="Extra Amount (₹)">
+              <Input type="number" value={af.amount} onChange={e => setAf(f => ({ ...f, amount: e.target.value }))} placeholder="e.g. 50000" autoFocus />
+            </FormField>
+            <FormField label="Date">
+              <Input type="date" value={af.date} onChange={e => setAf(f => ({ ...f, date: e.target.value }))} />
+            </FormField>
+            <FormField label="Remarks (optional)">
+              <Input value={af.remarks} onChange={e => setAf(f => ({ ...f, remarks: e.target.value }))} placeholder="Reason for the additional deposit…" />
+            </FormField>
+          </div>
+        )}
+      </Modal>
+
       <Modal open={!!refundModal} onClose={() => setRefundModal(null)} title={`Refund — ${refundModal?.name}`} width={460}
         footer={refundModal && (
           <Button full onClick={saveRefund} disabled={saving}>{saving ? 'Saving…' : `✓ Pay Out ${formatCurrency(parseFloat(rf.amount) || 0)}`}</Button>
