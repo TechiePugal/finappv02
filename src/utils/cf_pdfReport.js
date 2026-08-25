@@ -319,3 +319,29 @@ export function printFundProjection(projection, kpis) {
   `;
   openPrint('Fund Projection Report', body, '#5856D6');
 }
+
+export function printJoinedFundProjection(rows, viewMonthLabel, realizedPL) {
+  const dueRows = rows.filter(r => !r.isPaidThisMonth && !r.isCashed);
+  const totalDue = dueRows.reduce((s, r) => s + r.expectedThisMonth, 0);
+  const body = `
+    <div class="header">
+      <div><div class="logo">EC Fin 360 · Joined Chits — Fund Projection</div><div class="meta" style="text-align:left;margin-top:4px;">Expected payment for ${viewMonthLabel}</div></div>
+      <div class="meta">Generated: ${now()}</div>
+    </div>
+    <div class="kpi-grid">
+      <div class="kpi" style="border-left-color:#ef4444;"><div class="kpi-val" style="color:#b91c1c;">${INR(totalDue)}</div><div class="kpi-lbl">Total Expected This Month</div></div>
+      <div class="kpi"><div class="kpi-val">${dueRows.length}</div><div class="kpi-lbl">Chits Due</div></div>
+      <div class="kpi" style="border-left-color:${realizedPL>=0?'#22c55e':'#ef4444'};"><div class="kpi-val" style="color:${realizedPL>=0?'#15803d':'#b91c1c'};">${INR(realizedPL)}</div><div class="kpi-lbl">Realized P/L (Cashed Chits)</div></div>
+    </div>
+    <h2>Per-Chit Expected Amount — ${viewMonthLabel}</h2>
+    <table>
+      <thead><tr><th>#</th><th>Chit</th><th>Company</th><th class="text-right">Round</th><th class="text-right">Subscription</th><th class="text-right">Expected</th><th>Status</th></tr></thead>
+      <tbody>
+        ${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${r.chitName||r.companyName}</td><td>${r.companyName}</td><td class="text-right">#${r.nextRound}</td><td class="text-right">${INR(r.sub)}</td><td class="text-right">${INR(r.expectedThisMonth)}</td><td>${r.isCashed?'Cashed':r.isPaidThisMonth?'Paid':'Due'}</td></tr>`).join('')}
+        <tr class="total-row"><td colspan="5">TOTAL EXPECTED (unpaid, active)</td><td class="text-right">${INR(totalDue)}</td><td></td></tr>
+      </tbody>
+    </table>
+    <div class="footer"><span>EC Fin 360 Chit Fund</span><span>Joined Chits Fund Projection</span></div>
+  `;
+  openPrint('Joined Chits Fund Projection', body, '#5856D6');
+}

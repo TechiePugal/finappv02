@@ -540,7 +540,19 @@ export default function ChitDetail() {
           {members.length === 0 ? (
             <EmptyState icon={Users} title="No members" subtitle="Add members to this chit fund"
               action={<Button size="sm" icon={Plus} onClick={() => { setMemberModal('add'); setMemberForm({ name: '', phone: '' }); }}>Add Member</Button>} />
-          ) : members.map((m, i) => (
+          ) : (() => {
+            // When the same person holds more than one ticket in this chit, label each
+            // occurrence clearly as Ticket 1, Ticket 2, etc. — instead of showing the same
+            // name twice with no way to tell the entries apart.
+            const nameCounts = {};
+            members.forEach(m => { const k = (m.name || '').trim().toLowerCase(); nameCounts[k] = (nameCounts[k] || 0) + 1; });
+            const seenSoFar = {};
+            return members.map((m, i) => {
+              const k = (m.name || '').trim().toLowerCase();
+              seenSoFar[k] = (seenSoFar[k] || 0) + 1;
+              const hasMultiple = nameCounts[k] > 1;
+              const ticketNo = seenSoFar[k];
+              return (
             <div key={m.id || i}
               style={{ display: 'flex', alignItems: 'center', gap: 13, padding: '11px 18px', borderBottom: i < members.length - 1 ? `1px solid ${tokens.border}` : 'none' }}>
               {/* Avatar */}
@@ -551,6 +563,7 @@ export default function ChitDetail() {
               <div style={{ flex: 1 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                   <span style={{ fontSize: 13.5, fontWeight: 700, color: tokens.text }}>{m.name}</span>
+                  {hasMultiple && <span style={{ fontSize: 10.5, fontWeight: 700, padding: '2px 7px', borderRadius: 99, background: '#FEF3C7', color: '#92400E' }}>Ticket {ticketNo}</span>}
                   <Badge status={m.status} />
                   {m.auctionTakenNumber && <span style={{ fontSize: 11, color: tokens.textSub }}>Taken in #{m.auctionTakenNumber}</span>}
                 </div>
@@ -562,7 +575,9 @@ export default function ChitDetail() {
                 <IBtn icon={Trash2} onClick={() => setDelMember(m)} title={m.status === 'Taken' ? 'Cannot delete: member has won an auction' : 'Delete member'} danger disabled={m.status === 'Taken'} />
               </div>
             </div>
-          ))}
+              );
+            });
+          })()}
 
           {(chit.auctionsCompleted || 0) > 0 && (
             <div style={{ padding: '8px 18px', borderTop: `1px solid ${tokens.border}`, fontSize: 11, color: tokens.textMuted }}>

@@ -693,6 +693,26 @@ export async function getOtherChitPayments(otherId) {
 export async function updateOtherChitPayment(paymentId, data) {
   await updateDoc(doc(db,'chit_others_payments',paymentId),{...data,updatedAt:serverTimestamp()});
 }
+export async function deleteOtherChitPayment(paymentId) {
+  await deleteDoc(doc(db,'chit_others_payments',paymentId));
+}
+
+// ─── OTHER-CHIT COMPANIES (the agent/company you joined a chit through) ───
+export async function getOtherCompanies(userId) {
+  const q = query(collection(db,'chit_other_companies'), where('createdBy','==',userId));
+  const snap = await getDocs(q);
+  return snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.companyName||'').localeCompare(b.companyName||''));
+}
+export async function addOtherCompany(data, userId) {
+  const ref = await addDoc(collection(db,'chit_other_companies'),{...data,createdBy:userId,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+  return ref.id;
+}
+export async function updateOtherCompany(id, data) {
+  await updateDoc(doc(db,'chit_other_companies',id),{...data,updatedAt:serverTimestamp()});
+}
+export async function deleteOtherCompany(id) {
+  await deleteDoc(doc(db,'chit_other_companies',id));
+}
 
 
 // ─── WINNER PAYOUT (gated behind full collection) ──────────────────────────

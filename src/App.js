@@ -28,6 +28,7 @@ import CFExposure from './pages/chitfund/Exposure';
 import CFCommissionCalc from './pages/chitfund/CommissionCalc';
 import CFSettings from './pages/chitfund/Settings';
 import CFOtherChits from './pages/chitfund/OtherChits';
+import CFOtherChitCompanies from './pages/chitfund/OtherChitCompanies';
 import CFJournal from './pages/chitfund/Journal';
 import CFJoinedAuctions from './pages/chitfund/JoinedAuctions';
 import CFJoinedExposure from './pages/chitfund/JoinedExposure';
@@ -154,6 +155,7 @@ function AppRouter() {
             <Route path="settings" element={<CFSettings />} />
             <Route path="commission-calc" element={<CFCommissionCalc />} />
             <Route path="other-chits" element={<CFOtherChits />} />
+            <Route path="other-chit-companies" element={<CFOtherChitCompanies />} />
             <Route path="journal" element={<CFJournal />} />
             <Route path="joined-auctions" element={<CFJoinedAuctions />} />
             <Route path="joined-exposure" element={<CFJoinedExposure />} />

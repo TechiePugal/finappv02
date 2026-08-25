@@ -16,6 +16,7 @@
  * NO: member management, ledger entries, commission distribution — not your job as a member.
  */
 import React, { useEffect, useState, useCallback } from 'react';
+import toast from 'react-hot-toast';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell } from 'recharts';
 import {
   Plus, Edit2, Trash2, ChevronDown, ChevronRight,
@@ -25,6 +26,7 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 import {
   getOtherChits, addOtherChit, updateOtherChit, deleteOtherChit,
+  getOtherCompanies, deleteOtherChitPayment,
   getOtherChitPayments, addOtherChitPayment, updateOtherChitPayment,
 } from '../../utils/cf_firestore';
 import { formatCurrency } from '../../utils/cf_format';
@@ -114,8 +116,23 @@ function toChitLike(c) {
 function getAuctionMonths(chit, upToCount) {
   if (!chit.startMonth || !chit.totalMembers) return [];
   const cycle = chit.auctionInterval || 1;
+  const count = upToCount || chit.totalMembers;
+  if (chit.frequencyType === 'Days') {
+    // Days-based auctions: step forward N days at a time from the 1st of the start
+    // month, then bucket each resulting date back into its YYYY-MM for the existing
+    // month-based payment tracking (multiple day-cycled auctions can land in the same month).
+    const [y, m] = chit.startMonth.split('-').map(Number);
+    const start = new Date(y, m - 1, 1);
+    const months = [];
+    for (let i = 0; i < count; i++) {
+      const d = new Date(start);
+      d.setDate(d.getDate() + i * cycle);
+      months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    }
+    return months;
+  }
   const months = [];
-  for (let i = 0; i < (upToCount || chit.totalMembers); i++) {
+  for (let i = 0; i < count; i++) {
     months.push(addMonths(chit.startMonth, i * cycle));
   }
   return months;
@@ -175,12 +192,14 @@ function analyseJoinedChit(chit, payments) {
 
 // ── Form blank ────────────────────────────────────────────────────────────────
 const BLANK = {
-  companyName:'', organiserName:'', organiserPhone:'',
+  companyName:'', chitName:'', organiserName:'', organiserPhone:'',
   totalChitValue:'', totalMembers:'', myMemberNumber:'',
-  startMonth:'', auctionInterval:'1', organiserFeePct:'5',
+  startMonth:'', auctionInterval:'1', frequencyType:'Months', auctionDayOfMonth:'',
+  organiserFeePct:'5',
   commissionType:'Single',
   myStatus:'Active',   // Active | Cashed
   expectedTakeMonth:'', actualTakeMonth:'', prizeReceived:'',
+  auctionsDone:'', lastAuctionDate:'', // for adding a chit that's already partway through
   notes:'',
   range1:'', range2:'', range3:'', range4:'',
 };
@@ -302,8 +321,10 @@ function PayModal({ chit, payments, onClose, onSave }) {
 }
 
 // ── Chit card ─────────────────────────────────────────────────────────────────
-function JoinedChitCard({ chit, payments, onEdit, onDelete, onAddPayment, onTogglePayment, onMarkTaken }) {
+function JoinedChitCard({ chit, payments, onEdit, onDelete, onAddPayment, onTogglePayment, onMarkTaken, onEditPayment, onDeletePayment }) {
   const [expanded, setExpanded] = useState(false);
+  const [editingPaymentId, setEditingPaymentId] = useState(null);
+  const [editVals, setEditVals] = useState({ date: '', amount: '' });
   const { alerts, paidCount, totalPaid, profitIfTakenNow, remainingMonths, futureCost, sub, hasWon, totalReceived, realizedPL } = analyseJoinedChit(chit, payments);
   const isCashed = chit.myStatus === 'Cashed';
   const phases = calcPhases(chit.totalMembers || 1);
@@ -328,7 +349,7 @@ function JoinedChitCard({ chit, payments, onEdit, onDelete, onAddPayment, onTogg
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12 }}>
           <div style={{ flex:1, minWidth:0 }}>
             <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4, flexWrap:'wrap' }}>
-              <span style={{ fontSize:16, fontWeight:700, color:tokens.text }}>{chit.companyName}</span>
+              <span style={{ fontSize:16, fontWeight:700, color:tokens.text }}>{chit.chitName || chit.companyName}</span>
               <span style={{ fontSize:10.5, fontWeight:700, padding:'2px 8px', borderRadius:99,
                 background: isCashed ? tokens.greenLight : '#EBF5FF',
                 color: isCashed ? tokens.green : '#0a84ff',
@@ -337,6 +358,7 @@ function JoinedChitCard({ chit, payments, onEdit, onDelete, onAddPayment, onTogg
               </span>
             </div>
             <div style={{ fontSize:12.5, color:tokens.textSub, display:'flex', gap:10, flexWrap:'wrap' }}>
+              {chit.chitName && <span>{chit.companyName}</span>}
               {chit.organiserName && <span>Agent: <strong>{chit.organiserName}</strong></span>}
               <span>Member #{chit.myMemberNumber || '—'}</span>
               <span>Started: {fmtMo(chit.startMonth)}</span>
@@ -505,6 +527,19 @@ function JoinedChitCard({ chit, payments, onEdit, onDelete, onAddPayment, onTogg
           ) : (
             <div style={{ maxHeight:300, overflowY:'auto' }}>
               {[...payments].sort((a,b)=>(a.month||'').localeCompare(b.month||'')).map((p,i) => (
+                editingPaymentId === p.id ? (
+                  <div key={p.id||i} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 18px', borderBottom:`1px solid ${tokens.border}`, background:'rgba(10,132,255,0.04)' }}>
+                    <div style={{ fontSize:12.5, fontWeight:700, color:tokens.text, width:70, flexShrink:0 }}>{fmtMo(p.month)}</div>
+                    <input type="date" value={editVals.date} onChange={e=>setEditVals(v=>({...v,date:e.target.value}))}
+                      style={{ height:32, padding:'0 8px', borderRadius:7, border:`1.5px solid ${tokens.border}`, fontSize:12.5, fontFamily:'inherit', outline:'none', flex:1 }}/>
+                    <input type="number" value={editVals.amount} onChange={e=>setEditVals(v=>({...v,amount:e.target.value}))}
+                      style={{ height:32, padding:'0 8px', borderRadius:7, border:`1.5px solid ${tokens.border}`, fontSize:12.5, fontFamily:'inherit', outline:'none', width:100 }}/>
+                    <button onClick={() => { onEditPayment(p.id, { date: editVals.date, amount: +editVals.amount || 0 }); setEditingPaymentId(null); }}
+                      style={{ padding:'6px 10px', borderRadius:7, border:'none', background:'#0a84ff', color:'#fff', fontSize:11.5, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>Save</button>
+                    <button onClick={() => setEditingPaymentId(null)}
+                      style={{ padding:'6px 10px', borderRadius:7, border:`1px solid ${tokens.border}`, background:'#fff', fontSize:11.5, cursor:'pointer', fontFamily:'inherit', color:tokens.textSub }}>Cancel</button>
+                  </div>
+                ) : (
                 <div key={p.id||i} style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 18px', borderBottom:`1px solid ${tokens.border}`, background:p.status==='Paid'?'rgba(5,122,85,0.02)':'transparent' }}>
                   <div style={{ width:36, height:36, borderRadius:9, flexShrink:0, background:p.status==='Paid'?tokens.greenLight:tokens.amberLight, display:'flex', alignItems:'center', justifyContent:'center' }}>
                     {p.status==='Paid' ? <CheckCircle size={15} color={tokens.green}/> : <Clock size={15} color={tokens.amber}/>}
@@ -528,7 +563,18 @@ function JoinedChitCard({ chit, payments, onEdit, onDelete, onAddPayment, onTogg
                     {p.status==='Paid' ? <CheckCircle size={10}/> : <Clock size={10}/>}
                     {p.status==='Paid' ? 'Paid' : 'Pending'}
                   </button>
+                  <button onClick={() => { setEditingPaymentId(p.id); setEditVals({ date: p.date || '', amount: String(p.amount || '') }); }}
+                    title="Edit this auction record"
+                    style={{ width:26, height:26, borderRadius:7, border:`1px solid ${tokens.border}`, background:'#fff', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+                    <Edit2 size={12} color={tokens.textSub}/>
+                  </button>
+                  <button onClick={() => onDeletePayment(p.id)}
+                    title="Delete this auction record"
+                    style={{ width:26, height:26, borderRadius:7, border:`1px solid ${tokens.border}`, background:'#fff', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+                    <Trash2 size={12} color={tokens.red}/>
+                  </button>
                 </div>
+                )
               ))}
             </div>
           )}
@@ -542,12 +588,18 @@ function JoinedChitCard({ chit, payments, onEdit, onDelete, onAddPayment, onTogg
 export default function OtherChits() {
   const { user } = useAuth();
   const [chits,       setChits]       = useState([]);
+  const [selectedCompany, setSelectedCompany] = useState(null); // click a company to drill into just its chits
+  const [companies, setCompanies] = useState([]); // real Company entities from OtherChitCompanies
   const [paymentsMap, setPaymentsMap] = useState({});
   const [loading,     setLoading]     = useState(true);
   const [formModal,   setFormModal]   = useState(false);
   const [editTarget,  setEditTarget]  = useState(null);
   const [form,        setForm]        = useState(BLANK);
   const [saving,      setSaving]      = useState(false);
+  const [ticketCount, setTicketCount] = useState(1); // create N tickets at once, each tracked as its own separate chit record
+  const [backfillTarget, setBackfillTarget] = useState(null); // newly-created chit that needs its past auctions filled in
+  const [backfillRows, setBackfillRows] = useState([]);
+  const [backfillSaving, setBackfillSaving] = useState(false);
   const [formErr,     setFormErr]     = useState('');
   const [delTarget,   setDelTarget]   = useState(null);
   const [deleting,    setDeleting]    = useState(false);
@@ -555,8 +607,9 @@ export default function OtherChits() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const list = await getOtherChits(user.uid);
+    const [list, cos] = await Promise.all([getOtherChits(user.uid), getOtherCompanies(user.uid)]);
     setChits(list);
+    setCompanies(cos);
     const pm = {};
     await Promise.all(list.map(async c => { pm[c.id] = await getOtherChitPayments(c.id); }));
     setPaymentsMap(pm);
@@ -567,15 +620,17 @@ export default function OtherChits() {
 
   const sf = (k,v) => setForm(f => ({ ...f, [k]:v }));
 
-  function openAdd() { setForm(BLANK); setFormErr(''); setFormModal(true); }
+  function openAdd() { setForm(BLANK); setFormErr(''); setTicketCount(1); setFormModal(true); }
   function openEdit(c) {
     setEditTarget(c);
     setForm({
-      companyName: c.companyName||'', organiserName:c.organiserName||'', organiserPhone:c.organiserPhone||'',
+      companyName: c.companyName||'', chitName: c.chitName||'', organiserName:c.organiserName||'', organiserPhone:c.organiserPhone||'',
       totalChitValue:String(c.totalChitValue||''), totalMembers:String(c.totalMembers||''), myMemberNumber:String(c.myMemberNumber||''),
-      startMonth:c.startMonth||'', auctionInterval:String(c.auctionInterval||1), organiserFeePct:String(c.organiserFeePct||5),
+      startMonth:c.startMonth||'', auctionInterval:String(c.auctionInterval||1), frequencyType:c.frequencyType||'Months',
+      auctionDayOfMonth:String(c.auctionDayOfMonth||''), organiserFeePct:String(c.organiserFeePct||5),
       commissionType:c.commissionType||'Single', myStatus:c.myStatus||'Active',
       expectedTakeMonth:c.expectedTakeMonth||'', actualTakeMonth:c.actualTakeMonth||'', prizeReceived:String(c.prizeReceived||''),
+      auctionsDone:String(c.auctionsDone||''), lastAuctionDate:c.lastAuctionDate||'',
       notes:c.notes||'',
       range1:String(c.range1||''), range2:String(c.range2||''), range3:String(c.range3||''), range4:String(c.range4||''),
     });
@@ -588,17 +643,40 @@ export default function OtherChits() {
     if (!form.startMonth)                              return setFormErr('Start month is required');
     setSaving(true);
     try {
-      const data = {
+      const baseData = {
         ...form,
         totalChitValue: +form.totalChitValue, totalMembers: +form.totalMembers||0,
         myMemberNumber: +form.myMemberNumber||0, auctionInterval: +form.auctionInterval||1,
         organiserFeePct: +form.organiserFeePct||0,
+        auctionDayOfMonth: +form.auctionDayOfMonth||0, auctionsDone: +form.auctionsDone||0,
         range1:+form.range1||0, range2:+form.range2||0, range3:+form.range3||0, range4:+form.range4||0,
         prizeReceived: +form.prizeReceived||0,
       };
-      if (editTarget) { await updateOtherChit(editTarget.id, data, user.uid); setEditTarget(null); }
-      else { await addOtherChit(data, user.uid); }
-      setFormModal(false); load();
+      if (editTarget) {
+        await updateOtherChit(editTarget.id, baseData, user.uid);
+        setEditTarget(null);
+        setFormModal(false); setTicketCount(1); load();
+      } else if (ticketCount > 1) {
+        // Create N tickets under the same chit — each its own record, each clearly
+        // labeled so they're never confused with each other in the list.
+        const baseChitName = form.chitName || form.companyName;
+        for (let i = 1; i <= ticketCount; i++) {
+          await addOtherChit({ ...baseData, chitName: `${baseChitName} — Ticket ${i}`, myMemberNumber: (+form.myMemberNumber || 0) }, user.uid);
+        }
+        setFormModal(false); setTicketCount(1); load();
+      } else {
+        const newId = await addOtherChit(baseData, user.uid);
+        setFormModal(false); setTicketCount(1);
+        if (baseData.auctionsDone > 0) {
+          // Already partway through — open the backfill grid so past auctions can be
+          // entered (date + amount) instead of silently pretending they never happened.
+          const newChit = { id: newId, ...baseData };
+          const months = getAuctionMonths(newChit, baseData.auctionsDone);
+          setBackfillTarget(newChit);
+          setBackfillRows(months.map(m => ({ month: m, date: '', amount: String(Math.round((baseData.totalChitValue||0)/(baseData.totalMembers||1))) })));
+        }
+        load();
+      }
     } catch(e) { setFormErr(e.message); }
     finally { setSaving(false); }
   }
@@ -617,6 +695,39 @@ export default function OtherChits() {
       await updateOtherChit(chit.id, { myStatus:'Cashed', actualTakeMonth:data.month, prizeReceived:data.prizeReceived||0 }, user.uid);
     }
     load();
+  }
+
+  async function handleBackfillSave() {
+    setBackfillSaving(true);
+    try {
+      for (const row of backfillRows) {
+        if (!row.date || !row.amount) continue; // skip rows left blank
+        await addOtherChitPayment(backfillTarget.id, {
+          month: row.month, date: row.date, amount: +row.amount, status: 'Paid',
+        }, user.uid);
+      }
+      toast.success('Past auctions recorded');
+      setBackfillTarget(null); setBackfillRows([]);
+      load();
+    } catch (e) { toast.error('Failed: ' + e.message); }
+    finally { setBackfillSaving(false); }
+  }
+
+  async function handleDeletePayment(chitId, paymentId) {
+    if (!window.confirm('Delete this auction record? This cannot be undone.')) return;
+    try {
+      await deleteOtherChitPayment(paymentId);
+      setPaymentsMap(pm => ({ ...pm, [chitId]: pm[chitId].filter(p => p.id !== paymentId) }));
+      toast.success('Auction record deleted');
+    } catch (e) { toast.error('Failed: ' + e.message); }
+  }
+
+  async function handleEditPayment(paymentId, chitId, data) {
+    try {
+      await updateOtherChitPayment(paymentId, data);
+      setPaymentsMap(pm => ({ ...pm, [chitId]: pm[chitId].map(p => p.id === paymentId ? { ...p, ...data } : p) }));
+      toast.success('Auction record updated');
+    } catch (e) { toast.error('Failed: ' + e.message); }
   }
 
   async function handleTogglePayment(chitId, payment) {
@@ -638,6 +749,17 @@ export default function OtherChits() {
   // Sub for form phase preview
   const formSub = form.totalChitValue && form.totalMembers ? Math.round(+form.totalChitValue / +form.totalMembers) : 0;
   const formPhases = form.totalMembers ? calcPhases(+form.totalMembers) : [];
+
+  // Real company entities (from the dedicated Companies page) — falls back to
+  // whatever companies have been used on existing chits, for backward compatibility.
+  const companyOptions = companies.length > 0
+    ? companies
+    : Object.values(
+        chits.reduce((acc, c) => {
+          if (c.companyName && !acc[c.companyName]) acc[c.companyName] = { companyName: c.companyName, organiserName: c.organiserName, organiserPhone: c.organiserPhone };
+          return acc;
+        }, {})
+      ).sort((a, b) => a.companyName.localeCompare(b.companyName));
 
   if (loading) return <PageLoader stats={4}/>;
 
@@ -738,20 +860,61 @@ export default function OtherChits() {
             <Plus size={14}/> Add Your First Joined Chit
           </button>
         </div>
-      ) : (
-        <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
-          {chits.map(c => (
-            <JoinedChitCard
-              key={c.id}
-              chit={c}
-              payments={paymentsMap[c.id] || []}
-              onEdit={() => openEdit(c)}
-              onDelete={() => setDelTarget(c)}
-              onAddPayment={() => setPayTarget(c)}
-              onTogglePayment={p => handleTogglePayment(c.id, p)}
-              onMarkTaken={month => handleMarkTaken(c, month)}
-            />
-          ))}
+      ) : selectedCompany ? (() => {
+        const companyChits = chits.filter(c => (c.companyName || 'Unnamed Company') === selectedCompany);
+        const companyTotal = companyChits.reduce((s, c) => s + (c.totalChitValue || 0), 0);
+        return (
+          <div>
+            <button onClick={() => setSelectedCompany(null)} style={{ display:'flex', alignItems:'center', gap:6, padding:'8px 14px', marginBottom:14, borderRadius:9, border:`1px solid ${tokens.border}`, background:'#fff', cursor:'pointer', fontSize:13, fontWeight:600, color:tokens.text, fontFamily:'inherit' }}>
+              ← All Companies
+            </button>
+            <div style={{ display:'flex', alignItems:'center', gap:10, padding:'12px 16px', marginBottom:14, background:tokens.slateLight, borderRadius:10 }}>
+              <span style={{ fontSize:15, fontWeight:800, color:tokens.text }}>🏢 {selectedCompany}</span>
+              <span style={{ fontSize:12, color:tokens.textSub }}>{companyChits.length} ticket{companyChits.length !== 1 ? 's' : ''} · {formatCurrency(companyTotal)} total</span>
+            </div>
+            <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+              {companyChits.map(c => (
+                <JoinedChitCard
+                  key={c.id}
+                  chit={c}
+                  payments={paymentsMap[c.id] || []}
+                  onEdit={() => openEdit(c)}
+                  onDelete={() => setDelTarget(c)}
+                  onAddPayment={() => setPayTarget(c)}
+                  onTogglePayment={p => handleTogglePayment(c.id, p)}
+                  onMarkTaken={month => handleMarkTaken(c, month)}
+                  onEditPayment={(paymentId, data) => handleEditPayment(paymentId, c.id, data)}
+                  onDeletePayment={paymentId => handleDeletePayment(c.id, paymentId)}
+                />
+              ))}
+            </div>
+          </div>
+        );
+      })() : (
+        <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+          {Object.entries(
+            chits.reduce((groups, c) => {
+              const key = c.companyName || 'Unnamed Company';
+              if (!groups[key]) groups[key] = [];
+              groups[key].push(c);
+              return groups;
+            }, {})
+          ).sort((a, b) => a[0].localeCompare(b[0])).map(([companyName, groupChits]) => {
+            const groupTotal = groupChits.reduce((s, c) => s + (c.totalChitValue || 0), 0);
+            const activeCount = groupChits.filter(c => c.myStatus !== 'Cashed').length;
+            return (
+              <div key={companyName} onClick={() => setSelectedCompany(companyName)}
+                style={{ display:'flex', alignItems:'center', gap:12, padding:'16px 18px', background:'#fff', border:`1px solid ${tokens.border}`, borderRadius:12, cursor:'pointer' }}
+                onMouseEnter={e=>e.currentTarget.style.borderColor='#0a84ff'} onMouseLeave={e=>e.currentTarget.style.borderColor=tokens.border}>
+                <span style={{ fontSize:22 }}>🏢</span>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:15, fontWeight:700, color:tokens.text }}>{companyName}</div>
+                  <div style={{ fontSize:12, color:tokens.textSub, marginTop:2 }}>{groupChits.length} ticket{groupChits.length !== 1 ? 's' : ''} · {activeCount} active · {formatCurrency(groupTotal)} total value</div>
+                </div>
+                <span style={{ fontSize:18, color:tokens.textMuted }}>›</span>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -771,18 +934,67 @@ export default function OtherChits() {
             <div style={{ padding:'18px 22px' }}>
               {formErr && <div style={{ marginBottom:14, padding:'10px 14px', background:'#FDE8E8', borderRadius:9, fontSize:13, color:tokens.red }}>{formErr}</div>}
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:14 }}>
+                {/* Step 1 — select the company this chit is joined through */}
+                {!editTarget && (
+                  <div style={{ gridColumn:'1/-1' }}>
+                    <FG label="Step 1 — Select the Company / Agent">
+                      {companyOptions.length > 0 ? (
+                        <select value="" onChange={e=>{
+                          const chosen = companyOptions.find(co => co.companyName === e.target.value);
+                          if (chosen) { sf('companyName', chosen.companyName); sf('organiserName', chosen.organiserName||''); sf('organiserPhone', chosen.organiserPhone||''); }
+                        }} style={{ width:'100%', boxSizing:'border-box', height:38, padding:'0 12px', borderRadius:9, border:`1px solid ${tokens.border}`, fontSize:13.5, fontFamily:'inherit', background:'#fff', cursor:'pointer' }}>
+                          <option value="">— Select a company —</option>
+                          {companyOptions.map(co => <option key={co.companyName} value={co.companyName}>{co.companyName}{co.organiserName?` (${co.organiserName})`:''}</option>)}
+                        </select>
+                      ) : (
+                        <div style={{ fontSize:12.5, color:tokens.textSub, padding:'10px 12px', background:tokens.slateLight, borderRadius:9 }}>
+                          No companies yet — <a href="/cf/other-chit-companies" style={{ color:'#0a84ff', fontWeight:600 }}>add one first</a>, or just type a new company name below.
+                        </div>
+                      )}
+                    </FG>
+                  </div>
+                )}
                 <div style={{ gridColumn:'1/-1' }}>
                   <FG label="Chit Company / Organisation Name" required>
                     <FInp value={form.companyName} onChange={e=>sf('companyName',e.target.value)} placeholder="e.g. Shriram Chit Fund — Group A" autoFocus/>
                   </FG>
                 </div>
+                <div style={{ gridColumn:'1/-1' }}>
+                  <FG label="Chit Name / Ticket" hint="Distinguishes this chit from others under the same company">
+                    <FInp value={form.chitName} onChange={e=>sf('chitName',e.target.value)} placeholder="e.g. 20L - Chit A"/>
+                  </FG>
+                </div>
+                {!editTarget && (
+                  <div style={{ gridColumn:'1/-1', padding:'12px 14px', background:tokens.slateLight, borderRadius:10, display:'flex', alignItems:'center', gap:14 }}>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:13, fontWeight:600, color:tokens.text }}>How many tickets?</div>
+                      <div style={{ fontSize:11.5, color:tokens.textSub }}>If you hold more than one ticket in this same chit, each one is tracked as its own separate record — Ticket 1, Ticket 2, etc.</div>
+                    </div>
+                    <button type="button" onClick={()=>setTicketCount(n=>Math.max(1,n-1))} style={{ width:32, height:32, borderRadius:8, border:`1px solid ${tokens.border}`, background:'#fff', cursor:'pointer', fontSize:16, fontFamily:'inherit' }}>−</button>
+                    <span style={{ fontSize:16, fontWeight:800, color:tokens.text, minWidth:20, textAlign:'center' }}>{ticketCount}</span>
+                    <button type="button" onClick={()=>setTicketCount(n=>Math.min(10,n+1))} style={{ width:32, height:32, borderRadius:8, border:`1px solid ${tokens.border}`, background:'#fff', cursor:'pointer', fontSize:16, fontFamily:'inherit' }}>+</button>
+                  </div>
+                )}
                 <FG label="Organiser / Agent Name"><FInp value={form.organiserName} onChange={e=>sf('organiserName',e.target.value)} placeholder="Agent name"/></FG>
                 <FG label="Organiser Phone"><FInp value={form.organiserPhone} onChange={e=>sf('organiserPhone',e.target.value)} type="tel" placeholder="9876543210"/></FG>
                 <FG label="Total Chit Value (₹)" required><FInp type="number" value={form.totalChitValue} onChange={e=>sf('totalChitValue',e.target.value)} placeholder="500000"/></FG>
                 <FG label="Total Members" required><FInp type="number" value={form.totalMembers} onChange={e=>sf('totalMembers',e.target.value)} placeholder="20"/></FG>
                 <FG label="My Member Number"><FInp type="number" value={form.myMemberNumber} onChange={e=>sf('myMemberNumber',e.target.value)} placeholder="5"/></FG>
                 <FG label="Start Month" required hint="First auction month"><FInp type="month" value={form.startMonth} onChange={e=>sf('startMonth',e.target.value)}/></FG>
-                <FG label="Auction Every (months)"><FInp type="number" value={form.auctionInterval} onChange={e=>sf('auctionInterval',e.target.value)} placeholder="1"/></FG>
+                <FG label="Frequency Type">
+                  <FSel value={form.frequencyType} onChange={e=>sf('frequencyType',e.target.value)}>
+                    <option value="Months">Months</option>
+                    <option value="Days">Days</option>
+                  </FSel>
+                </FG>
+                <FG label={`Auction Every (${form.frequencyType==='Days'?'days':'months'})`}><FInp type="number" value={form.auctionInterval} onChange={e=>sf('auctionInterval',e.target.value)} placeholder="1"/></FG>
+                {form.frequencyType==='Months' && (
+                  <FG label="Auction Day of Month" hint="Which day the auction usually falls on"><FInp type="number" min="1" max="31" value={form.auctionDayOfMonth} onChange={e=>sf('auctionDayOfMonth',e.target.value)} placeholder="15"/></FG>
+                )}
+                <FG label="Auctions Done So Far" hint="For a chit that's already partway through — how many auctions have already happened">
+                  <FInp type="number" min="0" value={form.auctionsDone} onChange={e=>sf('auctionsDone',e.target.value)} placeholder="0"/>
+                </FG>
+                <FG label="Last Auction Date" hint="Date of the most recent auction"><FInp type="date" value={form.lastAuctionDate} onChange={e=>sf('lastAuctionDate',e.target.value)}/></FG>
                 <FG label="Organiser Fee" hint={parseFloat(form.organiserFeePct) > 0 ? `Organiser earns ${form.organiserFeePct}% of total chit (₹${Math.round((parseFloat(form.totalChitValue)||0)*(parseFloat(form.organiserFeePct)||0)/100).toLocaleString('en-IN')}) — deducted from bid pool` : 'No organiser fee — full bid goes to commission pool'}>
                   <div style={{ display:'flex', alignItems:'center', gap:10 }}>
                     <div onClick={()=>sf('organiserFeePct', parseFloat(form.organiserFeePct) > 0 ? '0' : '5')} style={{ width:51, height:31, borderRadius:999, background: parseFloat(form.organiserFeePct) > 0 ? tokens.blue : '#E5E5EA', padding:2, display:'flex', alignItems:'center', justifyContent: parseFloat(form.organiserFeePct) > 0 ? 'flex-end':'flex-start', transition:'all .22s', flexShrink:0, cursor:'pointer' }}><div style={{ width:27, height:27, borderRadius:'50%', background:'#fff', boxShadow:'0 2px 6px rgba(0,0,0,0.2)' }}/></div>
@@ -849,7 +1061,7 @@ export default function OtherChits() {
                 <button onClick={() => { setFormModal(false); setEditTarget(null); }} style={{ padding:'9px 16px', borderRadius:9, border:`1.5px solid ${tokens.border}`, background:'#fff', fontSize:13, cursor:'pointer', fontFamily:'inherit', color:tokens.textSub }}>Cancel</button>
                 <button onClick={handleSave} disabled={saving}
                   style={{ padding:'9px 20px', borderRadius:9, border:'none', background:'#0a84ff', color:'#fff', fontSize:13.5, fontWeight:700, cursor:saving?'not-allowed':'pointer', fontFamily:'inherit', opacity:saving?.7:1 }}>
-                  {saving ? 'Saving…' : editTarget ? 'Save Changes' : 'Add Chit'}
+                  {saving ? 'Saving…' : editTarget ? 'Save Changes' : ticketCount > 1 ? `Create ${ticketCount} Tickets` : 'Add Chit'}
                 </button>
               </div>
             </div>
@@ -886,6 +1098,42 @@ export default function OtherChits() {
           onClose={() => setPayTarget(null)}
           onSave={data => handleAddPayment(payTarget, data)}
         />
+      )}
+
+      {/* Backfill modal — fill in past auctions for a chit that's already partway through */}
+      {backfillTarget && (
+        <div style={{ position:'fixed', inset:0, zIndex:1300, background:'rgba(15,23,42,.55)', display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
+          <div style={{ background:'#fff', borderRadius:18, width:'100%', maxWidth:560, maxHeight:'86vh', display:'flex', flexDirection:'column' }}>
+            <div style={{ padding:'20px 24px 14px', borderBottom:`1px solid ${tokens.border}` }}>
+              <div style={{ fontSize:16, fontWeight:800, color:tokens.text }}>Fill In Past Auctions</div>
+              <div style={{ fontSize:12.5, color:tokens.textSub, marginTop:3 }}>
+                {backfillTarget.chitName || backfillTarget.companyName} — {backfillRows.length} auction{backfillRows.length !== 1 ? 's' : ''} already happened. Enter the date and amount you paid for each one (leave blank to skip).
+              </div>
+            </div>
+            <div style={{ padding:'14px 24px', overflowY:'auto', flex:1, display:'flex', flexDirection:'column', gap:10 }}>
+              {backfillRows.map((row, i) => (
+                <div key={i} style={{ display:'grid', gridTemplateColumns:'70px 1fr 1fr', gap:10, alignItems:'center' }}>
+                  <span style={{ fontSize:12.5, fontWeight:700, color:tokens.textSub }}>#{i + 1}</span>
+                  <input type="date" value={row.date} onChange={e => setBackfillRows(rs => rs.map((r, ri) => ri === i ? { ...r, date: e.target.value } : r))}
+                    style={{ height:36, padding:'0 10px', borderRadius:8, border:`1.5px solid ${tokens.border}`, fontSize:13, fontFamily:'inherit', outline:'none' }} />
+                  <input type="number" value={row.amount} onChange={e => setBackfillRows(rs => rs.map((r, ri) => ri === i ? { ...r, amount: e.target.value } : r))}
+                    placeholder="Amount paid (₹)"
+                    style={{ height:36, padding:'0 10px', borderRadius:8, border:`1.5px solid ${tokens.border}`, fontSize:13, fontFamily:'inherit', outline:'none' }} />
+                </div>
+              ))}
+            </div>
+            <div style={{ padding:'14px 24px', borderTop:`1px solid ${tokens.border}`, display:'flex', gap:10 }}>
+              <button onClick={handleBackfillSave} disabled={backfillSaving}
+                style={{ flex:1, padding:'11px', borderRadius:10, border:'none', background:'#0a84ff', color:'#fff', fontSize:13.5, fontWeight:700, cursor:backfillSaving?'not-allowed':'pointer', fontFamily:'inherit', opacity:backfillSaving?.7:1 }}>
+                {backfillSaving ? 'Saving…' : '✓ Save Past Auctions'}
+              </button>
+              <button onClick={() => { setBackfillTarget(null); setBackfillRows([]); }}
+                style={{ padding:'11px 18px', borderRadius:10, border:`1.5px solid ${tokens.border}`, background:'#fff', fontSize:13, cursor:'pointer', fontFamily:'inherit', color:tokens.textSub }}>
+                Skip
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
