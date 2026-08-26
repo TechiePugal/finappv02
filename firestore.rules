@@ -69,6 +69,7 @@ service cloud.firestore {
     match /chit_ledger/{id}                   { allow read, write: if signedIn(); }
     match /chit_audit_log/{id}                { allow read, write: if signedIn(); }
     match /chit_others/{id}                   { allow read, write: if signedIn(); }
+    match /chit_other_companies/{id}          { allow read, write: if signedIn(); }
     match /chit_others_payments/{id}          { allow read, write: if signedIn(); }
     match /chit_persons/{id}                  { allow read, write: if signedIn(); }
     match /chit_person_files/{id}             { allow read, write: if signedIn(); }

@@ -31,6 +31,7 @@ import CFOtherChits from './pages/chitfund/OtherChits';
 import CFOtherChitCompanies from './pages/chitfund/OtherChitCompanies';
 import CFJournal from './pages/chitfund/Journal';
 import CFJoinedAuctions from './pages/chitfund/JoinedAuctions';
+import CFExpectedFund from './pages/chitfund/ExpectedFund';
 import CFJoinedExposure from './pages/chitfund/JoinedExposure';
 import CFJoinedLedger from './pages/chitfund/JoinedLedger';
 
@@ -158,6 +159,7 @@ function AppRouter() {
             <Route path="other-chit-companies" element={<CFOtherChitCompanies />} />
             <Route path="journal" element={<CFJournal />} />
             <Route path="joined-auctions" element={<CFJoinedAuctions />} />
+            <Route path="expected-fund" element={<CFExpectedFund />} />
             <Route path="joined-exposure" element={<CFJoinedExposure />} />
             <Route path="joined-ledger" element={<CFJoinedLedger />} />
           </Route>
