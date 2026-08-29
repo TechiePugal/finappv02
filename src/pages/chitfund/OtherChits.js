@@ -588,6 +588,7 @@ function JoinedChitCard({ chit, payments, onEdit, onDelete, onAddPayment, onTogg
 export default function OtherChits() {
   const { user } = useAuth();
   const [chits,       setChits]       = useState([]);
+  const [statusFilter, setStatusFilter] = useState('Active'); // Active | Closed | All — closed chits hidden by default
   const [selectedCompany, setSelectedCompany] = useState(null); // click a company to drill into just its chits
   const [companies, setCompanies] = useState([]); // real Company entities from OtherChitCompanies
   const [paymentsMap, setPaymentsMap] = useState({});
@@ -763,6 +764,14 @@ export default function OtherChits() {
 
   if (loading) return <PageLoader stats={4}/>;
 
+  // Closed (cashed) chits are hidden by default — nothing left to plan for on them
+  // month to month. Still reachable via the Closed/All filter for historical reference.
+  const visibleChits = chits.filter(c => {
+    if (statusFilter === 'All') return true;
+    if (statusFilter === 'Closed') return c.myStatus === 'Cashed';
+    return c.myStatus !== 'Cashed';
+  });
+
   const modalBg = { position:'fixed', inset:0, zIndex:1000, background:'rgba(0,0,0,0.4)', backdropFilter:'blur(4px)', display:'flex', alignItems:'center', justifyContent:'center', padding:16 };
 
   return (
@@ -848,11 +857,21 @@ export default function OtherChits() {
         ))}
       </div>
 
+      {/* Status filter — closed/cashed chits hidden by default */}
+      <div style={{ display:'flex', gap:6, marginBottom:20 }}>
+        {['Active','Closed','All'].map(f => (
+          <button key={f} onClick={()=>setStatusFilter(f)}
+            style={{ padding:'7px 16px', borderRadius:99, border:'none', background:statusFilter===f?'#0a84ff':tokens.slateLight, color:statusFilter===f?'#fff':tokens.textSub, fontSize:12.5, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>
+            {f}
+          </button>
+        ))}
+      </div>
+
       {/* Chit cards */}
-      {chits.length === 0 ? (
+      {visibleChits.length === 0 ? (
         <div style={{ background:'#fff', border:`1px solid ${tokens.border}`, borderRadius:14, padding:'48px 24px', textAlign:'center' }}>
           <div style={{ fontSize:44, marginBottom:14 }}>🤝</div>
-          <div style={{ fontSize:16, fontWeight:700, color:tokens.textSub, marginBottom:6 }}>No joined chits yet</div>
+          <div style={{ fontSize:16, fontWeight:700, color:tokens.textSub, marginBottom:6 }}>{statusFilter==='Active'?'No active joined chits':statusFilter==='Closed'?'No closed chits yet':'No joined chits yet'}</div>
           <div style={{ fontSize:13, color:tokens.textMuted, marginBottom:20, maxWidth:360, margin:'0 auto 20px' }}>
             Add the chit funds you've joined as a member to track your monthly payments, commission earned, and prize eligibility.
           </div>
@@ -861,7 +880,7 @@ export default function OtherChits() {
           </button>
         </div>
       ) : selectedCompany ? (() => {
-        const companyChits = chits.filter(c => (c.companyName || 'Unnamed Company') === selectedCompany);
+        const companyChits = visibleChits.filter(c => (c.companyName || 'Unnamed Company') === selectedCompany);
         const companyTotal = companyChits.reduce((s, c) => s + (c.totalChitValue || 0), 0);
         return (
           <div>
@@ -893,7 +912,7 @@ export default function OtherChits() {
       })() : (
         <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
           {Object.entries(
-            chits.reduce((groups, c) => {
+            visibleChits.reduce((groups, c) => {
               const key = c.companyName || 'Unnamed Company';
               if (!groups[key]) groups[key] = [];
               groups[key].push(c);

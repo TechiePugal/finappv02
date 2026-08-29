@@ -70,13 +70,21 @@ export default function ExpectedFund() {
     const paidCount = pays.filter(p => p.status === 'Paid').length;
     const totalPaidSoFar = pays.filter(p => p.status === 'Paid').reduce((s, p) => s + (p.amount || 0), 0);
     const sub = (c.totalChitValue || 0) / (c.totalMembers || 1);
-    const round = roundForMonth(c, viewMonth) || (paidCount + 1);
+    const currentRound = paidCount + 1; // overall progress, regardless of which month is being viewed
+    // BUG FIX: roundForMonth returns null when the viewed month ISN'T actually an
+    // auction/payout month for this chit's own cycle (e.g. a 5-month cycle chit has
+    // no obligation in 4 out of every 5 months). The old code fell back to treating
+    // every month as due, which is exactly the "shows full subscription every single
+    // month" bug — now a non-payout month correctly shows nothing owed.
+    const monthRound = roundForMonth(c, viewMonth);
+    const isDueThisMonth = monthRound !== null;
+    const round = monthRound || currentRound; // for display/profit calcs when a round number is still needed
     const chitLike = {
       totalChitValue: c.totalChitValue, totalMembers: c.totalMembers,
       mystatus: 'active', commissionType: c.commissionType || 'Single',
       range1: c.range1 || 0, range2: c.range2 || 0, range3: c.range3 || 0, range4: c.range4 || 0,
     };
-    const expectedThisMonth = round ? getExpectedPayable(chitLike, round) : sub;
+    const expectedThisMonth = isDueThisMonth ? getExpectedPayable(chitLike, monthRound) : 0;
 
     // Profit if taken now — same conservative methodology used elsewhere in the app
     // (assumes a ~15% discount bid, i.e. the winner collects the chit value minus
@@ -85,7 +93,7 @@ export default function ExpectedFund() {
     // for a chit run by someone else.
     const estBid = sub * 0.85;
     const estPrize = Math.max(0, (c.totalChitValue || 0) - estBid);
-    const remainingRounds = Math.max(0, (c.totalMembers || 0) - round);
+    const remainingRounds = Math.max(0, (c.totalMembers || 0) - currentRound);
     const futureCostIfTakenNow = sub * remainingRounds; // full subscription for all remaining rounds once taken
     // Net position if taken now: prize received now, minus everything ever paid in total
     // (what's already sunk, plus full-price rounds still owed after taking).
@@ -93,7 +101,7 @@ export default function ExpectedFund() {
     const netIfTakenNow = estPrize - totalOutlayIfTakenNow;
 
     return {
-      ...c, pays, paidCount, sub, round, expectedThisMonth, totalPaidSoFar,
+      ...c, pays, paidCount, sub, round, currentRound, isDueThisMonth, expectedThisMonth, totalPaidSoFar,
       estPrize, remainingRounds, futureCostIfTakenNow, netIfTakenNow,
     };
   });
@@ -146,8 +154,12 @@ export default function ExpectedFund() {
                   <div style={{ fontSize: 11.5, color: tokens.textSub, marginTop: 2 }}>{r.chitName && r.companyName}{r.chitName ? ' · ' : ''}Round #{r.round} of {r.totalMembers} · Sub {formatCurrency(r.sub)}/round</div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: 10.5, fontWeight: 700, color: tokens.textMuted, textTransform: 'uppercase' }}>Expected — {fmtMo(viewMonth)}</div>
-                  <div style={{ fontSize: 17, fontWeight: 800, color: tokens.blue }}>{formatCurrency(r.expectedThisMonth)}</div>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: tokens.textMuted, textTransform: 'uppercase' }}>{fmtMo(viewMonth)}</div>
+                  {r.isDueThisMonth ? (
+                    <div style={{ fontSize: 17, fontWeight: 800, color: tokens.blue }}>{formatCurrency(r.expectedThisMonth)}</div>
+                  ) : (
+                    <div style={{ fontSize: 13, fontWeight: 700, color: tokens.textMuted }}>Not due this month</div>
+                  )}
                 </div>
               </div>
               <div style={{ padding: '10px 18px', background: tokens.slateLight, display: 'flex', gap: 20, flexWrap: 'wrap', fontSize: 11.5, color: tokens.textSub, borderTop: `1px solid ${tokens.border}` }}>

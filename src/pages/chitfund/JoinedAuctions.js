@@ -63,9 +63,15 @@ export default function JoinedAuctions() {
     const viewedPay = pays.find(p => p.month === viewMonth);
     const isPaidThisMonth = viewedPay && viewedPay.status === 'Paid';
     const isCashed = c.myStatus === 'Cashed';
-    // Round number for the month currently being viewed — not always "next round";
-    // navigating to a past/future month shows what round falls in that month.
-    const viewedRound = roundForMonth(c, viewMonth) || (paidCount + 1);
+    const currentRound = paidCount + 1;
+    // BUG FIX: roundForMonth returns null when the viewed month isn't actually a
+    // payout month for this chit's own cycle (e.g. every-5-months chits only owe
+    // something once every 5 months, not every single month). The old fallback to
+    // (paidCount + 1) treated every month as due — fixed to show nothing owed
+    // on months that genuinely have no obligation.
+    const monthRound = roundForMonth(c, viewMonth);
+    const isDueThisMonth = monthRound !== null;
+    const viewedRound = monthRound || currentRound;
     const nextRound = viewedRound;
     // Adapter matching what getExpectedPayable expects — mirrors OtherChits.js's toChitLike()
     const chitLike = {
@@ -76,12 +82,13 @@ export default function JoinedAuctions() {
     // The real fund-projection rule: if this ticket has ALREADY been taken (cashed),
     // every future payment is the FULL subscription — no more discount. If not yet
     // taken, use the configured commission-range ESTIMATE as the expected (discounted)
-    // amount, falling back to full subscription if no range was set.
-    const expectedThisMonth = isCashed ? sub : getExpectedPayable(chitLike, nextRound);
-    return { ...c, pays, paidCount, sub, expectedThisMonth, isPaidThisMonth, isCashed, nextRound, chitLike, recent: [...pays].sort((a, b) => String(b.month).localeCompare(String(a.month))).slice(0, 3) };
+    // amount, falling back to full subscription if no range was set. And critically,
+    // if this month isn't a payout month at all for this chit's cycle, nothing is owed.
+    const expectedThisMonth = !isDueThisMonth ? 0 : (isCashed ? sub : getExpectedPayable(chitLike, nextRound));
+    return { ...c, pays, paidCount, sub, expectedThisMonth, isPaidThisMonth, isCashed, isDueThisMonth, nextRound, currentRound, chitLike, recent: [...pays].sort((a, b) => String(b.month).localeCompare(String(a.month))).slice(0, 3) };
   });
 
-  const dueNow = rows.filter(r => !r.isCashed && !r.isPaidThisMonth);
+  const dueNow = rows.filter(r => !r.isCashed && !r.isPaidThisMonth && r.isDueThisMonth);
   const upToDate = rows.filter(r => !r.isCashed && r.isPaidThisMonth);
   const cashedOut = rows.filter(r => r.isCashed);
 
