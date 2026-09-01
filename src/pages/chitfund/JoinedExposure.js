@@ -34,8 +34,10 @@ export default function JoinedExposure() {
   useEffect(() => {
     if (!user) return;
     getOtherChits(user.uid).then(async list => {
-      setChits(list);
-      const pairs = await Promise.all(list.map(c => getOtherChitPayments(c.id).then(p => [c.id, p])));
+      // Cashed-out chits excluded — nothing left to be "at risk" on once taken.
+      const active = list.filter(c => c.myStatus !== 'Cashed');
+      setChits(active);
+      const pairs = await Promise.all(active.map(c => getOtherChitPayments(c.id).then(p => [c.id, p])));
       setPayMap(Object.fromEntries(pairs));
       setLoading(false);
     }).catch(() => setLoading(false));

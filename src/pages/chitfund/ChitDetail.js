@@ -452,6 +452,35 @@ export default function ChitDetail() {
             )}
           </div>
 
+          {schedule.length > 0 && (
+            <div style={{ padding: '14px 18px', borderBottom: `1px solid ${tokens.border}`, background: tokens.slateLight }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: tokens.textSub, textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 10 }}>
+                Schedule At a Glance — every {chit.auctionInterval > 1 ? `${chit.auctionInterval} months` : 'month'} · click a box to process or collect
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(88px,1fr))', gap: 8 }}>
+                {schedule.map((a, i) => {
+                  const isCompleted = a.status === 'Completed';
+                  const now = new Date();
+                  const d = a.auctionDate?.seconds ? new Date(a.auctionDate.seconds * 1000) : new Date(a.auctionDate);
+                  const isOverdue = a.status === 'Pending' && d < now;
+                  const bg = isCompleted ? tokens.greenLight : isOverdue ? tokens.amberLight : '#fff';
+                  const border = isCompleted ? `1.5px solid ${tokens.green}` : isOverdue ? `1.5px solid ${tokens.amber}` : `1px dashed ${tokens.border}`;
+                  const col = isCompleted ? tokens.green : isOverdue ? tokens.amber : tokens.textMuted;
+                  return (
+                    <div key={a.id || i} onClick={() => isCompleted ? openPayments(a) : (setAuctionModal(a), openAuctionFormFor(a), setError(''))}
+                      style={{ padding: '8px 6px', borderRadius: 9, background: bg, border, textAlign: 'center', cursor: 'pointer' }}>
+                      <div style={{ fontSize: 9.5, fontWeight: 700, color: tokens.textMuted, marginBottom: 2 }}>#{a.auctionNumber}</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: col }}>{d.toLocaleDateString('en-IN', { month: 'short', year: '2-digit' })}</div>
+                      {isCompleted && <div style={{ fontSize: 9, color: tokens.green, marginTop: 2 }}>✓ Done</div>}
+                      {!isCompleted && isOverdue && <div style={{ fontSize: 9, color: tokens.amber, marginTop: 2 }}>Due</div>}
+                      {!isCompleted && !isOverdue && <div style={{ fontSize: 9, color: tokens.textMuted, marginTop: 2 }}>Pending</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {schedule.length === 0 ? (
             <EmptyState icon={Gavel} title="No auctions scheduled" subtitle="Add members and create a schedule" />
           ) : schedule.map((a, i) => {

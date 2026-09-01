@@ -147,6 +147,19 @@ export default function DepositorSettlement(){
         if(existing?.ledgerEntryId){await updateDoc(doc(db,'finance_ledger_entries',existing.ledgerEntryId),{...lData,createdAt:undefined,updatedAt:serverTimestamp()});}
         else{await addDoc(collection(db,'finance_ledger_entries'),lData);}
       }
+      if(paid&&compoundVal>0){
+        // Compounding isn't a cash outflow, but it IS interest actually incurred —
+        // just reinvested straight back into the deposit instead of paid out. This
+        // needs its own ledger record too, or the transaction silently never
+        // appears anywhere in the Journal at all.
+        await addDoc(collection(db,'finance_ledger_entries'),{
+          type:'Debit',category:'Interest Compounded',
+          description:`Interest added to ${depositor.name}'s deposit — ${slot.label} (reinvested, not paid out)`,
+          amount:compoundVal,paymentMode:'Compound',date:pf.date,
+          depositorName:depositor.name,depositId:depositor.id,
+          linkedDepositPaymentId:payDocId,createdAt:serverTimestamp(),createdBy:user?.uid||null
+        });
+      }
       if(paid&&fine>0){
         await addDoc(collection(db,'finance_ledger_entries'),{
           type:'Credit',category:'Fine Income',
@@ -266,7 +279,14 @@ export default function DepositorSettlement(){
           const slots=genSlots(dep.startDate,dep.interestTenure);
           const isOpen=selected===dep.id;
           const paidCount=slots.filter(sl=>{const pp=payments[`${dep.id}_${sl.month}`];return pp?.status==='Paid'||pp?.addedToDeposit;}).length;
-          const totalColl=slots.reduce((s,sl)=>s+(payments[`${dep.id}_${sl.month}`]?.totalPayout||payments[`${dep.id}_${sl.month}`]?.amountPaid||0),0);
+          const totalColl=slots.reduce((s,sl)=>{
+            const p=payments[`${dep.id}_${sl.month}`];
+            if(!p)return s;
+            // A period settled by adding to the deposit (compounding) is JUST AS
+            // SETTLED as one paid in cash — it must count as collected here too,
+            // or it wrongly keeps showing as "pending" even after being handled.
+            return s+(p.amountPaid||0)+(p.addedAmount||0);
+          },0);
           const pendingSlots=slots.filter(sl=>{const pp=payments[`${dep.id}_${sl.month}`];return !(pp?.status==='Paid'||pp?.addedToDeposit);});
           const periodInt=calcPeriodInt(dep);
           const t=parseInt(dep.interestTenure)||1;
@@ -307,8 +327,6 @@ export default function DepositorSettlement(){
                   {pendingSlots.length>0&&(
                     <div style={{padding:'4px 10px',borderRadius:99,background:'rgba(255,59,48,0.08)',border:'1px solid rgba(255,59,48,0.2)',fontSize:12,fontWeight:700,color:'#ff3b30'}}>{pendingSlots.length} pending</div>
                   )}
-                  <button onClick={(e)=>{e.stopPropagation();setAddModal(dep);setAf({amount:'',date:new Date().toISOString().split('T')[0],remarks:''});}}
-                    style={{padding:'6px 12px',borderRadius:8,border:'1px solid rgba(0,0,0,0.1)',background:'#fff',color:'var(--text-primary)',fontSize:12,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>+ Add Amount</button>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6e6e73" strokeWidth="2" style={{transform:isOpen?'rotate(180deg)':'none',transition:'transform 0.2s',flexShrink:0}}><polyline points="6 9 12 15 18 9"/></svg>
                 </div>
               </div>

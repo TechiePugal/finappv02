@@ -1,4 +1,5 @@
 import React,{useEffect,useState} from 'react';
+import {printUsersDirectory} from '../../utils/pdfReport';
 import {collection,getDocs,addDoc,updateDoc,doc,serverTimestamp,onSnapshot,query,orderBy} from 'firebase/firestore';
 import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
@@ -113,7 +114,10 @@ export default function Customers(){
   return(
     <div>
       <PageHeader title="Users" subtitle="Common user master — link a User to create their Deposit or Loan/EMI. One user can have multiple deposits and loans."
-        action={<Button onClick={()=>{setModal('add');setForm(BLANK);}}>+ Enroll User</Button>}/>
+        action={<div style={{display:'flex',gap:8}}>
+          <Button variant="secondary" onClick={()=>printUsersDirectory(filtered, linked)}>Export PDF</Button>
+          <Button onClick={()=>{setModal('add');setForm(BLANK);}}>+ Enroll User</Button>
+        </div>}/>
       <div className="grid-4" style={{marginBottom:14}}>
         <StatCard label="Total Users" value={customers.length} color="#0a84ff"/>
         <StatCard label="Active" value={customers.filter(c=>c.status==='Active').length} color="#34c759"/>

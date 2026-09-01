@@ -40,7 +40,8 @@ export default function Exposure() {
 
   if (loading) return <Loader text="Calculating exposure…" />;
 
-  const chits = data?.chits || [];
+  // Closed chits excluded — nothing left to be "exposed" to once a chit is done.
+  const chits = (data?.chits || []).filter(c => c.status !== 'Closed');
 
   const enriched = chits.map(c => ({
     ...c,

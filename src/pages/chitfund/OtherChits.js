@@ -35,7 +35,7 @@ import {
   addMonthsToYM
 } from '../../utils/cf_engine';
 import { tokens, Card, SectionHeader } from '../../components/chitfund/UI';
-import { printJoinedChitDocument } from '../../utils/cf_pdfReport';
+import { printJoinedChitDocument, printCompanyChitReport } from '../../utils/cf_pdfReport';
 import { PageLoader } from '../../components/Skeleton';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -514,6 +514,43 @@ function JoinedChitCard({ chit, payments, onEdit, onDelete, onAddPayment, onTogg
             </div>
           )}
 
+          {/* Auction Schedule — shows ONLY the months this chit actually has an auction/
+              payment in (e.g. every 2 months: Jan, Mar, May…), never the months in
+              between, so there's no confusion about when anything is actually due. */}
+          {(() => {
+            const scheduleMonths = getAuctionMonths(chit, chit.totalMembers);
+            const paidMonthSet = new Set(payments.filter(p => p.status === 'Paid').map(p => p.month));
+            const cur = curMonth();
+            return (
+              <div style={{ padding:'12px 18px', borderBottom:`1px solid ${tokens.border}` }}>
+                <div style={{ fontSize:11, fontWeight:700, color:tokens.textSub, textTransform:'uppercase', letterSpacing:'.06em', marginBottom:10 }}>
+                  Auction Schedule ({scheduleMonths.length} rounds{chit.frequencyType==='Days'?`, every ${chit.auctionInterval||1} days`:chit.auctionInterval>1?`, every ${chit.auctionInterval} months`:', monthly'})
+                </div>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(88px,1fr))', gap:8 }}>
+                  {scheduleMonths.map((m, i) => {
+                    const roundNo = i + 1;
+                    const isPaid = paidMonthSet.has(m);
+                    const isTaken = isCashed && chit.actualTakeMonth === m;
+                    const isPast = m < cur;
+                    const isCurrent = m === cur;
+                    const bg = isTaken ? '#EDE9FE' : isPaid ? tokens.greenLight : isCurrent ? '#EBF5FF' : isPast ? tokens.amberLight : '#fff';
+                    const border = isTaken ? '1.5px solid #A78BFA' : isPaid ? `1.5px solid ${tokens.green}` : isCurrent ? '1.5px solid #0a84ff' : isPast ? `1px solid ${tokens.amber}` : `1px dashed ${tokens.border}`;
+                    const col = isTaken ? '#5521B5' : isPaid ? tokens.green : isCurrent ? '#0a84ff' : isPast ? tokens.amber : tokens.textMuted;
+                    return (
+                      <div key={m} style={{ padding:'8px 6px', borderRadius:9, background:bg, border, textAlign:'center' }}>
+                        <div style={{ fontSize:9.5, fontWeight:700, color:tokens.textMuted, marginBottom:2 }}>#{roundNo}</div>
+                        <div style={{ fontSize:11, fontWeight:700, color:col }}>{fmtMo(m)}</div>
+                        {isTaken && <div style={{ fontSize:9, color:'#5521B5', marginTop:2 }}>🏆 Taken</div>}
+                        {!isTaken && isPaid && <div style={{ fontSize:9, color:tokens.green, marginTop:2 }}>✓ Paid</div>}
+                        {!isTaken && !isPaid && isPast && <div style={{ fontSize:9, color:tokens.amber, marginTop:2 }}>Due</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Payment history list */}
           <div style={{ padding:'12px 18px 6px' }}>
             <div style={{ fontSize:11, fontWeight:700, color:tokens.textSub, textTransform:'uppercase', letterSpacing:'.06em', marginBottom:10 }}>
@@ -884,9 +921,14 @@ export default function OtherChits() {
         const companyTotal = companyChits.reduce((s, c) => s + (c.totalChitValue || 0), 0);
         return (
           <div>
-            <button onClick={() => setSelectedCompany(null)} style={{ display:'flex', alignItems:'center', gap:6, padding:'8px 14px', marginBottom:14, borderRadius:9, border:`1px solid ${tokens.border}`, background:'#fff', cursor:'pointer', fontSize:13, fontWeight:600, color:tokens.text, fontFamily:'inherit' }}>
-              ← All Companies
-            </button>
+            <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14 }}>
+              <button onClick={() => setSelectedCompany(null)} style={{ display:'flex', alignItems:'center', gap:6, padding:'8px 14px', borderRadius:9, border:`1px solid ${tokens.border}`, background:'#fff', cursor:'pointer', fontSize:13, fontWeight:600, color:tokens.text, fontFamily:'inherit' }}>
+                ← All Companies
+              </button>
+              <button onClick={() => printCompanyChitReport(selectedCompany, companyChits, paymentsMap)} style={{ display:'flex', alignItems:'center', gap:6, padding:'8px 14px', borderRadius:9, border:`1px solid ${tokens.border}`, background:'#fff', cursor:'pointer', fontSize:13, fontWeight:600, color:tokens.text, fontFamily:'inherit' }}>
+                🖨 Export Report
+              </button>
+            </div>
             <div style={{ display:'flex', alignItems:'center', gap:10, padding:'12px 16px', marginBottom:14, background:tokens.slateLight, borderRadius:10 }}>
               <span style={{ fontSize:15, fontWeight:800, color:tokens.text }}>🏢 {selectedCompany}</span>
               <span style={{ fontSize:12, color:tokens.textSub }}>{companyChits.length} ticket{companyChits.length !== 1 ? 's' : ''} · {formatCurrency(companyTotal)} total</span>
@@ -1060,16 +1102,28 @@ export default function OtherChits() {
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
                   {formPhases.map((p,i) => {
                     const keys=['range1','range2','range3','range4'];
-                    const phs=['e.g. 45000','e.g. 50000','e.g. 55000','e.g. 60000'];
+                    // Dynamic placeholder: the maximum any round could ever cost is the
+                    // full subscription (chit value ÷ members) — e.g. ₹10L ÷ 20 = ₹50,000.
+                    // Earlier phases carry a bigger discount (lower net payment), scaling
+                    // up progressively toward the full amount by the final phase.
+                    const maxPerRound = formSub || 0;
+                    const scaleRatios = [0.5, 0.7, 0.8, 1.0]; // phase 1→4, e.g. 25k, 35k, 40k, 50k for a 50k max
+                    const dynamicPlaceholder = maxPerRound > 0 ? Math.round(maxPerRound * scaleRatios[i]) : null;
+                    const phs = dynamicPlaceholder ? `e.g. ${dynamicPlaceholder.toLocaleString('en-IN')}` : ['e.g. 45000','e.g. 50000','e.g. 55000','e.g. 60000'][i];
                     const v = +form[keys[i]] || 0;
                     const comm = formSub > 0 && v > 0 ? Math.round(formSub - v) : 0;
                     return (
                       <FG key={i} label={`Rounds ${p.startRound}–${p.endRound} — what I pay${comm>0?` (+${comm.toLocaleString('en-IN')} commission)`:''}`}>
-                        <FInp type="number" value={form[keys[i]]} onChange={e=>sf(keys[i],e.target.value)} placeholder={phs[i]}/>
+                        <FInp type="number" value={form[keys[i]]} onChange={e=>sf(keys[i],e.target.value)} placeholder={phs}/>
                       </FG>
                     );
                   })}
                 </div>
+                {formSub > 0 && (
+                  <div style={{ fontSize:10.5, color:tokens.textMuted, marginTop:8 }}>
+                    Placeholders are suggestions based on your chit's max per-round amount ({fmt(formSub)}) — feel free to enter your own actual figures.
+                  </div>
+                )}
               </div>
 
               <FG label="Notes (optional)">

@@ -86,7 +86,15 @@ export default function Dashboard() {
       const pays = joinedPays[j.id] || [];
       const paidCount = pays.filter(p => p.status === 'Paid').length;
       const sub = (j.totalChitValue||0) / (j.totalMembers||1);
-      const stillOwesThisMonth = (paidCount + i) < (j.totalMembers||0);
+      // BUG FIX: the old check only verified "hasn't finished all rounds yet," which
+      // shows an amount owed in EVERY future month even for chits with a longer cycle
+      // (e.g. every 2 months). Now it checks whether THIS specific future month actually
+      // lines up with the chit's own auction interval — same fix applied to Expected
+      // Fund and Auctions pages.
+      const cycle = j.auctionInterval || 1;
+      const roundsElapsedByThisMonth = Math.floor(i / cycle);
+      const isPayoutMonth = i % cycle === 0;
+      const stillOwesThisMonth = isPayoutMonth && (paidCount + roundsElapsedByThisMonth) < (j.totalMembers||0);
       return s + (stillOwesThisMonth ? sub : 0);
     }, 0);
     const formedTotal = m?.total || 0;
@@ -215,11 +223,13 @@ export default function Dashboard() {
               <div style={{ fontSize:22, fontWeight:900, color:tokens.text, letterSpacing:'-.5px', marginTop:6 }}>{fmt(formedValue)}</div>
               <div style={{ fontSize:12, color:tokens.textSub, marginTop:3 }}>{chits.length} chit{chits.length!==1?'s':''} · Total commission earned: <strong style={{color:tokens.green}}>{fmt(formedComm)}</strong></div>
               <div style={{ fontSize:11, color:tokens.textMuted, marginTop:2 }}>Org fee = % of total chit value per auction round</div>
+              <button onClick={e=>{e.stopPropagation();nav('/cf/formed-expected-fund');}} style={{ marginTop:8, background:'none', border:'none', color:tokens.blue, fontSize:11.5, fontWeight:700, cursor:'pointer', fontFamily:'inherit', padding:0 }}>Expected Fund →</button>
             </div>
             <div onClick={()=>nav('/cf/other-chits')} style={{ cursor:'pointer', padding:'14px 16px', borderRadius:12, background:'rgba(52,199,89,0.06)', border:`1.5px solid ${tokens.green}30` }}>
               <span style={{ fontSize:11, fontWeight:800, color:tokens.green, textTransform:'uppercase', letterSpacing:'.05em' }}>👥 Joined Chits — You are a Member</span>
               <div style={{ fontSize:22, fontWeight:900, color:tokens.text, letterSpacing:'-.5px', marginTop:6 }}>{fmt(joinedValue)}</div>
               <div style={{ fontSize:12, color:tokens.textSub, marginTop:3 }}>{joined.length} chit{joined.length!==1?'s':''} · {joinedActive.length} still running · you pay per-head each round</div>
+              <button onClick={e=>{e.stopPropagation();nav('/cf/expected-fund');}} style={{ marginTop:8, background:'none', border:'none', color:tokens.green, fontSize:11.5, fontWeight:700, cursor:'pointer', fontFamily:'inherit', padding:0 }}>Expected Fund →</button>
             </div>
           </div>
         </div>

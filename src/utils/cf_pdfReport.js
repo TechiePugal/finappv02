@@ -345,3 +345,92 @@ export function printJoinedFundProjection(rows, viewMonthLabel, realizedPL) {
   `;
   openPrint('Joined Chits Fund Projection', body, '#5856D6');
 }
+
+export function printCompanyChitReport(companyName, chits, paymentsMap) {
+  const totalValue = chits.reduce((s, c) => s + (c.totalChitValue || 0), 0);
+  const activeChits = chits.filter(c => c.myStatus !== 'Cashed');
+  const cashedChits = chits.filter(c => c.myStatus === 'Cashed');
+  const totalPaidAcrossAll = chits.reduce((s, c) => {
+    const pays = paymentsMap[c.id] || [];
+    return s + pays.filter(p => p.status === 'Paid').reduce((ss, p) => ss + (p.amount || 0), 0);
+  }, 0);
+  const body = `
+    <div class="header">
+      <div><div class="logo">EC Fin 360 · ${companyName}</div><div class="meta" style="text-align:left;margin-top:4px;">All chits joined through this company</div></div>
+      <div class="meta">Generated: ${now()}</div>
+    </div>
+    <div class="kpi-grid">
+      <div class="kpi"><div class="kpi-val">${chits.length}</div><div class="kpi-lbl">Total Tickets</div></div>
+      <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${activeChits.length}</div><div class="kpi-lbl">Active</div></div>
+      <div class="kpi" style="border-left-color:#5856d6;"><div class="kpi-val" style="color:#5521B5;">${cashedChits.length}</div><div class="kpi-lbl">Cashed Out</div></div>
+      <div class="kpi" style="border-left-color:#0ea5e9;"><div class="kpi-val" style="color:#0369a1;">${INR(totalPaidAcrossAll)}</div><div class="kpi-lbl">Total Paid In (All Time)</div></div>
+    </div>
+    <h2>Tickets Under This Company</h2>
+    <table>
+      <thead><tr><th>#</th><th>Chit / Ticket</th><th>Agent</th><th class="text-right">Chit Value</th><th class="text-right">Members</th><th>Status</th><th class="text-right">Paid So Far</th></tr></thead>
+      <tbody>
+        ${chits.map((c,i)=>{
+          const pays = paymentsMap[c.id] || [];
+          const paid = pays.filter(p=>p.status==='Paid').reduce((s,p)=>s+(p.amount||0),0);
+          const isCashed = c.myStatus === 'Cashed';
+          return `<tr><td>${i+1}</td><td>${c.chitName||c.companyName}</td><td>${c.organiserName||'—'}</td><td class="text-right">${INR(c.totalChitValue||0)}</td><td class="text-right">${c.totalMembers||0}</td><td><span class="badge ${isCashed?'badge-purple':'badge-green'}">${isCashed?'Cashed':'Active'}</span></td><td class="text-right">${INR(paid)}</td></tr>`;
+        }).join('')}
+        <tr class="total-row"><td colspan="3">TOTAL</td><td class="text-right">${INR(totalValue)}</td><td colspan="2"></td><td class="text-right">${INR(totalPaidAcrossAll)}</td></tr>
+      </tbody>
+    </table>
+    <div class="footer"><span>EC Fin 360 Chit Fund</span><span>Company Report — ${companyName}</span></div>
+  `;
+  openPrint(`${companyName} — Chit Report`, body, '#5856D6');
+}
+
+export function printFormedExpectedFundPDF(rows, viewMonthLabel, totalExpectedCollection, totalExpectedOrgFee) {
+  const dueRows = rows.filter(r => r.isDueThisMonth);
+  const body = `
+    <div class="header">
+      <div><div class="logo">EC Fin 360 · Formed Chits — Expected Fund</div><div class="meta" style="text-align:left;margin-top:4px;">Expected collection for ${viewMonthLabel}</div></div>
+      <div class="meta">Generated: ${now()}</div>
+    </div>
+    <div class="kpi-grid">
+      <div class="kpi" style="border-left-color:#0ea5e9;"><div class="kpi-val" style="color:#0369a1;">${INR(totalExpectedCollection)}</div><div class="kpi-lbl">Total Expected Collection</div></div>
+      <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${INR(totalExpectedOrgFee)}</div><div class="kpi-lbl">Expected Organiser Fee</div></div>
+      <div class="kpi"><div class="kpi-val">${dueRows.length}</div><div class="kpi-lbl">Chits Due This Month</div></div>
+    </div>
+    <h2>Per-Chit Expected Amount — ${viewMonthLabel}</h2>
+    <table>
+      <thead><tr><th>#</th><th>Chit</th><th class="text-right">Chit Value</th><th class="text-right">Rounds Done</th><th class="text-right">Expected Collection</th><th class="text-right">Organiser Fee</th><th>Status</th></tr></thead>
+      <tbody>
+        ${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${r.companyName}</td><td class="text-right">${INR(r.totalChitValue||0)}</td><td class="text-right">${r.completedCount}/${r.totalMembers}</td><td class="text-right">${r.isDueThisMonth?INR(r.expectedCollection):'—'}</td><td class="text-right">${r.isDueThisMonth?INR(r.expectedOrgFee):'—'}</td><td>${r.isDueThisMonth?'Due':'Not due this month'}</td></tr>`).join('')}
+        <tr class="total-row"><td colspan="4">TOTAL</td><td class="text-right">${INR(totalExpectedCollection)}</td><td class="text-right">${INR(totalExpectedOrgFee)}</td><td></td></tr>
+      </tbody>
+    </table>
+    <div class="footer"><span>EC Fin 360 Chit Fund</span><span>Formed Chits — Expected Fund</span></div>
+  `;
+  openPrint('Formed Chits Expected Fund', body, '#0a84ff');
+}
+
+export function printFormedExpectedFund(rows, viewMonthLabel){
+  const dueRows = rows.filter(r => r.isDueThisMonth);
+  const totalCollection = dueRows.reduce((s, r) => s + r.expectedCollection, 0);
+  const totalOrgFee = dueRows.reduce((s, r) => s + r.expectedOrgFee, 0);
+  const body = `
+    <div class="header">
+      <div><div class="logo">EC Fin 360 · Formed Chits — Expected Fund</div><div class="meta" style="text-align:left;margin-top:4px;">Expected collection for ${viewMonthLabel}</div></div>
+      <div class="meta">Generated: ${now()}</div>
+    </div>
+    <div class="kpi-grid">
+      <div class="kpi" style="border-left-color:#0ea5e9;"><div class="kpi-val" style="color:#0369a1;">${INR(totalCollection)}</div><div class="kpi-lbl">Total Expected Collection</div></div>
+      <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${INR(totalOrgFee)}</div><div class="kpi-lbl">Expected Organiser Fee</div></div>
+      <div class="kpi"><div class="kpi-val">${dueRows.length}</div><div class="kpi-lbl">Chits Due</div></div>
+    </div>
+    <h2>Per-Chit Expected Amount — ${viewMonthLabel}</h2>
+    <table>
+      <thead><tr><th>#</th><th>Chit</th><th class="text-right">Rounds Done</th><th class="text-right">Chit Value</th><th class="text-right">Expected Collection</th><th class="text-right">Org Fee</th></tr></thead>
+      <tbody>
+        ${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${r.companyName}</td><td class="text-right">${r.completedCount}/${r.totalMembers}</td><td class="text-right">${INR(r.totalChitValue)}</td><td class="text-right">${r.isDueThisMonth?INR(r.expectedCollection):'—'}</td><td class="text-right">${r.isDueThisMonth?INR(r.expectedOrgFee):'—'}</td></tr>`).join('')}
+        <tr class="total-row"><td colspan="4">TOTAL (due this month)</td><td class="text-right">${INR(totalCollection)}</td><td class="text-right">${INR(totalOrgFee)}</td></tr>
+      </tbody>
+    </table>
+    <div class="footer"><span>EC Fin 360 Chit Fund</span><span>Formed Chits Expected Fund</span></div>
+  `;
+  openPrint('Formed Chits Expected Fund', body, '#0a84ff');
+}

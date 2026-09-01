@@ -21,6 +21,7 @@ import CFBiddingNotes from './pages/chitfund/BiddingNotes';
 import CFMembers from './pages/chitfund/Members';
 import CFChitDetail from './pages/chitfund/ChitDetail';
 import CFAuctions from './pages/chitfund/Auctions';
+import CFFormedExpectedFund from './pages/chitfund/FormedExpectedFund';
 import CFCalendar from './pages/chitfund/Calendar';
 import CFProjection from './pages/chitfund/Projection';
 import CFLedger from './pages/chitfund/Ledger';
@@ -149,6 +150,7 @@ function AppRouter() {
             <Route path="members" element={<CFMembers />} />
             <Route path="chits/:id" element={<CFChitDetail />} />
             <Route path="auctions" element={<CFAuctions />} />
+            <Route path="formed-expected-fund" element={<CFFormedExpectedFund />} />
             <Route path="calendar" element={<CFCalendar />} />
             <Route path="projection" element={<CFProjection />} />
             <Route path="ledger" element={<CFLedger />} />

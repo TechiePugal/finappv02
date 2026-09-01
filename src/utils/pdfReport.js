@@ -645,7 +645,17 @@ export function printSettleInterestSummary(depositors, payments, month){
   const rows = list.map(d=>{
     const p = (payments||{})[`${d.id}_${month}`];
     const interest = (d.depositAmount||0)*(d.interestRate||0)/100;
-    return { d, p, interest, status: p?.status || 'Pending' };
+    // Overall (all-time) balance — scans every month recorded for this depositor,
+    // not just the exported month, so the report shows their true running position.
+    const allKeysForDep = Object.keys(payments||{}).filter(k=>k.startsWith(`${d.id}_`));
+    const overallDue = allKeysForDep.reduce((s,k)=>s+(payments[k]?.amountDue||0),0);
+    const overallCollected = allKeysForDep.reduce((s,k)=>{
+      const pp=payments[k];
+      if(pp?.status==='Paid'||pp?.addedToDeposit) return s+(pp.amountPaid||0)+(pp.addedAmount||0);
+      return s;
+    },0);
+    const overallBalance = Math.max(0, overallDue-overallCollected);
+    return { d, p, interest, status: p?.status || 'Pending', overallBalance };
   });
   const paid = rows.filter(r=>r.status==='Paid'||r.p?.addedToDeposit);
   const pending = rows.filter(r=>!(r.status==='Paid'||r.p?.addedToDeposit));
@@ -653,6 +663,7 @@ export function printSettleInterestSummary(depositors, payments, month){
   // Includes BOTH the cash portion and whatever was compounded back into the deposit —
   // a split settlement (part cash, part compound) counts fully as settled either way.
   const totalPaid = paid.reduce((s,r)=>s+(r.p?.amountPaid||0)+(r.p?.addedAmount||0),0);
+  const totalOverallBalance = rows.reduce((s,r)=>s+r.overallBalance,0);
 
   const body = `
     <div class="header">
@@ -662,15 +673,15 @@ export function printSettleInterestSummary(depositors, payments, month){
     <div class="kpi-grid">
       <div class="kpi"><div class="kpi-val">${INR(totalDue)}</div><div class="kpi-lbl">Total Interest Due</div></div>
       <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${INR(totalPaid)}</div><div class="kpi-lbl">Collected</div></div>
-      <div class="kpi" style="border-left-color:#ef4444;"><div class="kpi-val" style="color:#b91c1c;">${INR(totalDue-totalPaid)}</div><div class="kpi-lbl">Pending</div></div>
-      <div class="kpi"><div class="kpi-val">${paid.length} / ${rows.length}</div><div class="kpi-lbl">Settled / Total</div></div>
+      <div class="kpi" style="border-left-color:#ef4444;"><div class="kpi-val" style="color:#b91c1c;">${INR(totalDue-totalPaid)}</div><div class="kpi-lbl">Pending This Month</div></div>
+      <div class="kpi" style="border-left-color:#f59e0b;"><div class="kpi-val" style="color:#b45309;">${INR(totalOverallBalance)}</div><div class="kpi-lbl">Overall Interest Balance</div></div>
     </div>
     <h2>Settlement Status — ${month||''}</h2>
     <table>
-      <thead><tr><th>#</th><th>Depositor</th><th>Deposit ID</th><th class="text-right">Interest Due</th><th>Status</th><th>Date Paid</th><th>Mode</th></tr></thead>
+      <thead><tr><th>#</th><th>Depositor</th><th>Phone</th><th>Deposit ID</th><th class="text-right">Interest Due</th><th>Status</th><th class="text-right">Overall Balance</th><th>Date Paid</th><th>Mode</th></tr></thead>
       <tbody>
-        ${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${r.d.name||'—'}</td><td>${r.d.depositId||'—'}</td><td class="text-right">${INR(r.interest)}</td><td><span class="badge ${r.status==='Paid'?'badge-green':r.status==='Partial'?'badge-amber':'badge-red'}">${r.status}</span></td><td>${r.p?.paymentDate?fmtDate(r.p.paymentDate):'—'}</td><td>${r.p?.mode||'—'}</td></tr>`).join('')}
-        <tr class="total-row"><td colspan="3">TOTAL</td><td class="text-right">${INR(totalDue)}</td><td colspan="3"></td></tr>
+        ${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${r.d.name||'—'}</td><td>${r.d.phone||'—'}</td><td>${r.d.depositId||'—'}</td><td class="text-right">${INR(r.interest)}</td><td><span class="badge ${r.status==='Paid'?'badge-green':r.status==='Partial'?'badge-amber':'badge-red'}">${r.status}</span></td><td class="text-right ${r.overallBalance>0?'text-red':'text-green'}">${INR(r.overallBalance)}</td><td>${r.p?.paymentDate?fmtDate(r.p.paymentDate):'—'}</td><td>${r.p?.mode||'—'}</td></tr>`).join('')}
+        <tr class="total-row"><td colspan="4">TOTAL</td><td class="text-right">${INR(totalDue)}</td><td></td><td class="text-right">${INR(totalOverallBalance)}</td><td colspan="2"></td></tr>
       </tbody>
     </table>
     <div class="footer"><span>EC Fin 360 Finance Ledger</span><span>Settle Interest Summary — ${month||''}</span></div>
@@ -973,4 +984,43 @@ export function printEMILoanReport(loan, sched){
     <div class="footer"><span>EC Fin 360 Finance Ledger · Confidential</span><span>${now()}</span></div>
   `;
   openPrint(`EMI Loan Report — ${loan.borrowerName}`, body, '#6366f1');
+}
+
+export function printUsersDirectory(customers, linkedFn){
+  const rows = customers.map(c => ({ c, l: linkedFn(c) }));
+  const totalDepositAmt = rows.reduce((s,r)=>s+r.l.deposits.reduce((ss,d)=>ss+(d.depositAmount||0),0),0);
+  const totalLoanAmt = rows.reduce((s,r)=>s+r.l.loans.reduce((ss,d)=>ss+(d.loanAmount||0),0),0);
+  const totalEmiAmt = rows.reduce((s,r)=>s+r.l.emis.reduce((ss,d)=>ss+(d.loanAmount||0),0),0);
+
+  const section = (title, key, amtField, color) => {
+    const withRecords = rows.filter(r => r.l[key].length > 0);
+    if (withRecords.length === 0) return '';
+    return `
+      <h2>${title}</h2>
+      <table>
+        <thead><tr><th>#</th><th>Name</th><th>Phone</th><th>Guardian</th><th>Guardian Phone</th><th class="text-right">Amount</th><th>Status</th></tr></thead>
+        <tbody>
+          ${withRecords.map((r,i)=>r.l[key].map(rec=>`<tr><td>${i+1}</td><td>${r.c.name||'—'}</td><td>${r.c.phone||'—'}</td><td>${rec.guardianName||'—'}</td><td>${rec.guardianPhone||'—'}</td><td class="text-right">${INR(rec[amtField]||0)}</td><td><span class="badge ${rec.status==='Active'?'badge-green':'badge-gray'}">${rec.status||'—'}</span></td></tr>`).join('')).join('')}
+        </tbody>
+      </table>
+    `;
+  };
+
+  const body = `
+    <div class="header">
+      <div><div class="logo">EC Fin 360 · Users Directory</div><div class="meta" style="text-align:left;margin-top:4px;">All registered users, split by category — with guardian details</div></div>
+      <div class="meta">Generated: ${now()}</div>
+    </div>
+    <div class="kpi-grid">
+      <div class="kpi"><div class="kpi-val">${customers.length}</div><div class="kpi-lbl">Total Users</div></div>
+      <div class="kpi" style="border-left-color:#bf5af2;"><div class="kpi-val" style="color:#7c3aed;">${INR(totalDepositAmt)}</div><div class="kpi-lbl">Total Deposits</div></div>
+      <div class="kpi" style="border-left-color:#0a84ff;"><div class="kpi-val" style="color:#0369a1;">${INR(totalLoanAmt)}</div><div class="kpi-lbl">Total Loans</div></div>
+      <div class="kpi" style="border-left-color:#5e5ce6;"><div class="kpi-val" style="color:#4338ca;">${INR(totalEmiAmt)}</div><div class="kpi-lbl">Total EMI Loans</div></div>
+    </div>
+    ${section('💰 Depositors', 'deposits', 'depositAmount')}
+    ${section('📋 Loans', 'loans', 'loanAmount')}
+    ${section('📆 EMI Loans', 'emis', 'loanAmount')}
+    <div class="footer"><span>EC Fin 360 Finance Ledger</span><span>Users Directory Report</span></div>
+  `;
+  openPrint('Users Directory', body, '#0a84ff');
 }

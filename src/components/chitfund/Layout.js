@@ -16,6 +16,7 @@ const NAV = [
     { to:'/cf/members', label:'Members', icon:<><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></> },
     { to:'/cf/bidding-notes', label:'Bidding Notes', icon:<><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></> },
     { to:'/cf/auctions', label:'All Auctions', icon:<><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 3"/></> },
+    { to:'/cf/formed-expected-fund', label:'Expected Fund', icon:<><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></> },
     { to:'/cf/commission-calc', label:'Commission Calc', icon:<><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 7h8M8 11h3M14 11h2M8 15h3M14 15h2"/></> },
     { to:'/cf/exposure', label:'Exposure & Risk', icon:<><path d="M12 2v20M2 7l10-5 10 5M2 12h20"/></> },
     { to:'/cf/ledger', label:'Ledger', icon:<><path d="M3 3h7a3 3 0 0 1 3 3v15a2.5 2.5 0 0 0-2.5-2.5H3z"/><path d="M21 3h-7a3 3 0 0 0-3 3v15a2.5 2.5 0 0 1 2.5-2.5H21z"/></> },
