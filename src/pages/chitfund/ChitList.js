@@ -151,7 +151,7 @@ export default function ChitList() {
   const [loading,    setLoading]    = useState(true);
   const [loadErr,    setLoadErr]    = useState('');
   const [search,     setSearch]     = useState('');
-  const [activeTab,  setActiveTab]  = useState('all');
+  const [activeTab,  setActiveTab]  = useState('active'); // closed chits hidden by default
   const [notif,      setNotif]      = useState({ msg:'', type:'success' });
   const [showCreate, setShowCreate] = useState(false);
   const [editTarget, setEditTarget] = useState(null);

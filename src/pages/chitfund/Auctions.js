@@ -608,7 +608,8 @@ export default function Auctions() {
     if (!user) return;
     const data = await getDashboardData(user.uid);
     const auctions = [];
-    data.chits.forEach(c => {
+    // Closed chits excluded — nothing left to process/collect on them.
+    data.chits.filter(c => c.status !== 'Closed').forEach(c => {
       (data.schedules[c.id] || []).forEach(a => {
         auctions.push({
           ...a,

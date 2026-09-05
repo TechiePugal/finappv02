@@ -91,6 +91,7 @@ export default function JoinedAuctions() {
   const dueNow = rows.filter(r => !r.isCashed && !r.isPaidThisMonth && r.isDueThisMonth);
   const upToDate = rows.filter(r => !r.isCashed && r.isPaidThisMonth);
   const cashedOut = rows.filter(r => r.isCashed);
+  const activeRows = rows.filter(r => !r.isCashed); // the visible card list never shows cashed-out chits
 
   const totalDueAmount = dueNow.reduce((s, r) => s + r.expectedThisMonth, 0); // uses real taken/not-taken projection, not flat subscription
 
@@ -143,11 +144,11 @@ export default function JoinedAuctions() {
         </Card>
       )}
 
-      {chits.length === 0 ? (
-        <Card><EmptyState icon={Gavel} title="No joined chits" subtitle="Join a chit fund to track its rounds here" /></Card>
+      {activeRows.length === 0 ? (
+        <Card><EmptyState icon={Gavel} title="No active joined chits" subtitle="Chits you've already cashed out don't need round-by-round tracking anymore" /></Card>
       ) : (
         <div style={{ display: 'grid', gap: 12 }}>
-          {rows.map(r => (
+          {activeRows.map(r => (
             <Card key={r.id} noPad>
               <div onClick={() => nav('/cf/other-chits')} style={{ cursor: 'pointer', padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
                 <div>

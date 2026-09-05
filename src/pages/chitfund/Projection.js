@@ -23,7 +23,8 @@ export default function Projection() {
   useEffect(() => {
     if (!user) return;
     getDashboardData(user.uid).then(data => {
-      const chits = data.chits || [];
+      // Closed chits excluded — they have no future obligation to project.
+      const chits = (data.chits || []).filter(c => c.status !== 'Closed');
       setChitsData(chits);
       const proj = buildMonthProjection(chits, data.schedules || {});
       setProjection(proj);

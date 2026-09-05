@@ -171,24 +171,6 @@ export default function EMILoanForm() {
           </div>
         </div>
 
-        {/* Optional documents */}
-        <div style={{ marginBottom: 20, padding: '14px 16px', background: 'rgba(118,118,128,0.04)', borderRadius: 12, border: '1px solid rgba(0,0,0,0.06)' }}>
-          <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 3 }}>Security Documents <span style={{ fontWeight: 400, color: 'var(--text-secondary)' }}>(optional)</span></p>
-          <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10 }}>Upload check/bond/agreement copies if collected for this EMI loan.</p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 8 }}>
-            {[['check', 'Check Copy'], ['bond', 'Bond Copy'], ['agreement', 'Agreement']].map(([key, label]) => {
-              const has = docFiles?.[key] || existingDocs?.[key];
-              return (
-                <label key={key} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '10px 8px', borderRadius: 9, border: `1px solid ${has ? 'rgba(52,199,89,0.3)' : 'rgba(0,0,0,0.08)'}`, background: has ? 'rgba(52,199,89,0.05)' : '#fff', cursor: 'pointer', textAlign: 'center' }}>
-                  <span style={{ fontSize: 11, fontWeight: 600, color: has ? '#1a7a34' : 'var(--text-secondary)' }}>{has ? `✓ ${label}` : label}</span>
-                  <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>{has ? 'Uploaded' : 'Tap to upload'}</span>
-                  <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={e => e.target.files[0] && setDocFiles(p => ({ ...p, [key]: e.target.files[0] }))} />
-                </label>
-              );
-            })}
-          </div>
-        </div>
-
         {/* User picker */}
         {!isEdit && (
           <div style={{ marginBottom: 16, padding: '14px 16px', background: linkedUser ? 'rgba(52,199,89,0.06)' : 'rgba(0,122,255,0.05)', border: linkedUser ? '1.5px solid rgba(52,199,89,0.3)' : '1.5px dashed rgba(0,122,255,0.3)', borderRadius: 12 }}>
@@ -344,6 +326,24 @@ export default function EMILoanForm() {
             </div>
           </div>
         )}
+
+        {/* Security Documents — moved to the end, matching the Borrower form's layout */}
+        <Divider label="Security Documents (Optional)" />
+        <div style={{ marginBottom: 8, padding: '14px 16px', background: 'rgba(118,118,128,0.04)', borderRadius: 12, border: '1px solid rgba(0,0,0,0.06)' }}>
+          <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10 }}>Upload check/bond/agreement copies if collected for this EMI loan.</p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 8 }}>
+            {[['check', 'Check Copy'], ['bond', 'Bond Copy'], ['agreement', 'Agreement']].map(([key, label]) => {
+              const has = docFiles?.[key] || existingDocs?.[key];
+              return (
+                <label key={key} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '10px 8px', borderRadius: 9, border: `1px solid ${has ? 'rgba(52,199,89,0.3)' : 'rgba(0,0,0,0.08)'}`, background: has ? 'rgba(52,199,89,0.05)' : '#fff', cursor: 'pointer', textAlign: 'center' }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: has ? '#1a7a34' : 'var(--text-secondary)' }}>{has ? `✓ ${label}` : label}</span>
+                  <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>{has ? 'Uploaded' : 'Tap to upload'}</span>
+                  <input type="file" accept="image/*,.pdf" style={{ display: 'none' }} onChange={e => e.target.files[0] && setDocFiles(p => ({ ...p, [key]: e.target.files[0] }))} />
+                </label>
+              );
+            })}
+          </div>
+        </div>
 
         <div style={{ display: 'flex', gap: 10, marginTop: 24 }}>
           <Button onClick={save} disabled={saving}>{saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Create EMI Loan'}</Button>

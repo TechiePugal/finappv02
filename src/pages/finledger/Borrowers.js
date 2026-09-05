@@ -1,6 +1,7 @@
 import React,{useEffect,useState} from 'react';
 import {useNavigate} from 'react-router-dom';
 import {collection,onSnapshot,deleteDoc,doc,query,orderBy} from 'firebase/firestore';
+import {cascadeDeleteBorrower} from '../../utils/cascadeDelete';
 import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
 import {PageHeader,Card,Badge,Button,StatCard,SearchBar,FilterTabs,formatCurrency} from '../../components/finledger/UI';
@@ -49,9 +50,9 @@ export default function Borrowers(){
 
   async function del(id,e){
     e.stopPropagation();
-    if(!window.confirm('Delete this borrower? This cannot be undone.'))return;
-    try{await deleteDoc(doc(db,'borrower_master',id));toast.success('Deleted');}
-    catch{toast.error('Cannot delete');}
+    if(!window.confirm('Delete this borrower? This also permanently removes their entire interest payment history, repayments, ledger entries and documents. This cannot be undone.'))return;
+    try{await cascadeDeleteBorrower(id);toast.success('Borrower and all related records deleted');}
+    catch(e){toast.error('Failed to delete: '+e.message);}
   }
 
   // FIXED: use repaidAmount field (set by LoanRepayment.js), fall back to amount for old records
@@ -110,7 +111,7 @@ export default function Borrowers(){
       )}
       <PageHeader title="Borrowers" subtitle="Loan accounts — interest calculated on outstanding balance after repayments"
         action={<div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-          <Button variant="secondary" onClick={()=>printBorrowersSummary(filtered, reps)}>Export PDF{filter!=='All'?` (${filter})`:''}</Button>
+          <Button variant="secondary" onClick={()=>printBorrowersSummary(filtered, reps, intPays)}>Export PDF{filter!=='All'?` (${filter})`:''}</Button>
           <Button onClick={()=>nav('/fl/borrowers/new')}>+ Add Borrower</Button>
         </div>}/>
 

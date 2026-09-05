@@ -848,7 +848,13 @@ export default function OtherChits() {
             const pays = paymentsMap[c.id] || [];
             const paidCount = pays.filter(p => p.status === 'Paid').length;
             const sub = (c.totalChitValue || 0) / (c.totalMembers || 1);
-            const stillOwes = (paidCount + i) < (c.totalMembers || 0);
+            // Same fix as Dashboard/Expected Fund/Auctions: only count an amount owed
+            // in a month that's ACTUALLY a payout month for this chit's own cycle,
+            // not naively in every future month.
+            const cycle = c.auctionInterval || 1;
+            const isPayoutMonth = i % cycle === 0;
+            const roundsElapsedByThisMonth = Math.floor(i / cycle);
+            const stillOwes = isPayoutMonth && (paidCount + roundsElapsedByThisMonth) < (c.totalMembers || 0);
             return s + (stillOwes ? sub : 0);
           }, 0);
           return { label, owed: Math.round(owed) };

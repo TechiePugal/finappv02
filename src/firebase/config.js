@@ -1,4 +1,5 @@
 import { initializeApp } from 'firebase/app';
+import { getAnalytics, isSupported as analyticsIsSupported } from 'firebase/analytics';
 import {
   getAuth, GoogleAuthProvider, signInWithPopup,
   signInWithEmailAndPassword, createUserWithEmailAndPassword,
@@ -15,17 +16,28 @@ import {
 } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
+// Your web app's Firebase configuration — from Firebase Console → Project
+// Settings → General → "FinMain" (project ID: finmain-e874b). These web
+// config values are meant to be public/client-side; Firebase's actual
+// security comes from Firestore Security Rules and Authentication, not from
+// hiding this object.
 const firebaseConfig = {
-  apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
-  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.REACT_APP_FIREBASE_APP_ID,
-  measurementId: process.env.REACT_APP_FIREBASE_MEASUREMENT_ID,
+  apiKey: "AIzaSyANInnmbfm4bey1km3s0ORa-Hy9XCy8t_Y",
+  authDomain: "finmain-e874b.firebaseapp.com",
+  projectId: "finmain-e874b",
+  storageBucket: "finmain-e874b.firebasestorage.app",
+  messagingSenderId: "258667803384",
+  appId: "1:258667803384:web:12c90082a27247eeee410d",
+  measurementId: "G-TLQW00R6F6"
 };
 
 const app = initializeApp(firebaseConfig);
+
+// Analytics only works in a real browser with certain conditions met (not
+// blocked by an ad-blocker, not server-side rendering, etc.) — checked safely
+// so a blocked/unsupported environment never breaks the rest of the app.
+export let analytics = null;
+analyticsIsSupported().then(supported => { if (supported) analytics = getAnalytics(app); }).catch(() => {});
 
 // Use the modern persistent cache API instead of deprecated enableIndexedDbPersistence
 // This gives us multi-tab support and much faster subsequent loads

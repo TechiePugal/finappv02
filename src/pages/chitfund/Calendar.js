@@ -174,7 +174,8 @@ export default function CalendarPage() {
     if (!user) return;
     getDashboardData(user.uid).then(data => {
       const ev = {};
-      data.chits.forEach(c => {
+      // Closed chits excluded — nothing left to schedule on them.
+      data.chits.filter(c => c.status !== 'Closed').forEach(c => {
         (data.schedules[c.id] || []).forEach(a => {
           const k = dateKey(a.auctionDate);
           if (!ev[k]) ev[k] = [];

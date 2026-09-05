@@ -1,6 +1,7 @@
 import React,{useEffect,useState} from 'react';
 import {useNavigate} from 'react-router-dom';
-import {collection,onSnapshot,getDocs,deleteDoc,doc,query,orderBy} from 'firebase/firestore';
+import {collection,onSnapshot,getDocs,deleteDoc,doc,query,orderBy,where} from 'firebase/firestore';
+import {cascadeDeleteDepositor} from '../../utils/cascadeDelete';
 import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
 import {PageHeader,Card,Badge,Button,StatCard,SearchBar,FilterTabs,formatCurrency,formatDate,Loader} from '../../components/finledger/UI';
@@ -36,9 +37,9 @@ export default function Depositors(){
   async function load(){ /* kept for compat */ }
   async function del(id,e){
     e.stopPropagation();
-    if(!window.confirm('Delete this depositor? This cannot be undone.'))return;
-    try{await deleteDoc(doc(db,'deposit_master',id));setData(p=>p.filter(d=>d.id!==id));toast.success('Deleted');}
-    catch{toast.error('Cannot delete — payment records may exist');}
+    if(!window.confirm('Delete this depositor? This also permanently removes their entire payment history, refunds, ledger entries and documents. This cannot be undone.'))return;
+    try{await cascadeDeleteDepositor(id);setData(p=>p.filter(d=>d.id!==id));toast.success('Depositor and all related records deleted');}
+    catch(e){toast.error('Failed to delete: '+e.message);}
   }
 
   const filtered=data.filter(d=>{
@@ -111,7 +112,17 @@ export default function Depositors(){
                     <td style={{padding:'12px 16px'}}><Badge label={dep.status||'Active'} type={(dep.status||'active').toLowerCase()}/></td>
                     <td style={{padding:'12px 16px'}} onClick={e=>e.stopPropagation()}>
                       <div style={{display:'flex',gap:6}}>
-                        <button onClick={e=>{e.stopPropagation();printDepositorReport(dep, depPays[dep.id]||[]);}} title="Download PDF Report"
+                        <button onClick={async e=>{
+                          e.stopPropagation();
+                          const [addSnap,refSnap]=await Promise.all([
+                            getDocs(query(collection(db,'deposit_additions'),where('depositorId','==',dep.id))),
+                            getDocs(query(collection(db,'deposit_refunds'),where('depositorId','==',dep.id))),
+                          ]);
+                          printDepositorReport(dep, depPays[dep.id]||[], {
+                            additions: addSnap.docs.map(d=>d.data()),
+                            refunds: refSnap.docs.map(d=>d.data()),
+                          });
+                        }} title="Download PDF Report"
                           style={{width:28,height:28,borderRadius:7,border:'1px solid rgba(220,38,38,.2)',background:'rgba(220,38,38,.04)',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',color:'#dc2626'}}>
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="12" y2="18"/><line x1="15" y1="15" x2="12" y2="18"/></svg>
                         </button>

@@ -165,7 +165,7 @@ export default function CommissionCalc() {
             <SectionHeader title="Pre-fill from Chit Fund" />
             <Select value={selectedChitId} onChange={e => loadChit(e.target.value)}>
               <option value="">— Select a chit fund —</option>
-              {chits.map(c => (
+              {chits.filter(c => c.status !== 'Closed').map(c => (
                 <option key={c.id} value={c.id}>
                   {c.companyName} · {fmt(c.totalChitValue)} · {c.totalMembers}m · {c.commissionType}
                 </option>

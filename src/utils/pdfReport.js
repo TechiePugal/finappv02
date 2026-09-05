@@ -211,21 +211,28 @@ export function printBorrowerReport(borrower, repayments, interestPayments){
 }
 
 // ── DEPOSITOR REPORT ───────────────────────────────────────────────────────
-export function printDepositorReport(depositor, payments){
+export function printDepositorReport(depositor, payments, history){
+  const additions = (history?.additions||[]).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const refunds = (history?.refunds||[]).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const totalAdded = additions.reduce((s,a)=>s+(a.amount||0),0);
+  const totalRefunded = refunds.reduce((s,r)=>s+(r.amount||0),0);
   const pays = (payments||[]).sort((a,b)=>(b.month||'').localeCompare(a.month||''));
-  // IMPORTANT: when interest is reinvested (added to deposit) rather than taken in cash,
-  // the record's status is stored as 'Unpaid' by design (it wasn't collected as cash) —
-  // but the period IS settled. A period counts as SETTLED if status==='Paid' OR addedToDeposit===true.
+  // IMPORTANT: a single settled period can now be SPLIT between cash-in-hand and
+  // added-to-deposit at the same time (e.g. ₹500 in hand + ₹4,000 to deposit) —
+  // these are NOT mutually exclusive. A period counts as SETTLED if status==='Paid'
+  // OR addedToDeposit===true, and its actual settled amount is ALWAYS the sum of
+  // both amountPaid (cash) and addedAmount (compounded), never just one or the other.
   const isSettled = p => p.status==='Paid' || p.addedToDeposit===true;
   const settledPeriods = pays.filter(isSettled);
-  const totalPaid = settledPeriods.reduce((s,p)=>s+(p.addedToDeposit?(p.addedAmount||0):(p.totalPayout||p.amountPaid||0)),0);
+  const totalPaid = settledPeriods.reduce((s,p)=>s+(p.amountPaid||0)+(p.addedAmount||0),0);
   const totalDue  = pays.reduce((s,p)=>s+(p.amountDue||0),0);
   const pending   = pays.filter(p=>!isSettled(p)).length;
-  // Split settled interest by how it was actually settled: taken in hand vs reinvested into principal
-  const reinvested      = settledPeriods.filter(p=>p.addedToDeposit);
-  const takenInHand     = settledPeriods.filter(p=>!p.addedToDeposit);
-  const totalReinvested = reinvested.reduce((s,p)=>s+(p.addedAmount||p.totalPayout||p.amountPaid||0),0);
-  const totalInHand     = takenInHand.reduce((s,p)=>s+(p.totalPayout||p.amountPaid||0),0);
+  // Cash-in-hand and added-to-deposit are summed independently — a period with
+  // BOTH non-zero contributes to both totals, instead of being forced into one bucket.
+  const totalInHand     = settledPeriods.reduce((s,p)=>s+(p.amountPaid||0),0);
+  const totalReinvested = settledPeriods.reduce((s,p)=>s+(p.addedAmount||0),0);
+  const inHandCount     = settledPeriods.filter(p=>(p.amountPaid||0)>0).length;
+  const reinvestedCount = settledPeriods.filter(p=>(p.addedAmount||0)>0).length;
   const t = parseInt(depositor.interestTenure)||1;
   const tenureLabel = t===1?'Monthly':t===3?'Quarterly':t===6?'Half-Yearly':t===12?'Yearly':`Every ${t} months`;
   const periodInt = (depositor.depositAmount||0)*(depositor.interestRate||0)/100/12*t;
@@ -260,8 +267,8 @@ export function printDepositorReport(depositor, payments){
       <div class="kpi" style="border-left-color:#ef4444;"><div class="kpi-val" style="color:#b91c1c;">${pending}</div><div class="kpi-lbl">Pending Periods</div></div>
     </div>
     <div class="kpi-grid" style="margin-top:-14px;">
-      <div class="kpi" style="border-left-color:#0ea5e9;"><div class="kpi-val" style="color:#0369a1;">${INR(totalInHand)}</div><div class="kpi-lbl">💰 Taken in Hand</div><div class="kpi-sub">${takenInHand.length} period${takenInHand.length!==1?'s':''}</div></div>
-      <div class="kpi" style="border-left-color:#8b5cf6;"><div class="kpi-val" style="color:#7c3aed;">${INR(totalReinvested)}</div><div class="kpi-lbl">🔄 Added to Deposit</div><div class="kpi-sub">${reinvested.length} period${reinvested.length!==1?'s':''}</div></div>
+      <div class="kpi" style="border-left-color:#0ea5e9;"><div class="kpi-val" style="color:#0369a1;">${INR(totalInHand)}</div><div class="kpi-lbl">💰 Taken in Hand</div><div class="kpi-sub">${inHandCount} period${inHandCount!==1?'s':''}</div></div>
+      <div class="kpi" style="border-left-color:#8b5cf6;"><div class="kpi-val" style="color:#7c3aed;">${INR(totalReinvested)}</div><div class="kpi-lbl">🔄 Added to Deposit</div><div class="kpi-sub">${reinvestedCount} period${reinvestedCount!==1?'s':''}</div></div>
       <div class="kpi" style="grid-column:span 2;"><div class="kpi-val" style="font-size:14px;">${depositor.compounding?'Compound Interest — reinvested amounts grow the principal for future periods':'Simple Interest — each period calculated on the original principal'}</div><div class="kpi-lbl">Interest Type</div></div>
     </div>
 
@@ -284,14 +291,23 @@ export function printDepositorReport(depositor, payments){
     </div>
 
     <h2>Interest Payout History (${pays.length} periods)</h2>
-    <p style="font-size:11px;color:#6b7280;margin:-6px 0 10px;">"Settlement" shows whether the depositor received the interest in hand, or it was reinvested (added) into the deposit principal.</p>
+    <p style="font-size:11px;color:#6b7280;margin:-6px 0 10px;">"Settlement" shows exactly how each period was handled — cash paid in hand, added back to the deposit, or split between both.</p>
     ${pays.length===0?'<p style="color:#9ca3af;font-size:12px;margin-bottom:16px;">No payout records yet.</p>':`
     <table>
       <thead><tr><th>#</th><th>Period</th><th>Amount Due</th><th>Amount Settled</th><th>Fine</th><th>Status</th><th>Settlement</th><th>Payment Date</th><th>Mode</th></tr></thead>
       <tbody>
         ${pays.map((p,i)=>{
           const settled = isSettled(p);
-          const displayAmt = p.addedToDeposit ? (p.addedAmount||0) : (p.totalPayout||p.amountPaid||0);
+          const cashPart = p.amountPaid||0;
+          const compoundPart = p.addedAmount||0;
+          const displayAmt = cashPart + compoundPart;
+          let settlementBadges = '—';
+          if (settled) {
+            const badges = [];
+            if (cashPart > 0) badges.push(`<span class="badge badge-green">💰 ${INR(cashPart)} in hand</span>`);
+            if (compoundPart > 0) badges.push(`<span class="badge badge-blue">🔄 ${INR(compoundPart)} to deposit</span>`);
+            settlementBadges = badges.length > 0 ? badges.join(' ') : `<span class="badge badge-green">💰 Taken in Hand</span>`;
+          }
           return `
         <tr>
           <td>${i+1}</td>
@@ -300,7 +316,7 @@ export function printDepositorReport(depositor, payments){
           <td class="${settled?'text-green':'text-red'}">${INR(displayAmt)}</td>
           <td>${(p.fine||0)>0?INR(p.fine):'—'}</td>
           <td><span class="badge ${settled?'badge-green':'badge-amber'}">${settled?'Settled':(p.status||'Pending')}</span></td>
-          <td>${!settled?'—':(p.addedToDeposit?`<span class="badge badge-blue">🔄 Added to Deposit (${INR(p.addedAmount||0)})</span>`:`<span class="badge badge-green">💰 Taken in Hand</span>`)}</td>
+          <td>${settlementBadges}</td>
           <td>${fmtDate(p.paymentDate)}</td>
           <td>${p.paymentMode||'—'}</td>
         </tr>`;}).join('')}
@@ -311,6 +327,28 @@ export function printDepositorReport(depositor, payments){
           <td style="font-size:10px;">💰 ${INR(totalInHand)} · 🔄 ${INR(totalReinvested)}</td>
           <td colspan="2"></td>
         </tr>
+      </tbody>
+    </table>`}
+
+    ${additions.length===0?'':`
+    <h2>Additional Amounts Added (${additions.length})</h2>
+    <p style="font-size:11px;color:#6b7280;margin:-6px 0 10px;">Extra principal added to this deposit, separate from regular interest settlement.</p>
+    <table>
+      <thead><tr><th>#</th><th>Date</th><th class="text-right">Amount Added</th><th class="text-right">Previous Total</th><th class="text-right">New Total</th><th>Remarks</th></tr></thead>
+      <tbody>
+        ${additions.map((a,i)=>`<tr><td>${i+1}</td><td>${fmtDate(a.date)}</td><td class="text-right text-green">${INR(a.amount)}</td><td class="text-right">${INR(a.previousAmount)}</td><td class="text-right">${INR(a.newAmount)}</td><td>${a.remarks||'—'}</td></tr>`).join('')}
+        <tr class="total-row"><td colspan="2">TOTAL ADDED</td><td class="text-right">${INR(totalAdded)}</td><td colspan="3"></td></tr>
+      </tbody>
+    </table>`}
+
+    ${refunds.length===0?'':`
+    <h2>Refunds / Principal Payouts (${refunds.length})</h2>
+    <p style="font-size:11px;color:#6b7280;margin:-6px 0 10px;">Deposit principal paid back out — full or partial withdrawals, separate from interest settlement.</p>
+    <table>
+      <thead><tr><th>#</th><th>Date</th><th class="text-right">Amount Refunded</th><th class="text-right">Previous Total</th><th class="text-right">Remaining</th><th>Type</th><th>Mode</th></tr></thead>
+      <tbody>
+        ${refunds.map((r,i)=>`<tr><td>${i+1}</td><td>${fmtDate(r.date)}</td><td class="text-right text-red">${INR(r.amount)}</td><td class="text-right">${INR(r.previousAmount)}</td><td class="text-right">${INR(r.newAmount)}</td><td><span class="badge ${r.isFullPayout?'badge-red':'badge-amber'}">${r.isFullPayout?'Full':'Partial'}</span></td><td>${r.mode||'—'}</td></tr>`).join('')}
+        <tr class="total-row"><td colspan="2">TOTAL REFUNDED</td><td class="text-right">${INR(totalRefunded)}</td><td colspan="4"></td></tr>
       </tbody>
     </table>`}
 
@@ -690,7 +728,7 @@ export function printSettleInterestSummary(depositors, payments, month){
 }
 
 // ── BORROWERS SUMMARY ───────────────────────────────────────────────────────
-export function printBorrowersSummary(borrowers, repayments){
+export function printBorrowersSummary(borrowers, repayments, intPays){
   const list = (borrowers||[]).slice().sort((a,b)=>(b.loanAmount||0)-(a.loanAmount||0));
   const getOut = b => {
     const reps=(repayments&&repayments[b.id])||[];
@@ -702,9 +740,28 @@ export function printBorrowersSummary(borrowers, repayments){
   const totalOutstanding = active.reduce((s,b)=>s+getOut(b),0);
   const totalMonthlyInterest = active.reduce((s,b)=>s+(getOut(b)*(b.interestRate||0)/100),0);
 
+  // Per-borrower interest history — total due to date, collected (fine excluded),
+  // balance, and a compact month-by-month Paid/Unpaid readout.
+  const enriched = list.map(b=>{
+    const pays = Object.values((intPays&&intPays[b.id])||{});
+    const sortedPays = pays.slice().sort((a,b2)=>String(a.month||'').localeCompare(String(b2.month||'')));
+    const totalInterestDue = sortedPays.reduce((s,p)=>s+(p.amountDue||0),0);
+    const totalInterestCollected = sortedPays.filter(p=>p.status==='Paid'||p.status==='Partial').reduce((s,p)=>s+(p.amountPaid||0),0);
+    const interestBalance = Math.max(0,totalInterestDue-totalInterestCollected);
+    const monthlyBadges = sortedPays.map(p=>{
+      const mo = p.month ? new Date(p.month+'-01').toLocaleDateString('en-IN',{month:'short',year:'2-digit'}) : '—';
+      const isPaid = p.status==='Paid';
+      return `<span style="display:inline-block;padding:1px 6px;margin:1px;border-radius:99px;font-size:9px;font-weight:700;background:${isPaid?'#dcfce7':'#fee2e2'};color:${isPaid?'#15803d':'#b91c1c'};">${mo} ${isPaid?'✓':'✗'}</span>`;
+    }).join('');
+    return { b, totalInterestDue, totalInterestCollected, interestBalance, monthlyBadges, hasHistory: sortedPays.length>0 };
+  });
+  const grandInterestDue = enriched.reduce((s,e)=>s+e.totalInterestDue,0);
+  const grandInterestCollected = enriched.reduce((s,e)=>s+e.totalInterestCollected,0);
+  const grandInterestBalance = enriched.reduce((s,e)=>s+e.interestBalance,0);
+
   const body = `
     <div class="header">
-      <div><div class="logo">EC Fin 360 · Borrowers Summary</div><div class="meta" style="text-align:left;margin-top:4px;">All borrower records with loan, outstanding and status</div></div>
+      <div><div class="logo">EC Fin 360 · Borrowers Summary</div><div class="meta" style="text-align:left;margin-top:4px;">All borrower records with loan, outstanding, interest and status</div></div>
       <div class="meta">Generated: ${now()}</div>
     </div>
     <div class="kpi-grid">
@@ -713,14 +770,24 @@ export function printBorrowersSummary(borrowers, repayments){
       <div class="kpi" style="border-left-color:#f59e0b;"><div class="kpi-val" style="color:#b45309;">${INR(totalOutstanding)}</div><div class="kpi-lbl">Total Outstanding</div></div>
       <div class="kpi" style="border-left-color:#8b5cf6;"><div class="kpi-val" style="color:#7c3aed;">${INR(totalMonthlyInterest)}</div><div class="kpi-lbl">Monthly Interest Due</div></div>
     </div>
+    <div class="kpi-grid" style="margin-top:-14px;">
+      <div class="kpi" style="border-left-color:#0ea5e9;"><div class="kpi-val" style="color:#0369a1;">${INR(grandInterestDue)}</div><div class="kpi-lbl">Total Interest Up to Date</div></div>
+      <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${INR(grandInterestCollected)}</div><div class="kpi-lbl">Interest Collected</div></div>
+      <div class="kpi" style="border-left-color:#ef4444;"><div class="kpi-val" style="color:#b91c1c;">${INR(grandInterestBalance)}</div><div class="kpi-lbl">Interest Balance</div></div>
+    </div>
     <h2>Borrower Records</h2>
     <table>
-      <thead><tr><th>#</th><th>Name</th><th>Phone</th><th>Loan ID</th><th class="text-right">Loan Amount</th><th class="text-right">Outstanding</th><th class="text-right">Rate</th><th>Status</th></tr></thead>
+      <thead><tr><th>#</th><th>Name</th><th>Phone</th><th>Loan ID</th><th class="text-right">Loan Amount</th><th class="text-right">Outstanding</th><th class="text-right">Rate</th><th class="text-right">Interest Due</th><th class="text-right">Collected</th><th class="text-right">Balance</th><th>Status</th></tr></thead>
       <tbody>
-        ${list.map((b,i)=>`<tr><td>${i+1}</td><td>${b.borrowerName||'—'}</td><td>${b.phone||'—'}</td><td>${b.loanId||'—'}</td><td class="text-right">${INR(b.loanAmount||0)}</td><td class="text-right">${INR(getOut(b))}</td><td class="text-right">${b.interestRate||0}%/mo</td><td><span class="badge ${b.status==='Active'?'badge-green':'badge-gray'}">${b.status||'—'}</span></td></tr>`).join('')}
-        <tr class="total-row"><td colspan="4">TOTAL (Active)</td><td class="text-right">${INR(totalLoan)}</td><td class="text-right">${INR(totalOutstanding)}</td><td colspan="2"></td></tr>
+        ${enriched.map((e,i)=>{
+          const b=e.b;
+          return `<tr><td>${i+1}</td><td>${b.borrowerName||'—'}</td><td>${b.phone||'—'}</td><td>${b.loanId||'—'}</td><td class="text-right">${INR(b.loanAmount||0)}</td><td class="text-right">${INR(getOut(b))}</td><td class="text-right">${b.interestRate||0}%/mo</td><td class="text-right">${INR(e.totalInterestDue)}</td><td class="text-right text-green">${INR(e.totalInterestCollected)}</td><td class="text-right ${e.interestBalance>0?'text-red':'text-green'}">${INR(e.interestBalance)}</td><td><span class="badge ${b.status==='Active'?'badge-green':'badge-gray'}">${b.status||'—'}</span></td></tr>
+          ${e.hasHistory?`<tr><td></td><td colspan="10" style="padding:2px 10px 8px;">${e.monthlyBadges}</td></tr>`:''}`;
+        }).join('')}
+        <tr class="total-row"><td colspan="4">TOTAL (Active)</td><td class="text-right">${INR(totalLoan)}</td><td class="text-right">${INR(totalOutstanding)}</td><td></td><td class="text-right">${INR(grandInterestDue)}</td><td class="text-right">${INR(grandInterestCollected)}</td><td class="text-right">${INR(grandInterestBalance)}</td><td></td></tr>
       </tbody>
     </table>
+    <p style="font-size:10.5px;color:#9ca3af;margin-top:-8px;">Small badges under each borrower show that month's interest status — ✓ Paid, ✗ Unpaid.</p>
     <div class="footer"><span>EC Fin 360 Finance Ledger</span><span>Borrowers Summary Report</span></div>
   `;
   openPrint('Borrowers Summary', body, '#f59e0b');

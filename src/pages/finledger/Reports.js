@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
+import toast from 'react-hot-toast';
 import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import {useAuth} from '../../contexts/AuthContext';
 import {scopeToUser} from '../../utils/scopeHelper';
 import {getAllStatusHistory, getEffectiveStatus} from '../../utils/statusHistory';
+import {findAndCleanOrphans} from '../../utils/cascadeDelete';
 import { PageHeader, Card, Button, StatCard, SectionHeader, formatCurrency } from '../../components/finledger/UI';
 import { PageLoader } from '../../components/Skeleton';
 import { printOverallReport } from '../../utils/pdfReport';
@@ -59,6 +61,8 @@ export default function Reports() {
   const [emiCols,      setEmiCols]      = useState([]);
   const [ledgerEntries, setLedgerEntries] = useState([]); // Fine Income entries only
   const [loading,      setLoading]      = useState(true);
+  const [cleaning,     setCleaning]     = useState(false);
+  const [cleanupResult, setCleanupResult] = useState(null);
 
   const [activePreset, setActivePreset] = useState(0);
   const [fromDate,     setFromDate]     = useState('');
@@ -177,6 +181,17 @@ export default function Reports() {
   filtExps.forEach(e => { expByCat[e.category] = (expByCat[e.category]||0) + (e.amount||0); });
   const topExpCats = Object.entries(expByCat).sort((a,b) => b[1]-a[1]).slice(0, 6);
 
+  async function handleCleanup() {
+    if (!window.confirm('Scan for and permanently remove orphaned records left behind by previously deleted borrowers, depositors or EMI loans? This only removes data whose parent record no longer exists — nothing currently visible in the app will be touched.')) return;
+    setCleaning(true);
+    try {
+      const result = await findAndCleanOrphans(user.uid);
+      setCleanupResult(result);
+      toast.success('Cleanup complete');
+    } catch (e) { toast.error('Cleanup failed: ' + e.message); }
+    finally { setCleaning(false); }
+  }
+
   function handlePrint() {
     if (!fromDate || !toDate) { alert('Please select a date range.'); return; }
     printOverallReport({
@@ -200,13 +215,28 @@ export default function Reports() {
         title="Financial Reports"
         subtitle="Overall portfolio summary with date-range filtering and PDF export"
         action={
-          <Button onClick={handlePrint} disabled={!fromDate||!toDate}
-            style={{ display:'flex', alignItems:'center', gap:6, background:'#dc2626', border:'none' }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="12" y2="18"/><line x1="15" y1="15" x2="12" y2="18"/></svg>
-            Download PDF Report
-          </Button>
+          <div style={{ display:'flex', gap:8 }}>
+            <Button variant="secondary" onClick={handleCleanup} disabled={cleaning}
+              style={{ display:'flex', alignItems:'center', gap:6 }}>
+              {cleaning ? 'Cleaning…' : '🧹 Clean Up Orphaned Data'}
+            </Button>
+            <Button onClick={handlePrint} disabled={!fromDate||!toDate}
+              style={{ display:'flex', alignItems:'center', gap:6, background:'#dc2626', border:'none' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="12" y2="18"/><line x1="15" y1="15" x2="12" y2="18"/></svg>
+              Download PDF Report
+            </Button>
+          </div>
         }
       />
+
+      {cleanupResult && (
+        <Card style={{ marginBottom:20, background:'rgba(52,199,89,0.06)', border:'1px solid rgba(52,199,89,0.25)' }}>
+          <div style={{ fontSize:13, fontWeight:700, color:'#1a7a34', marginBottom:6 }}>✓ Cleanup complete</div>
+          <div style={{ fontSize:12.5, color:'var(--text-secondary)' }}>
+            Removed {cleanupResult.borrowerOrphans} orphaned loan record(s), {cleanupResult.depositOrphans} orphaned deposit record(s), {cleanupResult.emiOrphans} orphaned EMI record(s), and {cleanupResult.ledgerOrphans} orphaned ledger entr{cleanupResult.ledgerOrphans===1?'y':'ies'} left behind by previously deleted borrowers, depositors or EMI loans. Refresh the Dashboard to see updated totals.
+          </div>
+        </Card>
+      )}
 
       {/* Period selector */}
       <Card style={{ marginBottom: 20 }}>

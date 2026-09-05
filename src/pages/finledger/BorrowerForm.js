@@ -72,9 +72,6 @@ export default function BorrowerForm(){
       return toast.error('The Guardian must be a different person from the borrower — they cannot share the same phone number.');
     if(!form.borrowerName||!form.phone||!form.loanAmount||!form.interestRate||!form.loanStartDate)
       return toast.error('Fill all required fields');
-    if(!isEdit&&!files.check&&!existing.check) return toast.error('Check Copy is mandatory');
-    if(!isEdit&&!files.bond&&!existing.bond) return toast.error('Bond Copy is mandatory');
-    if(!isEdit&&!files.agreement&&!existing.agreement) return toast.error('Agreement Copy is mandatory');
     setLoading(true);
     try{
       const toDataUrl=async(file)=>{if(!file)return null;const r=await uploadDocumentFile(file);return r.dataUrl;};
@@ -300,11 +297,11 @@ export default function BorrowerForm(){
           {/* Security Documents */}
           <Card>
             <SectionHeader title="Security Documents"/>
-            <p style={{fontSize:12,color:'var(--text-secondary)',marginBottom:14}}>Check Copy, Bond Copy and Agreement are mandatory for new loans</p>
+            <p style={{fontSize:12,color:'var(--text-secondary)',marginBottom:14}}>All documents are optional — upload if collected</p>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
-              <FileUpload label="Check Copy *" existing={existing.check} onChange={f=>setFiles(p=>({...p,check:f}))} required onView={()=>openDocument(existing.check,'Check Copy')}/>
-              <FileUpload label="Bond Copy *" existing={existing.bond} onChange={f=>setFiles(p=>({...p,bond:f}))} required onView={()=>openDocument(existing.bond,'Bond Copy')}/>
-              <FileUpload label="Agreement Copy *" existing={existing.agreement} onChange={f=>setFiles(p=>({...p,agreement:f}))} required onView={()=>openDocument(existing.agreement,'Agreement')}/>
+              <FileUpload label="Check Copy" existing={existing.check} onChange={f=>setFiles(p=>({...p,check:f}))} onView={()=>openDocument(existing.check,'Check Copy')}/>
+              <FileUpload label="Bond Copy" existing={existing.bond} onChange={f=>setFiles(p=>({...p,bond:f}))} onView={()=>openDocument(existing.bond,'Bond Copy')}/>
+              <FileUpload label="Agreement Copy" existing={existing.agreement} onChange={f=>setFiles(p=>({...p,agreement:f}))} onView={()=>openDocument(existing.agreement,'Agreement')}/>
               <FileUpload label="Land Documents" existing={existing.land} onChange={f=>setFiles(p=>({...p,land:f}))} onView={()=>openDocument(existing.land,'Land Documents')}/>
             </div>
           </Card>

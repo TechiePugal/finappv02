@@ -6,6 +6,7 @@ import {
   doc, query, orderBy, serverTimestamp
 ,getDocs} from 'firebase/firestore';
 import { db } from '../../firebase/config';
+import { cascadeDeleteEmiLoan } from '../../utils/cascadeDelete';
 import { uploadDocumentFile } from '../../utils/fileStore';
 import toast from 'react-hot-toast';
 import {printEMILoansSummary, printEMILoanReport} from '../../utils/pdfReport';
@@ -527,10 +528,8 @@ export default function EMILoans() {
   async function deleteLoan() {
     if (!delLoan) return;
     try {
-      await deleteDoc(doc(db, 'emi_loans', delLoan.id));
-      const cols = collections[delLoan.id] || [];
-      await Promise.all(cols.map(c => deleteDoc(doc(db, 'emi_collections', c.id)).catch(() => {})));
-      toast.success('EMI Loan deleted');
+      await cascadeDeleteEmiLoan(delLoan.id);
+      toast.success('EMI Loan and all related records deleted');
       setDelLoan(null);
     } catch (e) { toast.error('Delete failed: ' + e.message); }
   }

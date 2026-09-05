@@ -70,8 +70,9 @@ export default function OtherChitCompanies() {
 
   if (loading) return <div style={{ padding: 60, textAlign: 'center', color: tokens.textSub }}>Loading…</div>;
 
-  const chitCountFor = (companyName) => chits.filter(c => c.companyName === companyName).length;
-  const valueFor = (companyName) => chits.filter(c => c.companyName === companyName).reduce((s, c) => s + (c.totalChitValue || 0), 0);
+  // Closed/cashed chits excluded from these counts — matches every other page.
+  const chitCountFor = (companyName) => chits.filter(c => c.companyName === companyName && c.myStatus !== 'Cashed').length;
+  const valueFor = (companyName) => chits.filter(c => c.companyName === companyName && c.myStatus !== 'Cashed').reduce((s, c) => s + (c.totalChitValue || 0), 0);
 
   return (
     <div>
@@ -80,7 +81,7 @@ export default function OtherChitCompanies() {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 13, marginBottom: 20 }}>
         <StatCard label="Total Companies" value={companies.length} icon={Building2} accent={tokens.blue} />
-        <StatCard label="Total Chits Joined" value={chits.length} sub="across all companies" icon={Building2} accent="#5521B5" />
+        <StatCard label="Total Chits Joined" value={chits.filter(c => c.myStatus !== 'Cashed').length} sub="across all companies (active)" icon={Building2} accent="#5521B5" />
       </div>
 
       {companies.length === 0 ? (
