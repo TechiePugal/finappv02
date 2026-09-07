@@ -93,14 +93,26 @@ export default function MonthlyReceivable() {
       // BUG FIX: was using c.totalCollected (includes fine) — now uses c.amount only (fine excluded)
       const totalEmiCollected = emiCols.filter(c => c.date && c.date.startsWith(month) && c.status === 'Paid')
         .reduce((s,c) => s + (c.amount||0), 0);
-      // BUG FIX: an EMI installment bundles PRINCIPAL + INTEREST together — totalEmiCollected
+      // BUG FIX #1: an EMI installment bundles PRINCIPAL + INTEREST together — totalEmiCollected
       // above is the full installment, which is fine for a "collected" display figure, but
       // using it directly in Net Profit wrongly counts the repaid principal as profit too.
       // Isolate just the interest portion, same approach as the Overall Dashboard.
+      //
+      // BUG FIX #2 (the ₹66,472-in-one-month bug): an EARLY CLOSURE collection is NOT one
+      // period's installment — its "amount" is the ENTIRE remaining principal balance plus
+      // just one period's interest, all in a single lump sum (see CollectEMI.js's closeAmt).
+      // Subtracting only one period's worth of principal from that lump sum left almost the
+      // whole remaining balance wrongly counted as "interest." For an early-closure record,
+      // the real interest portion is exactly one period's interest on the loan — nothing more.
       const totalEmiInterestCollected = emiCols.filter(c => c.date && c.date.startsWith(month) && c.status === 'Paid')
         .reduce((s,c) => {
           const loan = emiLoans.find(l=>l.id===c.loanId);
-          const perPeriodPrincipal = loan ? (loan.loanAmount||0)/(loan.totalPeriods||1) : 0;
+          if (!loan) return s;
+          if (c.earlyClosure) {
+            const onePeriodInterest = (loan.loanAmount||0) * ((loan.interestRate||0)/100);
+            return s + Math.min(onePeriodInterest, c.amount||0); // never more than what was actually collected
+          }
+          const perPeriodPrincipal = (loan.loanAmount||0)/(loan.totalPeriods||1);
           return s + Math.max(0, (c.amount||0) - perPeriodPrincipal);
         }, 0);
       const validLoanIds = new Set(borrowers.map(b=>b.id));
