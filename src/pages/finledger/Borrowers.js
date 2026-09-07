@@ -9,6 +9,7 @@ import {printBorrowerReport, printBorrowersSummary} from '../../utils/pdfReport'
 import {PageLoader} from '../../components/Skeleton';
 import {useAuth} from '../../contexts/AuthContext';
 import {scopeToUser} from '../../utils/scopeHelper';
+import {calcLoanInterestForMonth} from '../../utils/interestCalc';
 
 export default function Borrowers(){
   const {user}=useAuth();
@@ -23,6 +24,7 @@ export default function Borrowers(){
   const[filter,setFilter]=useState('All');
   const[photoPopup,setPhotoPopup]=useState(null);
   const[intPays,setIntPays]=useState({});
+  const[additions,setAdditions]=useState({}); // for date-aware interest — see utils/interestCalc.js
   const nav=useNavigate();
 
   useEffect(()=>{
@@ -45,7 +47,12 @@ export default function Borrowers(){
       scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).forEach(x=>{if(!im[x.borrowerId])im[x.borrowerId]=[];im[x.borrowerId].push(x);});
       setIntPays(im);
     });
-    return()=>{bUnsub();rUnsub();iUnsub();};
+    const aUnsub=onSnapshot(collection(db,'loan_additions'),snap=>{
+      const am={};
+      scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).forEach(x=>{if(!am[x.borrowerId])am[x.borrowerId]=[];am[x.borrowerId].push(x);});
+      setAdditions(am);
+    });
+    return()=>{bUnsub();rUnsub();iUnsub();aUnsub();};
   },[]);
 
   async function del(id,e){
@@ -62,7 +69,9 @@ export default function Borrowers(){
   }
 
   function calcInterest(b){
-    return getOutstanding(b)*(b.interestRate||0)/100;
+    const curMoB=(()=>{const n=new Date();return`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;})();
+    const repaid=(reps[b.id]||[]).reduce((s,r)=>s+(r.repaidAmount||r.amount||0),0);
+    return calcLoanInterestForMonth(b,additions[b.id],repaid,curMoB);
   }
 
   const _today=new Date();_today.setHours(0,0,0,0);

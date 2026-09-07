@@ -6,6 +6,7 @@ import {printAlertsReport} from '../../utils/pdfReport';
 import {PageLoader} from '../../components/Skeleton';
 import {useAuth} from '../../contexts/AuthContext';
 import {scopeToUser} from '../../utils/scopeHelper';
+import {calcLoanInterestForMonth} from '../../utils/interestCalc';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -29,6 +30,7 @@ export default function Alerts(){
   const {user}=useAuth();
   const[borrowers,setBorrowers]=useState([]);
   const[repayments,setRepayments]=useState({});
+  const[additions,setAdditions]=useState({}); // for date-aware interest — see utils/interestCalc.js
   const[interests,setInterests]=useState({});
   const[loading,setLoading]=useState(true);
   const[tab,setTab]=useState('overdue');
@@ -59,7 +61,12 @@ export default function Alerts(){
       });
       setInterests(im);
     });
-    return()=>{b();r();i();};
+    const a=onSnapshot(collection(db,'loan_additions'),snap=>{
+      const am={};
+      scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).forEach(x=>{if(!am[x.borrowerId])am[x.borrowerId]=[];am[x.borrowerId].push(x);});
+      setAdditions(am);
+    });
+    return()=>{b();r();i();a();};
   },[]);
 
   // ── Computed values ──────────────────────────────────────────────────────
@@ -370,7 +377,7 @@ export default function Alerts(){
                 <F label="Loan ID" value={contactModal.loanId||contactModal.id.slice(-8)}/>
                 <F label="Original Loan" value={formatCurrency(contactModal.loanAmount||0)}/>
                 <F label="Outstanding" value={formatCurrency(Math.round(bal))} color="#ff9500"/>
-                <F label="Monthly Interest" value={formatCurrency(Math.round(bal*(contactModal.interestRate||0)/100))} color="#007aff"/>
+                <F label="Monthly Interest" value={formatCurrency(Math.round((()=>{const curMoA=(()=>{const n=new Date();return`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;})();const repaid=(repayments[contactModal.id]||[]).reduce((s,r)=>s+(r.repaidAmount||r.amount||0),0);return calcLoanInterestForMonth(contactModal,additions[contactModal.id],repaid,curMoA);})()))} color="#007aff"/>
                 {lastRep&&<F label="Last Repayment" value={fmtDate(lastRep)}/>}
                 {contactModal.loanStartDate&&<F label="Loan Start" value={fmtDate(contactModal.loanStartDate)}/>}
                 {expiryDate&&<F label="Agreement Expiry" value={fmtDate(expiryDate)} color={daysToExpiry!==null&&daysToExpiry<0?'#ff3b30':'var(--text-primary)'} full/>}

@@ -33,6 +33,7 @@ export default function InterestCollection(){
   const[borrowers,setBorrowers]=useState([]);
   const[payments,setPayments]=useState({});
   const[repayments,setRepayments]=useState({});
+  const[additions,setAdditions]=useState({}); // extra amounts added, per borrower — used to keep the CURRENT month's interest from jumping early
   const[loading,setLoading]=useState(true);
   const[modal,setModal]=useState(null); // borrower
   const[pf,setPf]=useState({date:'',mode:'Cash',amount:'',fine:'0',collectFine:false,addToLoan:false,remarks:''});
@@ -64,13 +65,28 @@ export default function InterestCollection(){
       scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).forEach(r=>{if(!r.deleted){if(!rm[r.borrowerId])rm[r.borrowerId]=[];rm[r.borrowerId].push(r);}});
       setRepayments(rm);
     });
-    return()=>{b();p();r();};
+    const a=onSnapshot(collection(db,'loan_additions'),snap=>{
+      const am={};
+      scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).forEach(x=>{if(!am[x.borrowerId])am[x.borrowerId]=[];am[x.borrowerId].push(x);});
+      setAdditions(am);
+    });
+    return()=>{b();p();r();a();};
   },[]);
 
-  function getOutstanding(b){
+  function getOutstanding(b,forMonth){
+    // An addition made THIS month (or later) should only start counting toward
+    // interest from NEXT month onward — the period already in progress when the
+    // extra amount was added keeps using the old, smaller principal.
+    const targetMonth = forMonth || month;
     const reps=repayments[b.id]||[];
     const repaid=reps.reduce((s,r)=>s+(r.repaidAmount||r.amount||0),0);
-    return Math.max(0,(b.loanAmount||0)-repaid);
+    let outstanding = Math.max(0,(b.loanAmount||0)-repaid);
+    const adds = additions[b.id]||[];
+    // An addition applies STARTING the month it was made — a top-up in August
+    // means August itself already uses the new, larger principal. Only months
+    // BEFORE the addition (June, July) keep the old, smaller amount.
+    const notYetEffective = adds.filter(a=>a.date && a.date.slice(0,7)>targetMonth).reduce((s,a)=>s+(a.amount||0),0);
+    return Math.max(0, outstanding-notYetEffective);
   }
 
   function calcInterest(b,overrideOutstanding){
@@ -80,8 +96,8 @@ export default function InterestCollection(){
 
   function openModal(b,forMonth){
     const m=forMonth||month;
-    if(forMonth&&forMonth!==month) setMonth(forMonth); // keep 'month' state in sync for calc, without forcing view
-    const outstanding=getOutstanding(b);
+    if(forMonth&&forMonth!==month) setMonth(forMonth); // keep 'month' state in sync for the view, but don't rely on it below — state updates are async
+    const outstanding=getOutstanding(b,m); // BUG FIX: was getOutstanding(b) with no month, which silently used the OLD selected month (a stale closure) instead of the month actually being opened
     const interest=calcInterest(b,outstanding);
     const daysOverdue=getDaysOverdue(m);
     const fine=daysOverdue>2?(daysOverdue-2)*DAILY_FINE:0;
@@ -316,7 +332,7 @@ export default function InterestCollection(){
               // collected — whatever's left is the true remaining interest to pay.
               const totalInterestDue=slots.reduce((s,mo)=>{
                 const pp=payments[b.id]?.[mo];
-                const dueForMonth = pp?.amountDue!=null ? pp.amountDue : calcInterest(b,outstanding);
+                const dueForMonth = pp?.amountDue!=null ? pp.amountDue : calcInterest(b,getOutstanding(b,mo));
                 return s+dueForMonth;
               },0);
               const totalInterestCollected=slots.reduce((s,mo)=>{

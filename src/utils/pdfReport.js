@@ -1091,3 +1091,78 @@ export function printUsersDirectory(customers, linkedFn){
   `;
   openPrint('Users Directory', body, '#0a84ff');
 }
+
+export function printUserFullHistory(customer, linkedData, txns){
+  const { loans=[], deposits=[], emis=[] } = linkedData || {};
+  const byParent = pid => (txns||[]).filter(t=>t.parentId===pid).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+
+  const totalLoanAmt = loans.reduce((s,l)=>s+(l.loanAmount||0),0);
+  const totalDepositAmt = deposits.reduce((s,d)=>s+(d.depositAmount||0),0);
+  const totalEmiAmt = emis.reduce((s,e)=>s+(e.loanAmount||0),0);
+
+  const txnRow = t => {
+    const iconMap = { loan:'📋', close:'✅', deposit:'💰', emi:'📆', interest:'💵', repay:'↩️', depint:'💵', emipay:'💵' };
+    return `<tr><td>${fmtDate(t.date)}</td><td>${iconMap[t.type]||'•'} ${t.label}</td><td class="text-right">${t.amount?INR(t.amount):'—'}</td></tr>`;
+  };
+
+  const section = (icon, title, color, records, renderRecord) => {
+    if (records.length === 0) return '';
+    return `
+      <div style="margin-top:22px;padding:14px 18px;background:${color}10;border-left:4px solid ${color};border-radius:8px 8px 0 0;">
+        <h2 style="margin:0;border:none;color:${color};">${icon} ${title} (${records.length})</h2>
+      </div>
+      ${records.map(renderRecord).join('')}
+    `;
+  };
+
+  const body = `
+    <div class="header">
+      <div><div class="logo">EC Fin 360 · Full Financial History</div><div class="meta" style="text-align:left;margin-top:4px;">Complete record across Deposits, Loans and EMI Loans</div></div>
+      <div class="meta">Generated: ${now()}</div>
+    </div>
+
+    <div class="section-photo">
+      <div class="photo-circle">${customer.photo?`<img src="${customer.photo}" alt=""/>`:(customer.name||'U')[0].toUpperCase()}</div>
+      <div>
+        <div style="font-size:20px;font-weight:800;">${customer.name||'—'}</div>
+        <div style="font-size:12px;color:#6b7280;margin-top:3px;">
+          ${customer.phone||'—'} · ID: ${customer.customerId||customer.id?.slice(-8)||'—'}
+          <span class="badge ${customer.status==='Active'?'badge-green':'badge-gray'}" style="margin-left:6px;">${customer.status||'Active'}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi" style="border-left-color:#bf5af2;"><div class="kpi-val" style="color:#7c3aed;">${INR(totalDepositAmt)}</div><div class="kpi-lbl">💰 Total Deposits</div><div class="kpi-sub">${deposits.length} record${deposits.length!==1?'s':''}</div></div>
+      <div class="kpi" style="border-left-color:#0a84ff;"><div class="kpi-val" style="color:#0369a1;">${INR(totalLoanAmt)}</div><div class="kpi-lbl">📋 Total Loans</div><div class="kpi-sub">${loans.length} record${loans.length!==1?'s':''}</div></div>
+      <div class="kpi" style="border-left-color:#5e5ce6;"><div class="kpi-val" style="color:#4338ca;">${INR(totalEmiAmt)}</div><div class="kpi-lbl">📆 Total EMI Loans</div><div class="kpi-sub">${emis.length} record${emis.length!==1?'s':''}</div></div>
+    </div>
+
+    ${section('💰', 'Deposits', '#bf5af2', deposits, d => `
+      <table style="margin-bottom:16px;">
+        <thead><tr><th>Deposit ID</th><th class="text-right">Principal</th><th class="text-right">Rate</th><th>Start Date</th><th>Status</th></tr></thead>
+        <tbody><tr><td style="font-family:monospace;">${d.depositId||d.id}</td><td class="text-right">${INR(d.depositAmount)}</td><td class="text-right">${d.interestRate||0}%/mo</td><td>${fmtDate(d.startDate)}</td><td><span class="badge ${d.status==='Active'?'badge-green':'badge-gray'}">${d.status||'—'}</span></td></tr></tbody>
+      </table>
+      ${byParent(d.id).length>0?`<table style="margin-bottom:16px;"><thead><tr><th>Date</th><th>Transaction</th><th class="text-right">Amount</th></tr></thead><tbody>${byParent(d.id).map(txnRow).join('')}</tbody></table>`:''}
+    `)}
+
+    ${section('📋', 'Loans', '#0a84ff', loans, l => `
+      <table style="margin-bottom:16px;">
+        <thead><tr><th>Loan ID</th><th class="text-right">Amount</th><th class="text-right">Rate</th><th>Start Date</th><th>Status</th></tr></thead>
+        <tbody><tr><td style="font-family:monospace;">${l.loanId||l.id}</td><td class="text-right">${INR(l.loanAmount)}</td><td class="text-right">${l.interestRate||0}%/mo</td><td>${fmtDate(l.loanStartDate)}</td><td><span class="badge ${l.status==='Active'?'badge-green':'badge-gray'}">${l.status||'—'}</span></td></tr></tbody>
+      </table>
+      ${byParent(l.id).length>0?`<table style="margin-bottom:16px;"><thead><tr><th>Date</th><th>Transaction</th><th class="text-right">Amount</th></tr></thead><tbody>${byParent(l.id).map(txnRow).join('')}</tbody></table>`:''}
+    `)}
+
+    ${section('📆', 'EMI Loans', '#5e5ce6', emis, e => `
+      <table style="margin-bottom:16px;">
+        <thead><tr><th>EMI ID</th><th class="text-right">Loan Amount</th><th class="text-right">EMI/Period</th><th>Progress</th><th>Status</th></tr></thead>
+        <tbody><tr><td style="font-family:monospace;">${e.emiId||e.id}</td><td class="text-right">${INR(e.loanAmount)}</td><td class="text-right">${INR(e.emiAmount)}</td><td>${e.paidPeriods||0}/${e.totalPeriods||0}</td><td><span class="badge ${e.status==='Active'?'badge-green':'badge-gray'}">${e.status||'—'}</span></td></tr></tbody>
+      </table>
+      ${byParent(e.id).length>0?`<table style="margin-bottom:16px;"><thead><tr><th>Date</th><th>Transaction</th><th class="text-right">Amount</th></tr></thead><tbody>${byParent(e.id).map(txnRow).join('')}</tbody></table>`:''}
+    `)}
+
+    <div class="footer"><span>EC Fin 360 Finance Ledger · Confidential</span><span>Full Financial History — ${customer.name}</span></div>
+  `;
+  openPrint(`${customer.name} — Full Financial History`, body, '#0a84ff');
+}

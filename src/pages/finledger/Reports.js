@@ -6,6 +6,7 @@ import {useAuth} from '../../contexts/AuthContext';
 import {scopeToUser} from '../../utils/scopeHelper';
 import {getAllStatusHistory, getEffectiveStatus} from '../../utils/statusHistory';
 import {findAndCleanOrphans} from '../../utils/cascadeDelete';
+import {calcLoanInterestForMonth} from '../../utils/interestCalc';
 import { PageHeader, Card, Button, StatCard, SectionHeader, formatCurrency } from '../../components/finledger/UI';
 import { PageLoader } from '../../components/Skeleton';
 import { printOverallReport } from '../../utils/pdfReport';
@@ -55,6 +56,7 @@ export default function Reports() {
   const [depHistory,   setDepHistory]   = useState({});
   const [depositors,   setDepositors]   = useState([]);
   const [repayments,   setRepayments]   = useState([]);
+  const [loanAdditions, setLoanAdditions] = useState([]); // for date-aware interest — see utils/interestCalc.js
   const [intPayments,  setIntPayments]  = useState([]);
   const [depPayments,  setDepPayments]  = useState([]);
   const [expenses,     setExpenses]     = useState([]);
@@ -76,7 +78,7 @@ export default function Reports() {
 
   useEffect(() => {
     let done = 0;
-    const setDone = () => { done++; if (done >= 7) setLoading(false); };
+    const setDone = () => { done++; if (done >= 8) setLoading(false); };
     const u1 = onSnapshot(query(collection(db,'borrower_master'), orderBy('createdAt','desc')), s => { setBorrowers(scopeToUser(s.docs.map(d=>({id:d.id,...d.data()})),user?.uid)); setDone(); });
     const u2 = onSnapshot(collection(db,'deposit_master'), s => { setDepositors(scopeToUser(s.docs.map(d=>({id:d.id,...d.data()})),user?.uid)); setDone(); });
     const u3 = onSnapshot(collection(db,'loan_repayments'), s => { setRepayments(scopeToUser(s.docs.map(d=>({id:d.id,...d.data()})),user?.uid)); setDone(); });
@@ -84,10 +86,11 @@ export default function Reports() {
     const u5 = onSnapshot(collection(db,'finance_expenses'), s => { setExpenses(scopeToUser(s.docs.map(d=>({id:d.id,...d.data()})),user?.uid)); setDone(); });
     const u6 = onSnapshot(collection(db,'emi_collections'), s => { setEmiCols(scopeToUser(s.docs.map(d=>({id:d.id,...d.data()})),user?.uid)); setDone(); });
     const u7 = onSnapshot(collection(db,'finance_ledger_entries'), s => { setLedgerEntries(scopeToUser(s.docs.map(d=>({id:d.id,...d.data()})),user?.uid).filter(e=>e.category==='Fine Income')); setDone(); });
+    const u8 = onSnapshot(collection(db,'loan_additions'), s => { setLoanAdditions(scopeToUser(s.docs.map(d=>({id:d.id,...d.data()})),user?.uid)); setDone(); });
     // Point-in-time status resolution — see utils/statusHistory.js for why this exists
     getAllStatusHistory('loan').then(setLoanHistory);
     getAllStatusHistory('deposit').then(setDepHistory);
-    return () => { u1(); u2(); u3(); u4(); u5(); u6(); u7(); };
+    return () => { u1(); u2(); u3(); u4(); u5(); u6(); u7(); u8(); };
   }, []);
 
   function applyPreset(idx) {
@@ -162,10 +165,12 @@ export default function Reports() {
     return s + Math.max(0, (b.loanAmount||0) - paid);
   }, 0);
   const totalDeposits = periodActiveD.reduce((s,d) => s + (d.depositAmount||0), 0);
+  const loanAdditionsMap = {};
+  loanAdditions.forEach(a=>{ if(!loanAdditionsMap[a.borrowerId]) loanAdditionsMap[a.borrowerId]=[]; loanAdditionsMap[a.borrowerId].push(a); });
   const monthlyInterestIncome = activeB.reduce((s,b) => {
     const paid = repayments.filter(r => r.borrowerId === b.id && !r.deleted && r.date <= toDate).reduce((a,r) => a + (r.repaidAmount||r.amount||0), 0);
-    const out = Math.max(0, (b.loanAmount||0) - paid);
-    return s + out * (b.interestRate||0) / 100; // monthly rate
+    const targetMonth = (toDate||'').slice(0,7) || (()=>{const n=new Date();return`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;})();
+    return s + calcLoanInterestForMonth(b, loanAdditionsMap[b.id], paid, targetMonth);
   }, 0);
 
   // Monthly breakdown
@@ -379,12 +384,14 @@ export default function Reports() {
                   {activeB.map(b => {
                     const paid = repayments.filter(r=>r.borrowerId===b.id&&!r.deleted).reduce((a,r)=>a+(r.repaidAmount||r.amount||0),0);
                     const out = Math.max(0,(b.loanAmount||0)-paid);
+                    const curMoR=(()=>{const n=new Date();return`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;})();
+                    const intPerMo = calcLoanInterestForMonth(b, loanAdditionsMap[b.id], paid, curMoR);
                     return (
                       <tr key={b.id} style={{ borderBottom:'1px solid rgba(0,0,0,0.04)' }}>
                         <td style={{ padding:'8px 10px', fontWeight:600 }}>{b.borrowerName}</td>
                         <td style={{ padding:'8px 10px' }}>{INR(b.loanAmount)}</td>
                         <td style={{ padding:'8px 10px', color:out>0?'#ff9500':'#34c759', fontWeight:700 }}>{INR(out)}</td>
-                        <td style={{ padding:'8px 10px', color:'#007aff', fontWeight:700 }}>{INR(out*(b.interestRate||0)/100)}</td>
+                        <td style={{ padding:'8px 10px', color:'#007aff', fontWeight:700 }}>{INR(intPerMo)}</td>
                       </tr>
                     );
                   })}

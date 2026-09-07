@@ -58,6 +58,7 @@ export default function DepositorSettlement(){
   const[af,setAf]=useState({amount:'',date:'',remarks:''});
   const[addSaving,setAddSaving]=useState(false);
   const[month,setMonth]=useState(()=>{const n=new Date();return`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;});
+  const[additions,setAdditions]=useState({}); // extra deposit top-ups — keeps the current period's interest from jumping early
   const DAILY_FINE=50;
 
   useEffect(()=>{
@@ -70,12 +71,26 @@ export default function DepositorSettlement(){
       scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).forEach(r=>{const k=`${r.depositId}_${r.month}`;pm[k]=r;});
       setPayments(pm);
     });
-    return()=>{d();p();};
+    const ad=onSnapshot(collection(db,'deposit_additions'),snap=>{
+      const am={};
+      scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).forEach(x=>{if(!am[x.depositorId])am[x.depositorId]=[];am[x.depositorId].push(x);});
+      setAdditions(am);
+    });
+    return()=>{d();p();ad();};
   },[]);
 
-  function calcPeriodInt(dep){
+  function calcPeriodInt(dep,forMonth){
+    // An addition made in this same month (or later) shouldn't count toward THIS
+    // period's interest yet — it only starts counting from next month onward.
+    const targetMonth = forMonth || month;
+    const adds = additions[dep.id]||[];
+    // An addition applies STARTING the month it was made — a top-up in August
+    // means August itself already uses the new, larger principal. Only months
+    // BEFORE the addition keep the old, smaller amount.
+    const notYetEffective = adds.filter(a=>a.date && a.date.slice(0,7)>targetMonth).reduce((s,a)=>s+(a.amount||0),0);
+    const effectivePrincipal = Math.max(0,(dep.depositAmount||0)-notYetEffective);
     // monthlyRate: rate entered as % per month (not annual)
-    const p=dep.depositAmount||0,r=dep.interestRate||0,t=parseInt(dep.interestTenure)||1;
+    const p=effectivePrincipal,r=dep.interestRate||0,t=parseInt(dep.interestTenure)||1;
     // Simple: principal × monthly rate × months. Compound: principal × ((1+r)^t − 1)
     return dep.compounding?p*(Math.pow(1+r/100,t)-1):(p*(r/100)*t);
   }
@@ -86,7 +101,7 @@ export default function DepositorSettlement(){
     const daysOD=getDaysOverdue(slot.dueDate);
     const fine=daysOD>2?(daysOD-2)*DAILY_FINE:0;
     setModal({depositor,slot});
-    const interestDue=Math.round(calcPeriodInt(depositor));
+    const interestDue=Math.round(calcPeriodInt(depositor,slot.month)); // BUG FIX: was calcPeriodInt(depositor) with no month, which silently used whichever month the page happened to be viewing, not the specific period being opened
     // Split settlement: how much of the interest is paid out in cash vs added back to
     // the deposit principal (compound) — any ratio, not just all-or-nothing.
     const prevAdded=existing?.addedAmount||0;
@@ -108,7 +123,7 @@ export default function DepositorSettlement(){
     try{
       const key=`${depositor.id}_${slot.month}`;
       const existing=payments[key];
-      const interest=calcPeriodInt(depositor);
+      const interest=calcPeriodInt(depositor,slot.month); // BUG FIX: was missing the month, silently using the page's globally-selected month
       const fine=pf.collectFine?parseFloat(pf.fine)||0:0;
 
       // Split settlement: cash portion (paid out) + compound portion (added to principal).
@@ -417,7 +432,7 @@ export default function DepositorSettlement(){
         )}>
         {modal&&(()=>{
           const{depositor,slot}=modal;
-          const interest=calcPeriodInt(depositor);
+          const interest=calcPeriodInt(depositor,slot.month); // BUG FIX: was missing the month, silently using the page's globally-selected month
           const daysOD=getDaysOverdue(slot.dueDate);
           const fineAmt=parseFloat(pf.fine)||0;
           const existingKey=`${depositor.id}_${slot.month}`;

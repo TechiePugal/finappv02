@@ -1,5 +1,5 @@
 import React,{useEffect,useState} from 'react';
-import {printUsersDirectory} from '../../utils/pdfReport';
+import {printUsersDirectory, printUserFullHistory} from '../../utils/pdfReport';
 import {collection,getDocs,addDoc,updateDoc,doc,serverTimestamp,onSnapshot,query,orderBy} from 'firebase/firestore';
 import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
@@ -87,18 +87,7 @@ export default function Customers(){
   function printReport(){
     if(!history)return;
     const {cust,txns,lk}=history;
-    const out=lk.loans.reduce((s,l)=>s+Math.max(0,(l.loanAmount||0)),0);
-    const w=window.open('','_blank');
-    const row=(t)=>`<tr><td>${t.date||''}</td><td>${t.label}</td><td style="text-align:right">${t.amount?'₹'+Math.round(t.amount).toLocaleString('en-IN'):''}</td></tr>`;
-    w.document.write(`<html><head><title>${cust.name} — Financial History</title><style>body{font-family:Arial;padding:24px;color:#111}h1{font-size:20px}h2{font-size:14px;margin-top:20px;border-bottom:1px solid #ddd;padding-bottom:4px}table{width:100%;border-collapse:collapse;font-size:12px}td,th{padding:6px 8px;border-bottom:1px solid #eee;text-align:left}.meta{font-size:12px;color:#555}</style></head><body>
-      <h1>${cust.name} <span class="meta">(${cust.customerId||cust.id})</span></h1>
-      <div class="meta">Phone: ${cust.phone||'—'} · ${cust.occupation||''} · Status: ${cust.status||'Active'} · Generated ${new Date().toLocaleDateString('en-IN')}</div>
-      <h2>Loans (${lk.loans.length})</h2><table><tr><th>ID</th><th>Amount</th><th>Rate</th><th>Start</th><th>Status</th></tr>${lk.loans.map(l=>`<tr><td>${l.loanId||l.id}</td><td>₹${(l.loanAmount||0).toLocaleString('en-IN')}</td><td>${l.interestRate||0}%/mo</td><td>${l.loanStartDate||''}</td><td>${l.status||''}</td></tr>`).join('')||'<tr><td colspan=5>None</td></tr>'}</table>
-      <h2>Deposits (${lk.deposits.length})</h2><table><tr><th>ID</th><th>Amount</th><th>Rate</th><th>Start</th><th>Status</th></tr>${lk.deposits.map(d=>`<tr><td>${d.depositId||d.id}</td><td>₹${(d.depositAmount||0).toLocaleString('en-IN')}</td><td>${d.interestRate||0}%/mo</td><td>${d.startDate||''}</td><td>${d.status||''}</td></tr>`).join('')||'<tr><td colspan=5>None</td></tr>'}</table>
-      <h2>EMI Loans (${lk.emis.length})</h2><table><tr><th>ID</th><th>Amount</th><th>EMI</th><th>Paid/Total</th><th>Status</th></tr>${lk.emis.map(e=>`<tr><td>${e.emiId||e.id}</td><td>₹${(e.loanAmount||0).toLocaleString('en-IN')}</td><td>₹${Math.round(e.emiAmount||0).toLocaleString('en-IN')}</td><td>${e.paidPeriods||0}/${e.totalPeriods||0}</td><td>${e.status||''}</td></tr>`).join('')||'<tr><td colspan=5>None</td></tr>'}</table>
-      <h2>Transaction Timeline (${txns.length})</h2><table><tr><th>Date</th><th>Event</th><th style="text-align:right">Amount</th></tr>${txns.map(row).join('')}</table>
-      <script>window.print()</script></body></html>`);
-    w.document.close();
+    printUserFullHistory(cust, lk, txns);
   }
 
   const filtered=customers.filter(c=>{

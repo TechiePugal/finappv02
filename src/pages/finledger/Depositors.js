@@ -9,6 +9,7 @@ import {printDepositorReport, printDepositorsSummary} from '../../utils/pdfRepor
 import { PageLoader } from '../../components/Skeleton';
 import {useAuth} from '../../contexts/AuthContext';
 import {scopeToUser} from '../../utils/scopeHelper';
+import {calcDepositInterestForMonth} from '../../utils/interestCalc';
 
 export default function Depositors(){
   const {user}=useAuth();
@@ -19,6 +20,7 @@ export default function Depositors(){
   const [amtRange,setAmtRange]=useState('all');
   const [sortBy,setSortBy]=useState('name');
   const [depPays,setDepPays]=useState({});
+  const [additions,setAdditions]=useState({}); // for date-aware interest — see utils/interestCalc.js
   const nav=useNavigate();
 
   useEffect(()=>{
@@ -32,7 +34,12 @@ export default function Depositors(){
       scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).forEach(x=>{if(!pm[x.depositId])pm[x.depositId]=[];pm[x.depositId].push(x);});
       setDepPays(pm);
     });
-    return () => { unsub(); pUnsub(); };
+    const aUnsub=onSnapshot(collection(db,'deposit_additions'),snap=>{
+      const am={};
+      scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).forEach(x=>{if(!am[x.depositorId])am[x.depositorId]=[];am[x.depositorId].push(x);});
+      setAdditions(am);
+    });
+    return () => { unsub(); pUnsub(); aUnsub(); };
   },[]);
   async function load(){ /* kept for compat */ }
   async function del(id,e){
@@ -56,7 +63,8 @@ export default function Depositors(){
   });
   const active=data.filter(d=>d.status==='Active');
   const totalAmt=active.reduce((s,d)=>s+(d.depositAmount||0),0);
-  const monthlyPay=active.reduce((s,d)=>s+((d.depositAmount||0)*(d.interestRate||0)/100),0); // monthly basis
+  const curMoDep=(()=>{const n=new Date();return`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;})();
+  const monthlyPay=active.reduce((s,d)=>s+calcDepositInterestForMonth(d,additions[d.id],curMoDep),0);
 
   if(loading) return <PageLoader stats={4}/>;
   return(

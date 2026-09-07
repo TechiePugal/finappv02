@@ -6,15 +6,15 @@ import {StatCard,Card,Badge,formatCurrency,Loader,SectionHeader,ProgressBar} fro
 import { PageLoader } from '../../components/Skeleton';
 import {useAuth} from '../../contexts/AuthContext';
 import {scopeToUser} from '../../utils/scopeHelper';
+import {calcLoanInterestForMonth, calcDepositInterestForMonth} from '../../utils/interestCalc';
 
 const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 // Correct interest calculation using outstanding balance
-function correctInterest(borrower, repsByBorrower){
+function correctInterest(borrower, repsByBorrower, loanAdditionsMap, targetMonth){
   const reps = repsByBorrower[borrower.id] || [];
   const repaid = reps.reduce((s,r)=>s+(r.repaidAmount||r.amount||0),0);
-  const outstanding = Math.max(0,(borrower.loanAmount||0)-repaid);
-  return outstanding*(borrower.interestRate||0)/100;
+  return calcLoanInterestForMonth(borrower, loanAdditionsMap[borrower.id], repaid, targetMonth);
 }
 
 export default function Dashboard(){
@@ -29,7 +29,7 @@ export default function Dashboard(){
       const now = new Date();
       const curMo = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
 
-      const [depSnap,borSnap,paySnap,repSnap,setAllSnap,emiSnap,emiColSnap,fineSnap] = await Promise.all([
+      const [depSnap,borSnap,paySnap,repSnap,setAllSnap,emiSnap,emiColSnap,fineSnap,loanAddSnap,depAddSnap] = await Promise.all([
         getDocs(collection(db,'deposit_master')),
         getDocs(collection(db,'borrower_master')),
         getDocs(collection(db,'borrower_interest_payments')), // fetch all — needed for both overall and monthly figures
@@ -38,11 +38,17 @@ export default function Dashboard(){
         getDocs(collection(db,'emi_loans')),
         getDocs(collection(db,'emi_collections')),
         getDocs(collection(db,'finance_ledger_entries')), // for Fine Income — kept separate from loan/EMI profit
+        getDocs(collection(db,'loan_additions')), // for date-aware interest calc — see utils/interestCalc.js
+        getDocs(collection(db,'deposit_additions')),
       ]);
 
       const deps = scopeToUser(depSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid);
       const bors = scopeToUser(borSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid);
       const payDocs = scopeToUser(paySnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid); // ALL borrower_interest_payments
+      const loanAdditionsMap = {};
+      scopeToUser(loanAddSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).forEach(a=>{ if(!loanAdditionsMap[a.borrowerId]) loanAdditionsMap[a.borrowerId]=[]; loanAdditionsMap[a.borrowerId].push(a); });
+      const depAdditionsMap = {};
+      scopeToUser(depAddSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).forEach(a=>{ if(!depAdditionsMap[a.depositorId]) depAdditionsMap[a.depositorId]=[]; depAdditionsMap[a.depositorId].push(a); });
       const setDocs = scopeToUser(setAllSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid); // ALL deposit_payments
       const emiColDocs = scopeToUser(emiColSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid); // ALL emi_collections
       const fineDocs = scopeToUser(fineSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).filter(e=>e.category==='Fine Income');
@@ -70,8 +76,8 @@ export default function Dashboard(){
       const totalDeposits = activeDeps.reduce((s,d)=>s+(d.depositAmount||0),0);
 
       // FIXED: use outstanding-based interest calculation
-      const monthlyRec = activeBors.reduce((s,b)=>s+correctInterest(b,repsByBorrower),0);
-      const monthlyPay = activeDeps.reduce((s,d)=>s+((d.depositAmount||0)*(d.interestRate||0)/100),0); // monthly rate
+      const monthlyRec = activeBors.reduce((s,b)=>s+correctInterest(b,repsByBorrower,loanAdditionsMap,curMo),0);
+      const monthlyPay = activeDeps.reduce((s,d)=>s+calcDepositInterestForMonth(d,depAdditionsMap[d.id],curMo),0);
 
       // Current month actuals
       const curMonthCollected = payDocs.filter(d=>['Paid','Partial'].includes(d.status)&&d.month===curMo).reduce((s,d)=>s+(d.amountPaid||0),0);
@@ -82,25 +88,32 @@ export default function Dashboard(){
       const curMonthPays = payDocs.filter(d=>d.month===curMo);
       const uncollectedThisMonth = curMonthPays.filter(d=>d.status==='Unpaid').reduce((s,d)=>s+(d.amountDue||0),0);
 
+      // ══ FINE INCOME — split by which category it actually came from. Fine is NEVER
+      // mixed into "Interest Collected" (that stays pure interest, unaffected), but it
+      // DOES belong in that category's own Net Profit — a loan's fine income is part
+      // of the profit from THAT loan business, not a separate bucket that only shows
+      // up once everything is combined. ══
+      const loanFineIncome = fineDocs.filter(e=>e.borrowerId).reduce((s,e)=>s+(e.amount||0),0);
+      const emiFineIncome = fineDocs.filter(e=>e.loanId).reduce((s,e)=>s+(e.amount||0),0);
+      const depositFineIncome = fineDocs.filter(e=>e.depositId).reduce((s,e)=>s+(e.amount||0),0);
+      const totalFineIncomeAllTime = fineDocs.reduce((s,e)=>s+(e.amount||0),0);
+      const curMonthFineIncome = fineDocs.filter(e=>e.date&&e.date.startsWith(curMo)).reduce((s,e)=>s+(e.amount||0),0);
+
       // ══ LOAN (interest business) — Total Loan Amount / Collected / Balance / Net Profit ══
-      // Fine amounts are NEVER included here — amountPaid/amountDue already exclude fine
-      // by design (fine is its own field on the payment record).
+      // "Collected" stays pure interest (fine never mixed in) — but Net Profit is
+      // Interest + Fine, since both are real income from this loan, never the repaid
+      // principal (principal recovery isn't profit, it's just capital coming back).
       const loanTotalPrincipal = activeBors.reduce((s,b)=>s+(b.loanAmount||0),0); // sum of all active loan principal issued
       const loanTotalDue = payDocs.reduce((s,p)=>s+(p.amountDue||0),0);
       const loanTotalCollected = payDocs.filter(p=>p.status==='Paid'||p.status==='Partial').reduce((s,p)=>s+(p.amountPaid||0),0);
       const loanBalance = Math.max(0,loanTotalDue-loanTotalCollected);
-      const loanNetProfit = loanTotalCollected; // interest collected IS the profit on a loan
+      const loanNetProfit = loanTotalCollected + loanFineIncome; // interest + fine — never principal repaid
 
       // ══ DEPOSITOR — Total Deposit / Interest to Give / Interest Given / Remaining ══
       const depTotalDeposit = totalDeposits;
       const depInterestToGive = setDocs.reduce((s,p)=>s+(p.amountDue||0),0);
       const depInterestGiven = setDocs.filter(p=>p.status==='Paid'||p.addedToDeposit).reduce((s,p)=>s+(p.amountPaid||0)+(p.addedAmount||0),0);
       const depInterestRemaining = Math.max(0,depInterestToGive-depInterestGiven);
-
-      // ══ FINE INCOME — kept OUT of loan/EMI/deposit figures above, flows ONLY into
-      // the combined Net Profit bar at the very bottom, exactly as requested. ══
-      const totalFineIncomeAllTime = fineDocs.reduce((s,e)=>s+(e.amount||0),0);
-      const curMonthFineIncome = fineDocs.filter(e=>e.date&&e.date.startsWith(curMo)).reduce((s,e)=>s+(e.amount||0),0);
 
       // 6-month chart data (use actual totals for current month)
       const chartData = Array.from({length:6},(_,i)=>{
@@ -147,11 +160,13 @@ export default function Dashboard(){
         const perPeriodPrincipal=(l.loanAmount||0)/(l.totalPeriods||1);
         return s+(perPeriodPrincipal*(l.paidPeriods||0));
       },0);
-      const emiNetProfit = Math.max(0,emiTotalCollected-emiPrincipalCollected);
+      const emiNetProfit = Math.max(0,emiTotalCollected-emiPrincipalCollected) + emiFineIncome;
 
-      // ══ Combined Net Profit bar — Loan + EMI profit, minus interest paid to depositors,
-      // PLUS fine income added separately here (never inside the per-category figures above) ══
-      const combinedNetProfit = loanNetProfit + emiNetProfit - depInterestGiven + totalFineIncomeAllTime;
+      // ══ Combined Net Profit bar — Loan + EMI profit (each ALREADY includes its own
+      // fine income above) minus interest paid to depositors, PLUS deposit-side fine
+      // income (which has nowhere else to live, since deposits don't have their own
+      // Net Profit card). Loan/EMI fine is NOT added again here — that would double-count it. ══
+      const combinedNetProfit = loanNetProfit + emiNetProfit - depInterestGiven + depositFineIncome;
 
       const recent=[...bors].sort((a,b)=>(b.createdAt?.toMillis?.()??0)-(a.createdAt?.toMillis?.()??0)).slice(0,5);
 
@@ -170,6 +185,7 @@ export default function Dashboard(){
         depTotalDeposit, depInterestToGive, depInterestGiven, depInterestRemaining,
         emiTotalToCollect, emiTotalCollected, emiBalance, emiNetProfit, emiTotalPrincipal,
         totalFineIncomeAllTime, curMonthFineIncome, combinedNetProfit,
+        loanFineIncome, emiFineIncome, depositFineIncome,
       });
     }catch(e){console.error(e);}finally{setLoading(false);}
   }
@@ -197,7 +213,7 @@ export default function Dashboard(){
           icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="20 6 9 17 4 12"/></svg>}/>
         <StatCard label="Balance to Collect" value={formatCurrency(Math.round(d.loanBalance||0))} sub={`${d.activeBorrowers||0} active loans`} color="#ff453a"
           icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>}/>
-        <StatCard label="Net Profit (Loans)" value={formatCurrency(Math.round(d.loanNetProfit||0))} sub="Interest collected = profit" color="#30d158"
+        <StatCard label="Net Profit (Loans)" value={formatCurrency(Math.round(d.loanNetProfit||0))} sub="Interest + Fine — never principal repaid" color="#30d158"
           icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>}/>
       </div>
 
@@ -225,7 +241,7 @@ export default function Dashboard(){
             icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="20 6 9 17 4 12"/></svg>}/>
           <StatCard label="Balance to Collect" value={formatCurrency(Math.round(d.emiBalance||0))} sub={`${d.emiLoanCount||0} active EMI loan${(d.emiLoanCount||0)!==1?'s':''}`} color="#ff453a"
             icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 10v4M10 12h4"/></svg>}/>
-          <StatCard label="Net Profit (EMI)" value={formatCurrency(Math.round(d.emiNetProfit||0))} sub="Collected minus principal recovered" color="#30d158"
+          <StatCard label="Net Profit (EMI)" value={formatCurrency(Math.round(d.emiNetProfit||0))} sub="Interest + Fine — never principal recovered" color="#30d158"
             icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>}/>
         </div>
         </>
@@ -242,10 +258,10 @@ export default function Dashboard(){
             </div>
           </div>
           <div style={{display:'flex',gap:20,flexWrap:'wrap',fontSize:12.5,color:'var(--text-secondary)'}}>
-            <span>Loan Profit: <strong style={{color:'var(--text-primary)'}}>{formatCurrency(Math.round(d.loanNetProfit||0))}</strong></span>
-            <span>EMI Profit: <strong style={{color:'var(--text-primary)'}}>{formatCurrency(Math.round(d.emiNetProfit||0))}</strong></span>
+            <span>Loan Profit (int.+fine): <strong style={{color:'var(--text-primary)'}}>{formatCurrency(Math.round(d.loanNetProfit||0))}</strong></span>
+            <span>EMI Profit (int.+fine): <strong style={{color:'var(--text-primary)'}}>{formatCurrency(Math.round(d.emiNetProfit||0))}</strong></span>
             <span>− Interest Paid: <strong style={{color:'#ff453a'}}>{formatCurrency(Math.round(d.depInterestGiven||0))}</strong></span>
-            <span>+ Fine Income: <strong style={{color:'#ff9500'}}>{formatCurrency(Math.round(d.totalFineIncomeAllTime||0))}</strong></span>
+            <span>+ Deposit Fine: <strong style={{color:'#ff9500'}}>{formatCurrency(Math.round(d.depositFineIncome||0))}</strong></span>
           </div>
         </div>
         <div style={{marginTop:14,height:10,borderRadius:99,background:'rgba(0,0,0,0.06)',overflow:'hidden',display:'flex'}}>
@@ -253,16 +269,16 @@ export default function Dashboard(){
             const parts=[
               {v:Math.max(0,d.loanNetProfit||0),c:'#0a84ff'},
               {v:Math.max(0,d.emiNetProfit||0),c:'#5e5ce6'},
-              {v:Math.max(0,d.totalFineIncomeAllTime||0),c:'#ff9500'},
+              {v:Math.max(0,d.depositFineIncome||0),c:'#ff9500'},
             ];
             const total=parts.reduce((s,p)=>s+p.v,0)||1;
             return parts.map((p,i)=>(<div key={i} style={{width:`${(p.v/total)*100}%`,background:p.c}}/>));
           })()}
         </div>
         <div style={{display:'flex',gap:16,marginTop:8}}>
-          <Leg color="#0a84ff" label="Loan Interest"/>
-          <Leg color="#5e5ce6" label="EMI Interest"/>
-          <Leg color="#ff9500" label="Fine Income"/>
+          <Leg color="#0a84ff" label="Loan (interest+fine)"/>
+          <Leg color="#5e5ce6" label="EMI (interest+fine)"/>
+          <Leg color="#ff9500" label="Deposit Fine"/>
         </div>
       </Card>
 
