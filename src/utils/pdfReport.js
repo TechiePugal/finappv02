@@ -88,6 +88,7 @@ export function printBorrowerReport(borrower, repayments, interestPayments){
   };
 
   const body = `
+    <div style="font-family:'Times New Roman',Times,serif;">
     <div class="header">
       <div>
         <div class="logo">EC Fin 360 · Borrower Report</div>
@@ -177,7 +178,7 @@ export function printBorrowerReport(borrower, repayments, interestPayments){
     <h2>Interest Collection History (${ints.length} months)</h2>
     ${ints.length===0?'<p style="color:#9ca3af;font-size:12px;margin-bottom:16px;">No interest records yet.</p>':`
     <table>
-      <thead><tr><th>Month</th><th>Outstanding</th><th>Rate</th><th>Amount Due</th><th>Amount Paid</th><th>Fine</th><th>Status</th><th>Date</th><th>Mode</th></tr></thead>
+      <thead><tr><th>Month</th><th>Outstanding</th><th>Rate</th><th>Amount Due</th><th>Amount Paid</th><th>Fine</th><th>Status</th><th>Date</th><th>Mode</th><th>Remarks</th></tr></thead>
       <tbody>
         ${ints.map(i=>`
         <tr>
@@ -190,11 +191,12 @@ export function printBorrowerReport(borrower, repayments, interestPayments){
           <td><span class="badge ${i.status==='Paid'?'badge-green':'badge-amber'}">${i.status||'Pending'}</span></td>
           <td>${fmtDate(i.paymentDate)}</td>
           <td>${i.paymentMode||'—'}</td>
+          <td style="color:#6b7280;font-size:10px;">${i.remarks||'—'}</td>
         </tr>`).join('')}
         <tr class="total-row">
           <td colspan="4"><strong>Total Collected</strong></td>
           <td class="text-green">${INR(totalInterestColl)}</td>
-          <td></td><td colspan="3"></td>
+          <td></td><td colspan="4"></td>
         </tr>
       </tbody>
     </table>`}
@@ -204,6 +206,7 @@ export function printBorrowerReport(borrower, repayments, interestPayments){
     <div class="footer">
       <span>EC Fin 360 Finance Ledger · Confidential</span>
       <span>${now()}</span>
+    </div>
     </div>
   `;
 
@@ -238,6 +241,7 @@ export function printDepositorReport(depositor, payments, history){
   const periodInt = (depositor.depositAmount||0)*(depositor.interestRate||0)/100/12*t;
 
   const body = `
+    <div style="font-family:'Times New Roman',Times,serif;">
     <div class="header">
       <div>
         <div class="logo">EC Fin 360 · Depositor Report</div>
@@ -294,7 +298,7 @@ export function printDepositorReport(depositor, payments, history){
     <p style="font-size:11px;color:#6b7280;margin:-6px 0 10px;">"Settlement" shows exactly how each period was handled — cash paid in hand, added back to the deposit, or split between both.</p>
     ${pays.length===0?'<p style="color:#9ca3af;font-size:12px;margin-bottom:16px;">No payout records yet.</p>':`
     <table>
-      <thead><tr><th>#</th><th>Period</th><th>Amount Due</th><th>Amount Settled</th><th>Fine</th><th>Status</th><th>Settlement</th><th>Payment Date</th><th>Mode</th></tr></thead>
+      <thead><tr><th>#</th><th>Period</th><th>Amount Due</th><th>Amount Settled</th><th>Fine</th><th>Status</th><th>Settlement</th><th>Payment Date</th><th>Mode</th><th>Remarks</th></tr></thead>
       <tbody>
         ${pays.map((p,i)=>{
           const settled = isSettled(p);
@@ -319,6 +323,7 @@ export function printDepositorReport(depositor, payments, history){
           <td>${settlementBadges}</td>
           <td>${fmtDate(p.paymentDate)}</td>
           <td>${p.paymentMode||'—'}</td>
+          <td style="color:#6b7280;font-size:10px;">${p.remarks||'—'}</td>
         </tr>`;}).join('')}
         <tr class="total-row">
           <td colspan="3"><strong>Total</strong></td>
@@ -357,6 +362,7 @@ export function printDepositorReport(depositor, payments, history){
     <div class="footer">
       <span>EC Fin 360 Finance Ledger · Confidential</span>
       <span>${now()}</span>
+    </div>
     </div>
   `;
 
@@ -796,33 +802,38 @@ export function printBorrowersSummary(borrowers, repayments, intPays){
 // ── COLLECT INTEREST (Loan) SUMMARY ─────────────────────────────────────────
 export function printCollectInterestSummary(borrowers, payments, month, getOutstanding, calcInterest){
   const list = (borrowers||[]);
-  const rows = list.map(b=>{
+  const rows = list.map((b,i)=>{
+    // Full history across ALL months, not just the currently-viewed one.
+    const bPays = Object.values((payments&&payments[b.id])||{});
+    const sortedPays = bPays.slice().sort((a,c)=>String(a.month||'').localeCompare(String(c.month||'')));
+    const totalInterestDue = sortedPays.reduce((s,p)=>s+(p.amountDue||0),0);
+    const totalPaid = sortedPays.filter(p=>p.status==='Paid'||p.status==='Partial').reduce((s,p)=>s+(p.amountPaid||0),0);
+    const pendingToCollect = Math.max(0,totalInterestDue-totalPaid);
     const out = getOutstanding ? getOutstanding(b) : Math.max(0,(b.loanAmount||0));
-    const interest = calcInterest ? calcInterest(b,out) : out*(b.interestRate||0)/100;
-    const p = (payments&&payments[b.id])?payments[b.id][month]:null;
-    return { b, out, interest, status: p?.status || 'Pending', p };
+    const remarksList = sortedPays.filter(p=>p.remarks).map(p=>`${p.month}: ${p.remarks}`).join(' · ');
+    return { b, sn:i+1, out, totalInterestDue, totalPaid, pendingToCollect, remarksList };
   });
-  const paid = rows.filter(r=>r.status==='Paid');
-  const totalDue = rows.reduce((s,r)=>s+r.interest,0);
-  const totalCollected = paid.reduce((s,r)=>s+(r.p?.amountPaid||0),0); // fine excluded
+  const grandDue = rows.reduce((s,r)=>s+r.totalInterestDue,0);
+  const grandPaid = rows.reduce((s,r)=>s+r.totalPaid,0);
+  const grandPending = rows.reduce((s,r)=>s+r.pendingToCollect,0);
 
   const body = `
     <div class="header">
-      <div><div class="logo">EC Fin 360 · Collect Interest Summary</div><div class="meta" style="text-align:left;margin-top:4px;">Month: ${month||'—'}</div></div>
+      <div><div class="logo">EC Fin 360 · Collect Interest Summary</div><div class="meta" style="text-align:left;margin-top:4px;">Full history — all borrowers, all periods</div></div>
       <div class="meta">Generated: ${now()}</div>
     </div>
     <div class="kpi-grid">
-      <div class="kpi"><div class="kpi-val">${INR(totalDue)}</div><div class="kpi-lbl">Total Interest Due</div></div>
-      <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${INR(totalCollected)}</div><div class="kpi-lbl">Collected</div></div>
-      <div class="kpi" style="border-left-color:#ef4444;"><div class="kpi-val" style="color:#b91c1c;">${INR(totalDue-totalCollected)}</div><div class="kpi-lbl">Pending</div></div>
-      <div class="kpi"><div class="kpi-val">${paid.length} / ${rows.length}</div><div class="kpi-lbl">Collected / Total</div></div>
+      <div class="kpi"><div class="kpi-val">${INR(grandDue)}</div><div class="kpi-lbl">Total Interest Up to Date</div></div>
+      <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${INR(grandPaid)}</div><div class="kpi-lbl">Total Paid</div></div>
+      <div class="kpi" style="border-left-color:#ef4444;"><div class="kpi-val" style="color:#b91c1c;">${INR(grandPending)}</div><div class="kpi-lbl">Pending to Collect</div></div>
+      <div class="kpi"><div class="kpi-val">${rows.length}</div><div class="kpi-lbl">Total Borrowers</div></div>
     </div>
-    <h2>Collection Status — ${month||''}</h2>
+    <h2>Full Interest History — All Borrowers</h2>
     <table>
-      <thead><tr><th>#</th><th>Borrower</th><th>Contact</th><th>Loan ID</th><th class="text-right">Outstanding</th><th class="text-right">Interest Due</th><th>Status</th><th>Fine</th></tr></thead>
+      <thead><tr><th>S.No</th><th>Customer Name</th><th>Mobile</th><th>Guardian</th><th>Guardian No.</th><th class="text-right">Current Loan Amount</th><th class="text-right">Total Interest Up to Date</th><th class="text-right">Total Paid</th><th class="text-right">Pending</th><th>Remarks</th></tr></thead>
       <tbody>
-        ${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${r.b.borrowerName||'—'}</td><td>${r.b.phone||'—'}</td><td>${r.b.loanId||'—'}</td><td class="text-right">${INR(r.out)}</td><td class="text-right">${INR(r.interest)}</td><td><span class="badge ${r.status==='Paid'?'badge-green':r.status==='Partial'?'badge-amber':'badge-red'}">${r.status}</span></td><td class="text-right">${r.p?.fine?INR(r.p.fine):'—'}</td></tr>`).join('')}
-        <tr class="total-row"><td colspan="4">TOTAL</td><td class="text-right">${INR(totalDue)}</td><td colspan="3"></td></tr>
+        ${rows.map(r=>`<tr><td>${r.sn}</td><td>${r.b.borrowerName||'—'}</td><td>${r.b.phone||'—'}</td><td>${r.b.guardianName||'—'}</td><td>${r.b.guardianPhone||'—'}</td><td class="text-right">${INR(r.b.loanAmount)}</td><td class="text-right">${INR(r.totalInterestDue)}</td><td class="text-right text-green">${INR(r.totalPaid)}</td><td class="text-right ${r.pendingToCollect>0?'text-red':'text-green'}">${INR(r.pendingToCollect)}</td><td style="font-size:10px;">${r.remarksList||'—'}</td></tr>`).join('')}
+        <tr class="total-row"><td colspan="6">TOTAL</td><td class="text-right">${INR(grandDue)}</td><td class="text-right">${INR(grandPaid)}</td><td class="text-right">${INR(grandPending)}</td><td></td></tr>
       </tbody>
     </table>
     <div class="footer"><span>EC Fin 360 Finance Ledger</span><span>Collect Interest Summary — ${month||''}</span></div>
@@ -973,6 +984,7 @@ export function printEMILoanReport(loan, sched){
   };
 
   const body = `
+    <div style="font-family:'Times New Roman',Times,serif;">
     <div class="header">
       <div>
         <div class="logo">EC Fin 360 · EMI Loan Report</div>
@@ -1022,7 +1034,7 @@ export function printEMILoanReport(loan, sched){
     <p style="font-size:11px;color:#6b7280;margin:-6px 0 10px;">Each row shows the period's due date, how many days late it was paid (delay), the amount actually paid, and the exact payment date — a clear before/after view of every instalment.</p>
     ${rows.length===0?'<p style="color:#9ca3af;font-size:12px;margin-bottom:16px;">No schedule data available.</p>':`
     <table>
-      <thead><tr><th>#</th><th>Due Date</th><th>Delay</th><th>Status</th><th>Amount Paid</th><th>Fine</th><th>Payment Date</th><th>Mode</th></tr></thead>
+      <thead><tr><th>#</th><th>Due Date</th><th>Delay</th><th>Status</th><th>Amount Paid</th><th>Fine</th><th>Payment Date</th><th>Mode</th><th>Remarks</th></tr></thead>
       <tbody>
         ${rows.map((r,i)=>{
           const periodNo = rows.length-i;
@@ -1039,16 +1051,18 @@ export function printEMILoanReport(loan, sched){
           <td>${(r.col?.fine||0)>0?INR(r.col.fine):'—'}</td>
           <td>${r.col?.date?fmtDate(r.col.date):'—'}</td>
           <td>${r.col?.mode||'—'}</td>
+          <td style="color:#6b7280;font-size:10px;">${r.col?.remarks||'—'}</td>
         </tr>`;}).join('')}
         <tr class="total-row">
           <td colspan="4"><strong>Total</strong></td>
           <td class="text-green">${INR(totalCollected)}</td>
           <td>${totalFine>0?INR(totalFine):'—'}</td>
-          <td colspan="2"></td>
+          <td colspan="3"></td>
         </tr>
       </tbody>
     </table>`}
     <div class="footer"><span>EC Fin 360 Finance Ledger · Confidential</span><span>${now()}</span></div>
+    </div>
   `;
   openPrint(`EMI Loan Report — ${loan.borrowerName}`, body, '#6366f1');
 }
@@ -1102,7 +1116,7 @@ export function printUserFullHistory(customer, linkedData, txns){
 
   const txnRow = t => {
     const iconMap = { loan:'📋', close:'✅', deposit:'💰', emi:'📆', interest:'💵', repay:'↩️', depint:'💵', emipay:'💵' };
-    return `<tr><td>${fmtDate(t.date)}</td><td>${iconMap[t.type]||'•'} ${t.label}</td><td class="text-right">${t.amount?INR(t.amount):'—'}</td></tr>`;
+    return `<tr><td>${fmtDate(t.date)}</td><td>${iconMap[t.type]||'•'} ${t.label}</td><td class="text-right">${t.amount?INR(t.amount):'—'}</td><td style="color:#6b7280;font-size:10px;">${t.remarks||'—'}</td></tr>`;
   };
 
   const section = (icon, title, color, records, renderRecord) => {
@@ -1116,6 +1130,7 @@ export function printUserFullHistory(customer, linkedData, txns){
   };
 
   const body = `
+    <div style="font-family:'Times New Roman',Times,serif;">
     <div class="header">
       <div><div class="logo">EC Fin 360 · Full Financial History</div><div class="meta" style="text-align:left;margin-top:4px;">Complete record across Deposits, Loans and EMI Loans</div></div>
       <div class="meta">Generated: ${now()}</div>
@@ -1143,7 +1158,7 @@ export function printUserFullHistory(customer, linkedData, txns){
         <thead><tr><th>Deposit ID</th><th class="text-right">Principal</th><th class="text-right">Rate</th><th>Start Date</th><th>Status</th></tr></thead>
         <tbody><tr><td style="font-family:monospace;">${d.depositId||d.id}</td><td class="text-right">${INR(d.depositAmount)}</td><td class="text-right">${d.interestRate||0}%/mo</td><td>${fmtDate(d.startDate)}</td><td><span class="badge ${d.status==='Active'?'badge-green':'badge-gray'}">${d.status||'—'}</span></td></tr></tbody>
       </table>
-      ${byParent(d.id).length>0?`<table style="margin-bottom:16px;"><thead><tr><th>Date</th><th>Transaction</th><th class="text-right">Amount</th></tr></thead><tbody>${byParent(d.id).map(txnRow).join('')}</tbody></table>`:''}
+      ${byParent(d.id).length>0?`<table style="margin-bottom:16px;"><thead><tr><th>Date</th><th>Transaction</th><th class="text-right">Amount</th><th>Remarks</th></tr></thead><tbody>${byParent(d.id).map(txnRow).join('')}</tbody></table>`:''}
     `)}
 
     ${section('📋', 'Loans', '#0a84ff', loans, l => `
@@ -1151,7 +1166,7 @@ export function printUserFullHistory(customer, linkedData, txns){
         <thead><tr><th>Loan ID</th><th class="text-right">Amount</th><th class="text-right">Rate</th><th>Start Date</th><th>Status</th></tr></thead>
         <tbody><tr><td style="font-family:monospace;">${l.loanId||l.id}</td><td class="text-right">${INR(l.loanAmount)}</td><td class="text-right">${l.interestRate||0}%/mo</td><td>${fmtDate(l.loanStartDate)}</td><td><span class="badge ${l.status==='Active'?'badge-green':'badge-gray'}">${l.status||'—'}</span></td></tr></tbody>
       </table>
-      ${byParent(l.id).length>0?`<table style="margin-bottom:16px;"><thead><tr><th>Date</th><th>Transaction</th><th class="text-right">Amount</th></tr></thead><tbody>${byParent(l.id).map(txnRow).join('')}</tbody></table>`:''}
+      ${byParent(l.id).length>0?`<table style="margin-bottom:16px;"><thead><tr><th>Date</th><th>Transaction</th><th class="text-right">Amount</th><th>Remarks</th></tr></thead><tbody>${byParent(l.id).map(txnRow).join('')}</tbody></table>`:''}
     `)}
 
     ${section('📆', 'EMI Loans', '#5e5ce6', emis, e => `
@@ -1159,10 +1174,11 @@ export function printUserFullHistory(customer, linkedData, txns){
         <thead><tr><th>EMI ID</th><th class="text-right">Loan Amount</th><th class="text-right">EMI/Period</th><th>Progress</th><th>Status</th></tr></thead>
         <tbody><tr><td style="font-family:monospace;">${e.emiId||e.id}</td><td class="text-right">${INR(e.loanAmount)}</td><td class="text-right">${INR(e.emiAmount)}</td><td>${e.paidPeriods||0}/${e.totalPeriods||0}</td><td><span class="badge ${e.status==='Active'?'badge-green':'badge-gray'}">${e.status||'—'}</span></td></tr></tbody>
       </table>
-      ${byParent(e.id).length>0?`<table style="margin-bottom:16px;"><thead><tr><th>Date</th><th>Transaction</th><th class="text-right">Amount</th></tr></thead><tbody>${byParent(e.id).map(txnRow).join('')}</tbody></table>`:''}
+      ${byParent(e.id).length>0?`<table style="margin-bottom:16px;"><thead><tr><th>Date</th><th>Transaction</th><th class="text-right">Amount</th><th>Remarks</th></tr></thead><tbody>${byParent(e.id).map(txnRow).join('')}</tbody></table>`:''}
     `)}
 
     <div class="footer"><span>EC Fin 360 Finance Ledger · Confidential</span><span>Full Financial History — ${customer.name}</span></div>
+    </div>
   `;
   openPrint(`${customer.name} — Full Financial History`, body, '#0a84ff');
 }

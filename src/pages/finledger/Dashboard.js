@@ -1,4 +1,5 @@
 import React,{useEffect,useState} from 'react';
+import {useNavigate} from 'react-router-dom';
 import {collection,onSnapshot,getDocs,query,where} from 'firebase/firestore';
 import {db} from '../../firebase/config';
 import {AreaChart,Area,XAxis,YAxis,CartesianGrid,Tooltip,ResponsiveContainer,BarChart,Bar,Cell} from 'recharts';
@@ -18,6 +19,7 @@ function correctInterest(borrower, repsByBorrower, loanAdditionsMap, targetMonth
 }
 
 export default function Dashboard(){
+  const nav=useNavigate();
   const {user}=useAuth();
   const [data,setData]=useState(null);
   const [loading,setLoading]=useState(true);
@@ -29,7 +31,7 @@ export default function Dashboard(){
       const now = new Date();
       const curMo = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
 
-      const [depSnap,borSnap,paySnap,repSnap,setAllSnap,emiSnap,emiColSnap,fineSnap,loanAddSnap,depAddSnap] = await Promise.all([
+      const [depSnap,borSnap,paySnap,repSnap,setAllSnap,emiSnap,emiColSnap,fineSnap,loanAddSnap,depAddSnap,expSnap] = await Promise.all([
         getDocs(collection(db,'deposit_master')),
         getDocs(collection(db,'borrower_master')),
         getDocs(collection(db,'borrower_interest_payments')), // fetch all — needed for both overall and monthly figures
@@ -40,6 +42,7 @@ export default function Dashboard(){
         getDocs(collection(db,'finance_ledger_entries')), // for Fine Income — kept separate from loan/EMI profit
         getDocs(collection(db,'loan_additions')), // for date-aware interest calc — see utils/interestCalc.js
         getDocs(collection(db,'deposit_additions')),
+        getDocs(collection(db,'finance_expenses')), // real operational costs — net profit must subtract these
       ]);
 
       const deps = scopeToUser(depSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid);
@@ -52,6 +55,7 @@ export default function Dashboard(){
       const setDocs = scopeToUser(setAllSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid); // ALL deposit_payments
       const emiColDocs = scopeToUser(emiColSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid); // ALL emi_collections
       const fineDocs = scopeToUser(fineSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).filter(e=>e.category==='Fine Income');
+      const totalExpenses = scopeToUser(expSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).reduce((s,e)=>s+(e.amount||0),0);
 
       // Build repayment map
       const repsByBorrower = {};
@@ -65,6 +69,9 @@ export default function Dashboard(){
       const activeBors = bors.filter(b=>b.status==='Active'||b.status==='Non-Active');
       const nonActive  = bors.filter(b=>b.status==='Non-Active');
       const closed     = bors.filter(b=>b.status==='Closed');
+      // Non-Active loan/EMI figures — surfaced on the Non Actives page, tracked here too
+      const nonActiveLoanAmount = nonActive.reduce((s,b)=>s+(b.loanAmount||0),0);
+      const nonActiveLoanInterest = nonActive.reduce((s,b)=>s+((b.loanAmount||0)*(b.interestRate||0)/100),0);
 
       // Outstanding = original - repaid
       const totalOutstanding = activeBors.reduce((s,b)=>{
@@ -130,6 +137,9 @@ export default function Dashboard(){
       const emiLoans=scopeToUser(emiSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid);
       const activeEmi=emiLoans.filter(l=>l.status==='Active');
       const closedEmi=emiLoans.filter(l=>l.status==='Closed');
+      const nonActiveEmi=emiLoans.filter(l=>l.status==='Non-Active');
+      const nonActiveEmiAmount = nonActiveEmi.reduce((s,l)=>s+(l.loanAmount||0),0);
+      const nonActiveEmiInterest = nonActiveEmi.reduce((s,l)=>s+((l.loanAmount||0)*(l.interestRate||0)/100),0);
       const emiMonthlyTotal=activeEmi.reduce((s,l)=>s+(l.emiAmount||0),0);
       // Overall (not monthly) EMI figures — total issued & outstanding across all EMI loans
       const emiTotalIssued=emiLoans.reduce((s,l)=>s+(l.loanAmount||0),0);
@@ -166,7 +176,7 @@ export default function Dashboard(){
       // fine income above) minus interest paid to depositors, PLUS deposit-side fine
       // income (which has nowhere else to live, since deposits don't have their own
       // Net Profit card). Loan/EMI fine is NOT added again here — that would double-count it. ══
-      const combinedNetProfit = loanNetProfit + emiNetProfit - depInterestGiven + depositFineIncome;
+      const combinedNetProfit = loanNetProfit + emiNetProfit - depInterestGiven + depositFineIncome - totalExpenses;
 
       const recent=[...bors].sort((a,b)=>(b.createdAt?.toMillis?.()??0)-(a.createdAt?.toMillis?.()??0)).slice(0,5);
 
@@ -185,7 +195,9 @@ export default function Dashboard(){
         depTotalDeposit, depInterestToGive, depInterestGiven, depInterestRemaining,
         emiTotalToCollect, emiTotalCollected, emiBalance, emiNetProfit, emiTotalPrincipal,
         totalFineIncomeAllTime, curMonthFineIncome, combinedNetProfit,
-        loanFineIncome, emiFineIncome, depositFineIncome,
+        loanFineIncome, emiFineIncome, depositFineIncome, totalExpenses,
+        nonActiveLoanAmount, nonActiveLoanInterest, nonActiveEmiAmount, nonActiveEmiInterest,
+        nonActiveEmiCount: nonActiveEmi.length,
       });
     }catch(e){console.error(e);}finally{setLoading(false);}
   }
@@ -247,6 +259,23 @@ export default function Dashboard(){
         </>
       )}
 
+      {/* Non Actives — surfaces both loan and EMI records needing attention */}
+      {((d.nonActive||0)+(d.nonActiveEmiCount||0))>0 && (
+        <Card onClick={()=>nav('/fl/non-actives')} style={{marginBottom:20, cursor:'pointer', background:'rgba(255,69,58,0.05)', border:'1px solid rgba(255,69,58,0.2)'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:14}}>
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:'#ff453a',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:4}}>⚠ Non Actives — needs attention</div>
+              <div style={{fontSize:13,color:'var(--text-secondary)'}}>{d.nonActive||0} loan{(d.nonActive||0)!==1?'s':''} · {d.nonActiveEmiCount||0} EMI loan{(d.nonActiveEmiCount||0)!==1?'s':''}</div>
+            </div>
+            <div style={{display:'flex',gap:20,flexWrap:'wrap',fontSize:12.5,color:'var(--text-secondary)'}}>
+              <span>Outstanding: <strong style={{color:'#ff453a'}}>{formatCurrency(Math.round((d.nonActiveLoanAmount||0)+(d.nonActiveEmiAmount||0)))}</strong></span>
+              <span>Monthly Interest: <strong style={{color:'var(--text-primary)'}}>{formatCurrency(Math.round((d.nonActiveLoanInterest||0)+(d.nonActiveEmiInterest||0)))}</strong></span>
+              <span style={{color:'#0a84ff',fontWeight:600}}>View & Reactivate →</span>
+            </div>
+          </div>
+        </Card>
+      )}
+
       {/* Combined Net Profit bar — Loan + EMI profit − depositor interest paid,
           PLUS fine income (kept OUT of every figure above, added here only) */}
       <Card style={{marginBottom:20, background:'linear-gradient(135deg,rgba(48,209,88,0.06),rgba(10,132,255,0.04))', border:'1px solid rgba(48,209,88,0.18)'}}>
@@ -262,6 +291,7 @@ export default function Dashboard(){
             <span>EMI Profit (int.+fine): <strong style={{color:'var(--text-primary)'}}>{formatCurrency(Math.round(d.emiNetProfit||0))}</strong></span>
             <span>− Interest Paid: <strong style={{color:'#ff453a'}}>{formatCurrency(Math.round(d.depInterestGiven||0))}</strong></span>
             <span>+ Deposit Fine: <strong style={{color:'#ff9500'}}>{formatCurrency(Math.round(d.depositFineIncome||0))}</strong></span>
+            <span>− Expenses: <strong style={{color:'#ff453a'}}>{formatCurrency(Math.round(d.totalExpenses||0))}</strong></span>
           </div>
         </div>
         <div style={{marginTop:14,height:10,borderRadius:99,background:'rgba(0,0,0,0.06)',overflow:'hidden',display:'flex'}}>

@@ -16,6 +16,8 @@ const NAV_GROUPS = [
       icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg> },
     { to:'/fl/alerts', label:'Alerts',
       icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg> },
+    { to:'/fl/non-actives', label:'Non Actives',
+      icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> },
     { to:'/fl/customers', label:'Users',
       icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
 

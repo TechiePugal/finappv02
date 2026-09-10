@@ -15,17 +15,7 @@ function today() { return new Date().toISOString().split('T')[0]; }
 
 const FREQ_LABEL = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' };
 
-// Same EMI math used on the EMI Loans list page — kept identical so the
-// preview shown here always matches what actually gets created.
-function calcEMI(principal, rate, periods, frequency) {
-  const P = parseFloat(principal) || 0, n = parseInt(periods) || 1;
-  const periodRate = (parseFloat(rate) || 0) / 100; // rate is per-month already
-  const periodsPerMonth = frequency === 'daily' ? 30 : frequency === 'weekly' ? 4.33 : 1;
-  const r = periodRate / periodsPerMonth;
-  if (r === 0) return P / n;
-  const emi = (P * r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
-  return emi;
-}
+import { calcEMI } from '../../utils/emiHelpers';
 
 const BLANK = {
   emiId: genId(), borrowerName: '', phone: '', email: '', address: '',
@@ -210,7 +200,7 @@ export default function EMILoanForm() {
           <FormField label="EMI ID"><Input value={form.emiId} disabled style={{ color: 'var(--accent)', fontWeight: 600 }} /></FormField>
           <FormField label="Status">
             <Select value={form.status} onChange={e => set('status', e.target.value)}>
-              <option>Active</option><option>Closed</option>
+              <option>Active</option><option>Non-Active</option><option>Closed</option>
             </Select>
           </FormField>
           <FormField label="Borrower Name" required>

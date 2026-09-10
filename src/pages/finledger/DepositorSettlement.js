@@ -59,6 +59,7 @@ export default function DepositorSettlement(){
   const[addSaving,setAddSaving]=useState(false);
   const[month,setMonth]=useState(()=>{const n=new Date();return`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;});
   const[additions,setAdditions]=useState({}); // extra deposit top-ups — keeps the current period's interest from jumping early
+  const[bulkPendingDep,setBulkPendingDep]=useState(null); // when >1 period is pending, holds each period's own fixed amount for one-shot settlement
   const DAILY_FINE=50;
 
   useEffect(()=>{
@@ -100,17 +101,32 @@ export default function DepositorSettlement(){
     const existing=payments[key];
     const daysOD=getDaysOverdue(slot.dueDate);
     const fine=daysOD>2?(daysOD-2)*DAILY_FINE:0;
+
+    // If earlier periods are ALSO still pending, offer to settle them all
+    // together — each still gets recorded at its own correct fixed amount.
+    const allSlots=genSlots(depositor.startDate,depositor.interestTenure).filter(sl=>!sl.isFuture&&sl.month<=slot.month);
+    const pendingSlots2=allSlots.filter(sl=>{
+      const pp=payments[`${depositor.id}_${sl.month}`];
+      return !(pp?.status==='Paid'||pp?.addedToDeposit);
+    });
+    const pendingBreakdown=pendingSlots2.map(sl=>({
+      month:sl.month,label:sl.label,
+      amount:Math.round(calcPeriodInt(depositor,sl.month)),
+    }));
+
     setModal({depositor,slot});
+    setBulkPendingDep(pendingBreakdown.length>1?pendingBreakdown:null);
     const interestDue=Math.round(calcPeriodInt(depositor,slot.month)); // BUG FIX: was calcPeriodInt(depositor) with no month, which silently used whichever month the page happened to be viewing, not the specific period being opened
     // Split settlement: how much of the interest is paid out in cash vs added back to
     // the deposit principal (compound) — any ratio, not just all-or-nothing.
     const prevAdded=existing?.addedAmount||0;
     const prevCash=existing?.amountPaid||0;
+    const combinedTotal=pendingBreakdown.reduce((s,p)=>s+p.amount,0);
     setPf({
       date:new Date().toISOString().split('T')[0],
       mode:existing?.paymentMode||'Cash',
-      cashAmount:String(existing?(prevCash):interestDue),
-      compoundAmount:String(existing?prevAdded:0),
+      cashAmount:String(pendingBreakdown.length>1?combinedTotal:(existing?(prevCash):interestDue)),
+      compoundAmount:String(pendingBreakdown.length>1?0:(existing?prevAdded:0)),
       fine:String(fine),
       collectFine:false,
       remarks:existing?.remarks||''
@@ -121,6 +137,51 @@ export default function DepositorSettlement(){
     if(!modal)return;setSaving(true);
     const{depositor,slot}=modal;
     try{
+      // Bulk settle — several periods were pending; close them all out in one
+      // action. Each period is still recorded at its own correct fixed amount,
+      // and (like the single-period flow) each can independently be cash,
+      // compounded, or split — here we settle each fully in cash for simplicity,
+      // matching the combined total the user confirmed.
+      if(bulkPendingDep && paid){
+        const fine=pf.collectFine?parseFloat(pf.fine)||0:0;
+        for(const period of bulkPendingDep){
+          const pKey=`${depositor.id}_${period.month}`;
+          const existingP=payments[pKey];
+          const data={
+            depositId:depositor.id,depositorName:depositor.name,
+            depositAmount:depositor.depositAmount,interestRate:depositor.interestRate,
+            amountDue:period.amount,amountPaid:period.amount,
+            fine:0,totalPayout:period.amount,
+            status:'Paid',addedToDeposit:false,addedAmount:0,
+            paymentDate:pf.date,paymentMode:pf.mode,
+            remarks:pf.remarks,month:period.month,updatedAt:serverTimestamp()
+          };
+          let payDocId=existingP?.id;
+          if(existingP){await updateDoc(doc(db,'deposit_payments',existingP.id),data);}
+          else{data.createdAt=serverTimestamp();data.createdBy=user?.uid||null;const r=await addDoc(collection(db,'deposit_payments'),data);payDocId=r.id;}
+
+          await addDoc(collection(db,'finance_ledger_entries'),{
+            type:'Debit',category:'Deposit Settlement',
+            description:`Interest payout to ${depositor.name} — ${period.label} (bulk settlement)`,
+            amount:period.amount,paymentMode:pf.mode,date:pf.date,
+            depositorName:depositor.name,depositId:depositor.id,
+            linkedDepositPaymentId:payDocId,createdAt:serverTimestamp(),createdBy:user?.uid||null
+          });
+        }
+        if(fine>0){
+          await addDoc(collection(db,'finance_ledger_entries'),{
+            type:'Credit',category:'Fine Income',
+            description:`Late-settlement fine from ${depositor.name} — bulk settlement of ${bulkPendingDep.length} periods`,
+            amount:fine,paymentMode:pf.mode,date:pf.date,
+            depositorName:depositor.name,depositId:depositor.id,
+            createdAt:serverTimestamp(),createdBy:user?.uid||null
+          });
+        }
+        toast.success(`✓ ${bulkPendingDep.length} pending periods settled — ${formatCurrency(bulkPendingDep.reduce((s,p)=>s+p.amount,0)+fine)} total`);
+        setModal(null);setBulkPendingDep(null);setSaving(false);
+        return;
+      }
+
       const key=`${depositor.id}_${slot.month}`;
       const existing=payments[key];
       const interest=calcPeriodInt(depositor,slot.month); // BUG FIX: was missing the month, silently using the page's globally-selected month
@@ -290,7 +351,7 @@ export default function DepositorSettlement(){
 
       {/* Depositor cards */}
       <div style={{display:'flex',flexDirection:'column',gap:14}}>
-        {filtered.map(dep=>{
+        {filtered.map((dep,depIdx)=>{
           const slots=genSlots(dep.startDate,dep.interestTenure);
           const isOpen=selected===dep.id;
           const paidCount=slots.filter(sl=>{const pp=payments[`${dep.id}_${sl.month}`];return pp?.status==='Paid'||pp?.addedToDeposit;}).length;
@@ -319,7 +380,7 @@ export default function DepositorSettlement(){
                     ?<img src={dep.photo} alt="" style={{width:44,height:44,borderRadius:'50%',objectFit:'cover',flexShrink:0}}/>
                     :<div style={{width:44,height:44,borderRadius:'50%',background:'rgba(88,86,214,0.12)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,fontWeight:700,color:'#5856d6',flexShrink:0}}>{dep.name?.[0]?.toUpperCase()}</div>}
                   <div>
-                    <div style={{fontWeight:700,fontSize:15,marginBottom:2}}>{dep.name}</div>
+                    <div style={{fontWeight:700,fontSize:15,marginBottom:2}}><span style={{fontSize:11,fontWeight:700,color:'var(--text-tertiary)',marginRight:8}}>#{depIdx+1}</span>{dep.name}</div>
                     <div style={{fontSize:12,color:'var(--text-secondary)'}}>
                       Deposit from {dep.startDate||'—'} · {formatCurrency(dep.depositAmount)} · {dep.interestRate}%/mo · {tenureLabel} · {dep.compounding?'Compound':'Simple'}
                     </div>
@@ -382,6 +443,7 @@ export default function DepositorSettlement(){
                             {isPaid&&<div style={{fontSize:9.5,color:'#34c759',marginTop:2}}>✓ paid</div>}
                             {isFut&&!isPaid&&<div style={{fontSize:9.5,color:'var(--text-secondary)',marginTop:2}}>advance allowed</div>}
                             {!isFut&&!isPaid&&dOD>2&&!isAdded&&<div style={{fontSize:9.5,color:'#ff3b30',fontWeight:600,marginTop:2}}>{dOD}d late</div>}
+                            {p?.remarks&&<div style={{fontSize:9,color:'var(--text-tertiary)',marginTop:3,fontStyle:'italic',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={p.remarks}>📝 {p.remarks}</div>}
                           </div>
                         );
                       })}
@@ -423,11 +485,11 @@ export default function DepositorSettlement(){
       </Modal>
 
       {/* Settlement Modal */}
-      <Modal open={!!modal} onClose={()=>setModal(null)} title={`Settle Interest — ${modal?.depositor?.name}`} width={500}
+      <Modal open={!!modal} onClose={()=>{setModal(null);setBulkPendingDep(null);}} title={`Settle Interest — ${modal?.depositor?.name}`} width={500}
         footer={modal&&(
           <div style={{display:'flex',gap:10,width:'100%'}}>
-            <Button onClick={()=>savePay(true)} disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?'Saving…':'✓ Settle'}</Button>
-            <Button variant="danger" onClick={()=>savePay(false)} disabled={saving}>Mark Unpaid</Button>
+            <Button onClick={()=>savePay(true)} disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?'Saving…':bulkPendingDep?`✓ Settle All ${bulkPendingDep.length} Periods`:'✓ Settle'}</Button>
+            {!bulkPendingDep&&<Button variant="danger" onClick={()=>savePay(false)} disabled={saving}>Mark Unpaid</Button>}
           </div>
         )}>
         {modal&&(()=>{
@@ -446,6 +508,19 @@ export default function DepositorSettlement(){
                 <span style={{fontSize:14,fontWeight:800,color:payStatus==='Paid'?'#1a7a34':'#b45309'}}>{payStatus==='Paid'?'Paid':'Pending'}</span>
                 <span style={{fontSize:12,color:'var(--text-secondary)',marginLeft:'auto'}}>{slot.label}</span>
               </div>
+              {bulkPendingDep && (
+                <div style={{marginBottom:14,padding:'12px 14px',borderRadius:12,background:'rgba(255,149,0,0.06)',border:'1px solid rgba(255,149,0,0.25)'}}>
+                  <div style={{fontSize:12.5,fontWeight:700,color:'#b45309',marginBottom:8}}>⚠ {bulkPendingDep.length} periods pending — settle them all together</div>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
+                    {bulkPendingDep.map(p=>(
+                      <div key={p.month} style={{padding:'4px 10px',borderRadius:99,background:'#fff',border:'1px solid rgba(255,149,0,0.3)',fontSize:11.5,fontWeight:600,color:'var(--text-primary)'}}>
+                        {new Date(p.month+'-01').toLocaleDateString('en-IN',{month:'short',year:'2-digit'})}: {formatCurrency(p.amount)}
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{fontSize:12.5,marginTop:8,color:'var(--text-secondary)'}}>Combined total: <strong style={{color:'var(--text-primary)'}}>{formatCurrency(bulkPendingDep.reduce((s,p)=>s+p.amount,0))}</strong> — each period is still recorded at its own correct amount, settled in cash.</div>
+                </div>
+              )}
               {/* depSettleV3 — identity + stats strip */}
               <div style={{display:'flex',alignItems:'center',gap:14,padding:'14px 16px',borderRadius:14,marginBottom:14,background:'rgba(88,86,214,0.06)',border:'1px solid rgba(88,86,214,0.18)'}}>
                 <div style={{width:52,height:52,borderRadius:'50%',background:'linear-gradient(135deg,#5856d6,#bf5af2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:20,fontWeight:800,color:'#fff',flexShrink:0}}>{(depositor.name||'?')[0].toUpperCase()}</div>

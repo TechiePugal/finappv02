@@ -55,6 +55,7 @@ import FLSecurityDocuments from './pages/finledger/SecurityDocuments';
 import FLLedgerEntries from './pages/finledger/LedgerEntries';
 import FLBackupRestore from './pages/finledger/BackupRestore';
 import FLAlerts from './pages/finledger/Alerts';
+import FLNonActives from './pages/finledger/NonActives';
 import FLEMILoans from './pages/finledger/EMILoans';
 import FLCollectEMI from './pages/finledger/CollectEMI';
 import FLEMIAlerts from './pages/finledger/EMIAlerts';
@@ -196,6 +197,7 @@ function AppRouter() {
             <Route path="ledger" element={<FLLedgerEntries />} />
             <Route path="backup" element={<FLBackupRestore />} />
             <Route path="alerts" element={<FLAlerts />} />
+            <Route path="non-actives" element={<FLNonActives />} />
             <Route path="emi-loans" element={<FLEMILoans />} />
             <Route path="collect-emi" element={<FLCollectEMI />} />
             <Route path="emi-loans/new" element={<FLEMILoanForm />} />

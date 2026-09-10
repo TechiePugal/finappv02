@@ -15,6 +15,8 @@ function calcInterestOnOutstanding(borrower, repaymentsByBorrower, loanAdditions
   const totalRepaid = reps.reduce((s,r) => s + (r.repaidAmount||r.amount||0), 0);
   return calcLoanInterestForMonth(borrower, loanAdditionsMap[borrower.id], totalRepaid, targetMonth);
 }
+function shiftMonth(m, delta) { const [y, mo] = m.split('-').map(Number); const t = y * 12 + (mo - 1) + delta; return `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, '0')}`; }
+function curMonthStr() { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`; }
 
 export default function MonthlyReceivable() {
   const {user}=useAuth();
@@ -32,7 +34,7 @@ export default function MonthlyReceivable() {
     setLoading(true);
     try {
       // Fetch all needed data in parallel
-      const [bSnap, dSnap, bpSnap, dpSnap, repSnap, emiSnap, emiColSnap, fineSnap, depAddSnap, loanAddSnap] = await Promise.all([
+      const [bSnap, dSnap, bpSnap, dpSnap, repSnap, emiSnap, emiColSnap, fineSnap, depAddSnap, loanAddSnap, expSnap] = await Promise.all([
         getDocs(collection(db, 'borrower_master')),
         getDocs(collection(db, 'deposit_master')),
         getDocs(query(collection(db, 'borrower_interest_payments'), where('month','==',month))),
@@ -43,10 +45,12 @@ export default function MonthlyReceivable() {
         getDocs(collection(db, 'finance_ledger_entries')),
         getDocs(collection(db, 'deposit_additions')), // for date-aware interest calc — see utils/interestCalc.js
         getDocs(collection(db, 'loan_additions')),
+        getDocs(query(collection(db, 'finance_expenses'), where('month','==',month))), // real costs — net profit must subtract these
       ]);
 
       const borrowers = scopeToUser(bSnap.docs.map(d => ({id:d.id,...d.data()})), user?.uid);
       const deposits  = scopeToUser(dSnap.docs.map(d => ({id:d.id,...d.data()})), user?.uid);
+      const totalExpensesMonth = scopeToUser(expSnap.docs.map(d => ({id:d.id,...d.data()})), user?.uid).reduce((s,e)=>s+(e.amount||0),0);
       const depAdditionsMap = {};
       scopeToUser(depAddSnap.docs.map(d=>({id:d.id,...d.data()})), user?.uid).forEach(a=>{ if(!depAdditionsMap[a.depositorId]) depAdditionsMap[a.depositorId]=[]; depAdditionsMap[a.depositorId].push(a); });
       const loanAdditionsMap = {};
@@ -69,8 +73,8 @@ export default function MonthlyReceivable() {
       const dpMap = {}; // depositId -> payment
       dpSnap.docs.filter(d=>validDepositIds.has(d.data().depositId)).forEach(d => { dpMap[d.data().depositId] = {id:d.id,...d.data()}; });
 
-      const activeBorrowers = borrowers.filter(b => b.status === 'Active' || b.status === 'Non-Active');
-      const activeDeposits  = deposits.filter(d => d.status === 'Active');
+      const activeBorrowers = borrowers.filter(b => (b.status === 'Active' || b.status === 'Non-Active') && b.loanStartDate && b.loanStartDate.slice(0,7) <= month);
+      const activeDeposits  = deposits.filter(d => d.status === 'Active' && d.startDate && d.startDate.slice(0,7) <= month);
 
       // ─── FIXED: use outstanding-based calculation ───
       const totalReceivable = activeBorrowers.reduce((s,b) => s + calcInterestOnOutstanding(b, repsByBorrower, loanAdditionsMap, month), 0);
@@ -126,7 +130,7 @@ export default function MonthlyReceivable() {
 
       // Net = collected from borrowers + EMI collected, minus paid to depositors, PLUS fine income
       // Uses interest-only EMI collection — repaid principal is never counted as profit
-      const netRevenue = totalCollected + totalEmiInterestCollected - totalPaidOut + curMonthFineIncome;
+      const netRevenue = totalCollected + totalEmiInterestCollected - totalPaidOut + curMonthFineIncome - totalExpensesMonth;
 
       // Per-borrower rows with correct interest
       const borrowerRows = activeBorrowers.map(b => {
@@ -170,7 +174,8 @@ export default function MonthlyReceivable() {
         curMonthFineIncome,
         loanBalance: Math.max(0,totalReceivable-totalCollected),
         emiBalance: Math.max(0,totalEmiDue-totalEmiCollected),
-        combinedNetProfitMonth: totalCollected + totalEmiInterestCollected - totalPaidOut + curMonthFineIncome,
+        combinedNetProfitMonth: totalCollected + totalEmiInterestCollected - totalPaidOut + curMonthFineIncome - totalExpensesMonth,
+        totalExpensesMonth,
       });
     } catch(e) { toast.error('Failed to load'); console.error(e); }
     finally { setLoading(false); }
@@ -192,8 +197,18 @@ export default function MonthlyReceivable() {
     <div className="page-enter">
       <PageHeader
         title="Monthly Report"
-        subtitle={`Interest flow analysis — ${label} (current month)`}
+        subtitle={`Interest flow analysis — ${label}${month===curMonthStr()?' (current month)':''}`}
       />
+
+      {/* Month navigation */}
+      <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:20 }}>
+        <button onClick={()=>setMonth(m=>shiftMonth(m,-1))} style={{ width:34, height:34, borderRadius:9, border:'1px solid rgba(0,0,0,0.1)', background:'#fff', cursor:'pointer', fontSize:15, fontFamily:'inherit' }}>‹</button>
+        <div style={{ fontSize:15, fontWeight:700, color:'var(--text-primary)', minWidth:170, textAlign:'center' }}>{label}</div>
+        <button onClick={()=>setMonth(m=>shiftMonth(m,1))} style={{ width:34, height:34, borderRadius:9, border:'1px solid rgba(0,0,0,0.1)', background:'#fff', cursor:'pointer', fontSize:15, fontFamily:'inherit' }}>›</button>
+        {month!==curMonthStr() && (
+          <button onClick={()=>setMonth(curMonthStr())} style={{ padding:'7px 14px', borderRadius:9, border:'1px solid rgba(0,0,0,0.1)', background:'rgba(118,118,128,0.07)', cursor:'pointer', fontSize:12.5, fontWeight:600, color:'var(--text-secondary)', fontFamily:'inherit' }}>This Month</button>
+        )}
+      </div>
 
       {/* KPI Row */}
       <div className="grid-4" style={{ marginBottom:20 }}>
@@ -242,6 +257,7 @@ export default function MonthlyReceivable() {
             <span>EMI Interest: <strong style={{color:'var(--text-primary)'}}>{formatCurrency(Math.round(d.totalEmiInterestCollected||0))}</strong></span>
             <span>− Interest Paid: <strong style={{color:'#ff453a'}}>{formatCurrency(Math.round(d.totalPaidOut||0))}</strong></span>
             <span>+ Fine Income: <strong style={{color:'#ff9500'}}>{formatCurrency(Math.round(d.curMonthFineIncome||0))}</strong></span>
+            <span>− Expenses: <strong style={{color:'#ff453a'}}>{formatCurrency(Math.round(d.totalExpensesMonth||0))}</strong></span>
           </div>
         </div>
       </Card>

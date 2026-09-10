@@ -202,7 +202,7 @@ export default function CollectEMI() {
           <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-tertiary)' }}>No EMI loans match filters.</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {filtered.map(l => {
+            {filtered.map((l, lIdx) => {
               const cols = collections[l.id] || [];
               const paid = cols.filter(c => c.status === 'Paid').length;
               const remaining = Math.max(0, (l.totalPeriods || 0) - paid);
@@ -218,6 +218,7 @@ export default function CollectEMI() {
                       : <div style={{ width: 38, height: 38, borderRadius: '50%', background: 'rgba(0,122,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 700, color: 'var(--accent)', flexShrink: 0 }}>{(l.borrowerName || '?')[0].toUpperCase()}</div>}
                     <div style={{ flex: 1, minWidth: 160 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', marginRight: 4 }}>#{lIdx+1}</span>
                         <span style={{ fontWeight: 700, fontSize: 14.5 }}>{l.borrowerName}</span>
                         <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 99, background: l.status === 'Active' ? 'rgba(52,199,89,0.12)' : 'rgba(118,118,128,0.12)', color: l.status === 'Active' ? '#1a7a34' : 'var(--text-secondary)' }}>{l.status}</span>
                       </div>
