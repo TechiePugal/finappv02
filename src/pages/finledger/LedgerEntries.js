@@ -1,5 +1,5 @@
 import React,{useEffect,useState} from 'react';
-import {collection,onSnapshot,addDoc,updateDoc,deleteDoc,doc,query,orderBy,serverTimestamp} from 'firebase/firestore';
+import {collection,onSnapshot,addDoc,updateDoc,deleteDoc,doc,query,orderBy,serverTimestamp,getDoc} from 'firebase/firestore';
 import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
 import {PageHeader,Card,StatCard,Button,SearchBar,FilterTabs,Modal,formatCurrency,formatDate,Loader,SectionHeader} from '../../components/finledger/UI';
@@ -36,10 +36,17 @@ export default function LedgerEntries(){
   const [form,setForm]=useState({type:'Credit',category:'Loan Interest',description:'',amount:'',paymentMode:'Cash',date:new Date().toISOString().split('T')[0]});
   const [saving,setSaving]=useState(false);
   const [deleting,setDeleting]=useState(null);
+  const [trashedEntries,setTrashedEntries]=useState([]);
+  const [showTrash,setShowTrash]=useState(false);
 
   useEffect(()=>{
     const unsub=onSnapshot(query(collection(db,'finance_ledger_entries'),orderBy('createdAt','desc')),
-      snap=>{setEntries(scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid));setLoading(false);},
+      snap=>{
+        const all=scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid);
+        setEntries(all.filter(e=>!e.deleted));
+        setTrashedEntries(all.filter(e=>e.deleted));
+        setLoading(false);
+      },
       ()=>{toast.error('Failed to load');setLoading(false);}
     );
     return unsub;
@@ -104,23 +111,65 @@ export default function LedgerEntries(){
   }
 
   async function deleteEntry(entry){
-    if(!window.confirm(`Delete this ${entry.type} entry of ${formatCurrency(entry.amount)}?\n\nNote: This will NOT automatically revert linked interest/payment records.`))return;
+    if(!window.confirm(`Delete this ${entry.type} entry of ${formatCurrency(entry.amount)}?\n\nThis moves it to Trash — you can restore it later if needed.`))return;
     setDeleting(entry.id);
     try{
-      await deleteDoc(doc(db,'finance_ledger_entries',entry.id));
-      // If linked to a payment, mark it unpaid
+      // Soft delete: never actually erase the entry — mark it hidden and capture
+      // a snapshot of whatever linked record gets reverted, so "Restore" can put
+      // everything back exactly as it was, not just undelete the ledger line itself.
+      const revertedLinkedData = {};
       if(entry.linkedPaymentId){
-        try{await updateDoc(doc(db,'borrower_interest_payments',entry.linkedPaymentId),{status:'Unpaid',amountPaid:0,paymentDate:null,updatedAt:serverTimestamp()});}catch{}
+        try{
+          const snap = await getDoc(doc(db,'borrower_interest_payments',entry.linkedPaymentId));
+          if(snap.exists()) revertedLinkedData.borrowerPayment = { id: entry.linkedPaymentId, ...snap.data() };
+          await updateDoc(doc(db,'borrower_interest_payments',entry.linkedPaymentId),{status:'Unpaid',amountPaid:0,paymentDate:null,updatedAt:serverTimestamp()});
+        }catch{}
       }
       if(entry.linkedDepositPaymentId){
-        try{await updateDoc(doc(db,'deposit_payments',entry.linkedDepositPaymentId),{status:'Unpaid',amountPaid:0,paymentDate:null,updatedAt:serverTimestamp()});}catch{}
+        try{
+          const snap = await getDoc(doc(db,'deposit_payments',entry.linkedDepositPaymentId));
+          if(snap.exists()) revertedLinkedData.depositPayment = { id: entry.linkedDepositPaymentId, ...snap.data() };
+          await updateDoc(doc(db,'deposit_payments',entry.linkedDepositPaymentId),{status:'Unpaid',amountPaid:0,paymentDate:null,updatedAt:serverTimestamp()});
+        }catch{}
       }
       if(entry.linkedRepaymentId){
-        try{await updateDoc(doc(db,'loan_repayments',entry.linkedRepaymentId),{deleted:true,updatedAt:serverTimestamp()});}catch{}
+        try{
+          const snap = await getDoc(doc(db,'loan_repayments',entry.linkedRepaymentId));
+          if(snap.exists()) revertedLinkedData.repayment = { id: entry.linkedRepaymentId, ...snap.data() };
+          await updateDoc(doc(db,'loan_repayments',entry.linkedRepaymentId),{deleted:true,updatedAt:serverTimestamp()});
+        }catch{}
       }
+      await updateDoc(doc(db,'finance_ledger_entries',entry.id),{
+        deleted:true, deletedAt:serverTimestamp(), deletedBy:user?.uid||null,
+        revertedLinkedData: Object.keys(revertedLinkedData).length>0 ? revertedLinkedData : null,
+      });
       setEntries(prev=>prev.filter(e=>e.id!==entry.id));
-      toast.success('Entry deleted and linked records reverted');
+      toast.success('Entry moved to Trash — restorable anytime');
     }catch(err){toast.error('Delete failed: '+err.message);}finally{setDeleting(null);}
+  }
+
+  async function restoreEntry(entry){
+    setDeleting(entry.id);
+    try{
+      const rd = entry.revertedLinkedData;
+      if(rd?.borrowerPayment){
+        const { id, ...data } = rd.borrowerPayment;
+        try{await updateDoc(doc(db,'borrower_interest_payments',id),{...data,updatedAt:serverTimestamp()});}catch{}
+      }
+      if(rd?.depositPayment){
+        const { id, ...data } = rd.depositPayment;
+        try{await updateDoc(doc(db,'deposit_payments',id),{...data,updatedAt:serverTimestamp()});}catch{}
+      }
+      if(rd?.repayment){
+        const { id, ...data } = rd.repayment;
+        try{await updateDoc(doc(db,'loan_repayments',id),{...data,updatedAt:serverTimestamp()});}catch{}
+      }
+      await updateDoc(doc(db,'finance_ledger_entries',entry.id),{
+        deleted:false, deletedAt:null, deletedBy:null, revertedLinkedData:null, updatedAt:serverTimestamp(),
+      });
+      setTrashedEntries(prev=>prev.filter(e=>e.id!==entry.id));
+      toast.success('Entry and linked records restored');
+    }catch(err){toast.error('Restore failed: '+err.message);}finally{setDeleting(null);}
   }
 
   const CATS=['All','Loan Interest','Deposit Interest','Loan Repayment','Deposit Received','Deposit Settlement','Expense','Other'];
@@ -141,7 +190,12 @@ export default function LedgerEntries(){
   return(
     <div className="page-enter">
       <PageHeader title="Ledger" subtitle="Complete financial audit trail with full edit & delete"
-        action={<Button onClick={openAdd}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Entry</Button>}/>
+        action={<div style={{display:'flex',gap:8}}>
+          <Button variant="secondary" onClick={()=>setShowTrash(s=>!s)}>
+            🗑 {showTrash?'Back to Ledger':`Trash${trashedEntries.length>0?` (${trashedEntries.length})`:''}`}
+          </Button>
+          <Button onClick={openAdd}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Entry</Button>
+        </div>}/>
 
       <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14,marginBottom:20}}>
         <StatCard label="Total Credits" value={formatCurrency(Math.round(totalC))} sub={`${entries.filter(e=>e.type==='Credit').length} entries`} color="#34c759"
@@ -152,6 +206,29 @@ export default function LedgerEntries(){
           icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>}/>
       </div>
 
+      {showTrash ? (
+        <Card>
+          {trashedEntries.length===0 ? (
+            <div style={{padding:48,textAlign:'center',color:'var(--text-tertiary)'}}>
+              <div style={{fontSize:32,marginBottom:8}}>🗑</div>
+              <p style={{fontSize:14}}>Trash is empty</p>
+            </div>
+          ) : (
+            <div style={{display:'flex',flexDirection:'column',gap:10}}>
+              {trashedEntries.map(e=>(
+                <div key={e.id} style={{display:'flex',alignItems:'center',gap:14,padding:'13px 16px',borderRadius:12,border:'1px solid rgba(0,0,0,0.07)',opacity:0.85}}>
+                  <div style={{width:36,height:36,borderRadius:9,flexShrink:0,background:e.type==='Credit'?'rgba(52,199,89,0.1)':'rgba(255,59,48,0.1)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:15}}>{e.type==='Credit'?'↑':'↓'}</div>
+                  <div style={{flex:1,minWidth:200}}>
+                    <div style={{fontWeight:600,fontSize:13.5}}>{e.description||e.category}</div>
+                    <div style={{fontSize:11.5,color:'var(--text-secondary)',marginTop:2}}>{e.category} · {formatCurrency(e.amount)} · Deleted {e.deletedAt?.toDate?.()?.toLocaleDateString('en-IN')||'—'}</div>
+                  </div>
+                  <Button size="sm" onClick={()=>restoreEntry(e)} disabled={deleting===e.id}>{deleting===e.id?'Restoring…':'↩ Restore'}</Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      ) : (
       <Card>
         <div style={{display:'flex',gap:10,marginBottom:14,flexWrap:'wrap',alignItems:'center'}}>
           <SearchBar value={search} onChange={setSearch} placeholder="Search description, category, name…"/>
@@ -212,6 +289,7 @@ export default function LedgerEntries(){
         </div>
         <p style={{fontSize:12,color:'var(--text-tertiary)',marginTop:12,textAlign:'right'}}>{filtered.length} of {entries.length} entries</p>
       </Card>
+      )}
 
       <Modal open={showModal} onClose={()=>setShowModal(false)} title={editItem?'Edit Ledger Entry':'Add Ledger Entry'}
         footer={showModal&&(

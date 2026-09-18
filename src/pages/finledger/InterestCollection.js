@@ -145,7 +145,32 @@ export default function InterestCollection(){
       // the single entered amount is just a convenient way to confirm the total.
       if(bulkPending && paid===true){
         const fine=pf.collectFine?parseFloat(pf.fine)||0:0;
+        // The entered amount might be LESS than the full combined total — allocate
+        // it to whole periods only, oldest first, and stop once it runs out. A
+        // period only gets marked Paid if there's enough left to cover it FULLY;
+        // anything that doesn't fit stays genuinely Pending, not partially settled.
+        let budget=parseFloat(pf.amount)||0;
+        const settledPeriods=[];
+        const stillPendingPeriods=[];
         for(const period of bulkPending){
+          if(budget>=period.amount){
+            budget-=period.amount;
+            settledPeriods.push(period);
+          } else {
+            stillPendingPeriods.push(period);
+          }
+        }
+        // BUG FIX: any money left over after settling whole periods was previously
+        // just discarded — pay ₹20,000 against 6 periods of ₹3,000 (₹18,000) and
+        // the remaining ₹2,000 vanished instead of being recorded anywhere. That
+        // leftover now becomes a PARTIAL payment on the next pending period, so
+        // the full amount actually received is always accounted for somewhere.
+        let partialPeriod=null, partialAmount=0;
+        if(budget>0 && stillPendingPeriods.length>0){
+          partialPeriod=stillPendingPeriods.shift();
+          partialAmount=budget;
+        }
+        for(const period of settledPeriods){
           const bPays=payments[modal.id]||{};
           const existing=bPays[period.month];
           const data={
@@ -171,16 +196,48 @@ export default function InterestCollection(){
             linkedPaymentId:payId,createdAt:serverTimestamp(),createdBy:user?.uid||null
           });
         }
+        if(partialPeriod){
+          const bPays=payments[modal.id]||{};
+          const existingPartial=bPays[partialPeriod.month];
+          const partialData={
+            borrowerId:modal.id,borrowerName:modal.borrowerName,
+            loanAmount:modal.loanAmount,
+            interestRate:modal.interestRate,amountDue:partialPeriod.amount,
+            amountPaid:partialAmount,
+            fine:0,totalCollected:partialAmount,
+            status:'Partial',
+            paymentDate:pf.date,paymentMode:pf.mode,
+            remarks:pf.remarks?`${pf.remarks} (partial from bulk settlement)`:'Partial from bulk settlement',
+            month:partialPeriod.month,
+            updatedAt:serverTimestamp()
+          };
+          let partialPayId=existingPartial?.id;
+          if(existingPartial){await updateDoc(doc(db,'borrower_interest_payments',existingPartial.id),partialData);}
+          else{partialData.createdAt=serverTimestamp();partialData.createdBy=user?.uid||null;const r=await addDoc(collection(db,'borrower_interest_payments'),partialData);partialPayId=r.id;}
+          await addDoc(collection(db,'finance_ledger_entries'),{
+            type:'Credit',category:'Loan Interest',
+            description:`Interest (partial, from bulk settlement leftover) from ${modal.borrowerName} — ${partialPeriod.month}`,
+            amount:partialAmount,paymentMode:pf.mode,date:pf.date,
+            borrowerName:modal.borrowerName,borrowerId:modal.id,
+            linkedPaymentId:partialPayId,createdAt:serverTimestamp(),createdBy:user?.uid||null
+          });
+        }
         if(fine>0){
           await addDoc(collection(db,'finance_ledger_entries'),{
             type:'Credit',category:'Fine Income',
-            description:`Late-payment fine from ${modal.borrowerName} — bulk settlement of ${bulkPending.length} periods`,
+            description:`Late-payment fine from ${modal.borrowerName} — bulk settlement of ${settledPeriods.length} periods`,
             amount:fine,paymentMode:pf.mode,date:pf.date,
             borrowerName:modal.borrowerName,borrowerId:modal.id,
             createdAt:serverTimestamp(),createdBy:user?.uid||null
           });
         }
-        toast.success(`✓ ${bulkPending.length} pending periods settled — ${formatCurrency(bulkPending.reduce((s,p)=>s+p.amount,0)+fine)} total`);
+        const stillPendingTotal=stillPendingPeriods.reduce((s,p)=>s+p.amount,0);
+        const partialNote=partialPeriod?` (${formatCurrency(partialAmount)} applied as a partial payment for ${partialPeriod.month})`:'';
+        if(stillPendingPeriods.length>0 || partialPeriod){
+          toast.success(`✓ ${settledPeriods.length} period${settledPeriods.length!==1?'s':''} fully settled${partialNote}. ${formatCurrency(stillPendingTotal)} still pending for ${stillPendingPeriods.length} period${stillPendingPeriods.length!==1?'s':''}.`);
+        } else {
+          toast.success(`✓ All ${settledPeriods.length} pending periods settled — ${formatCurrency(settledPeriods.reduce((s,p)=>s+p.amount,0)+fine)} total`);
+        }
         setModal(null);setBulkPending(null);setSaving(false);
         return;
       }
@@ -451,15 +508,17 @@ export default function InterestCollection(){
                           {visible.map(mo=>{
                             const p=payments[b.id]?.[mo];
                             const isPaid=p?.status==='Paid';
+                            const isPartial=p?.status==='Partial';
                             const curActualMonth=(()=>{const n=new Date();return`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;})();
                             const isFuture=mo>curActualMonth;
                             const label=new Date(mo+'-01').toLocaleDateString('en-IN',{month:'short',year:'numeric'});
                             return(
                               <div key={mo} onClick={()=>openModal(b,mo)}
-                                style={{padding:'10px 12px',borderRadius:10,border:`1px ${isFuture?'dashed':'solid'} ${isPaid?'rgba(52,199,89,0.25)':mo===curActualMonth?'rgba(0,122,255,0.3)':isFuture?'rgba(0,0,0,0.12)':'rgba(0,0,0,0.07)'}`,background:isPaid?'rgba(52,199,89,0.04)':mo===curActualMonth?'rgba(0,122,255,0.04)':isFuture?'rgba(0,0,0,0.015)':'#fafafa',cursor:'pointer',opacity:isFuture&&!isPaid?0.85:1}}>
-                                <div style={{fontSize:12,fontWeight:600,color:isPaid?'#1a7a34':mo===curActualMonth?'#007aff':'var(--text-primary)',marginBottom:4}}>{label}</div>
-                                <div style={{fontSize:13,fontWeight:700,color:isPaid?'#34c759':'var(--text-secondary)'}}>{isPaid?formatCurrency(p.amountPaid):'Pending'}</div>
-                                {isFuture&&!isPaid&&<div style={{fontSize:9.5,color:'var(--text-tertiary)',marginTop:2}}>advance allowed</div>}
+                                style={{padding:'10px 12px',borderRadius:10,border:`1px ${isFuture?'dashed':'solid'} ${isPaid?'rgba(52,199,89,0.25)':isPartial?'rgba(255,149,0,0.3)':mo===curActualMonth?'rgba(0,122,255,0.3)':isFuture?'rgba(0,0,0,0.12)':'rgba(0,0,0,0.07)'}`,background:isPaid?'rgba(52,199,89,0.04)':isPartial?'rgba(255,149,0,0.05)':mo===curActualMonth?'rgba(0,122,255,0.04)':isFuture?'rgba(0,0,0,0.015)':'#fafafa',cursor:'pointer',opacity:isFuture&&!isPaid?0.85:1}}>
+                                <div style={{fontSize:12,fontWeight:600,color:isPaid?'#1a7a34':isPartial?'#b45309':mo===curActualMonth?'#007aff':'var(--text-primary)',marginBottom:4}}>{label}</div>
+                                <div style={{fontSize:13,fontWeight:700,color:isPaid?'#34c759':isPartial?'#ff9500':'var(--text-secondary)'}}>{isPaid?formatCurrency(p.amountPaid):isPartial?formatCurrency(p.amountPaid||0):'Pending'}</div>
+                                {isPartial&&<div style={{fontSize:9.5,color:'#ff9500',marginTop:2}}>{formatCurrency(Math.max(0,(p.amountDue||0)-(p.amountPaid||0)))} remaining</div>}
+                                {isFuture&&!isPaid&&!isPartial&&<div style={{fontSize:9.5,color:'var(--text-tertiary)',marginTop:2}}>advance allowed</div>}
                                 {p?.addedToLoan&&<div style={{fontSize:10,color:'#5856d6',marginTop:2}}>Added to principal</div>}
                                 {p?.remarks&&<div style={{fontSize:10,color:'var(--text-tertiary)',marginTop:3,fontStyle:'italic',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={p.remarks}>📝 {p.remarks}</div>}
                               </div>
@@ -485,7 +544,11 @@ export default function InterestCollection(){
           <div style={{display:'flex',gap:10,width:'100%'}}>
             {pf.addToLoan
               ?<Button onClick={()=>savePay(false)} disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?'Saving…':'Add Interest to Principal'}</Button>
-              :<><Button onClick={()=>savePay(true)} disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?'Saving…':bulkPending?`✓ Settle All ${bulkPending.length} Periods`:'✓ Mark as Paid'}</Button>
+              :<><Button onClick={()=>savePay(true)} disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?'Saving…':bulkPending?(()=>{
+                let budget=parseFloat(pf.amount)||0,covered=0;
+                for(const p of bulkPending){if(budget>=p.amount){budget-=p.amount;covered++;}else break;}
+                return covered===bulkPending.length?`✓ Settle All ${bulkPending.length} Periods`:`✓ Settle ${covered} of ${bulkPending.length} Periods`;
+              })():'✓ Mark as Paid'}</Button>
               {!bulkPending&&<Button variant="secondary" onClick={()=>savePay('partial')} disabled={saving}>Partial</Button>}
               <Button variant="danger" onClick={()=>savePay(false)} disabled={saving}>Mark Unpaid</Button></>
             }

@@ -122,11 +122,25 @@ export default function MonthlyReceivable() {
       const validLoanIds = new Set(borrowers.map(b=>b.id));
       const validEmiIds = new Set(emiLoans.map(l=>l.id));
 
-      // ── Fine income — kept OUT of every figure above, added ONLY to net revenue below ──
+      // ── Fine income — kept OUT of every figure above, split by source so each
+      // category's own Net Profit gets its own fine, matching the Overall Dashboard ──
       const fineDocs = scopeToUser(fineSnap.docs.map(d=>({id:d.id,...d.data()})), user?.uid).filter(e=>e.category==='Fine Income');
-      const curMonthFineIncome = fineDocs.filter(e=>e.date && e.date.startsWith(month))
-        .filter(e=>(e.borrowerId && validLoanIds.has(e.borrowerId)) || (e.loanId && validEmiIds.has(e.loanId)))
-        .reduce((s,e)=>s+(e.amount||0),0);
+      const curMonthFineDocs = fineDocs.filter(e=>e.date && e.date.startsWith(month));
+      const loanFineIncomeMonth = curMonthFineDocs.filter(e=>e.borrowerId && validLoanIds.has(e.borrowerId)).reduce((s,e)=>s+(e.amount||0),0);
+      const emiFineIncomeMonth = curMonthFineDocs.filter(e=>e.loanId && validEmiIds.has(e.loanId)).reduce((s,e)=>s+(e.amount||0),0);
+      const depositFineIncomeMonth = curMonthFineDocs.filter(e=>e.depositId).reduce((s,e)=>s+(e.amount||0),0);
+      const curMonthFineIncome = loanFineIncomeMonth + emiFineIncomeMonth + depositFineIncomeMonth;
+
+      // ── Total Loan Amount / Balance — same structure as the Overall Dashboard,
+      // scoped to loans and deposits active during THIS month ──
+      const monthlyLoanPrincipal = activeBorrowers.reduce((s,b)=>s+(b.loanAmount||0),0);
+      const loanBalanceMonth = Math.max(0, totalReceivable - totalCollected);
+      const loanNetProfitMonth = totalCollected + loanFineIncomeMonth;
+      const monthlyDepositPrincipal = activeDeposits.reduce((s,d)=>s+(d.depositAmount||0),0);
+      const depositBalanceMonth = Math.max(0, totalPayable - totalPaidOut);
+      const emiNetProfitMonth = totalEmiInterestCollected + emiFineIncomeMonth;
+      const monthlyEmiPrincipal = activeEmi.reduce((s,l)=>s+(l.loanAmount||0),0);
+      const emiBalanceMonth = Math.max(0, totalEmiDue - totalEmiCollected);
 
       // Net = collected from borrowers + EMI collected, minus paid to depositors, PLUS fine income
       // Uses interest-only EMI collection — repaid principal is never counted as profit
@@ -170,11 +184,15 @@ export default function MonthlyReceivable() {
         collectionRate: totalReceivable>0 ? Math.min(100,(totalCollected/totalReceivable)*100) : 0,
         payoutRate: totalPayable>0 ? Math.min(100,(totalPaidOut/totalPayable)*100) : 0,
         totalEmiDue, totalEmiCollected, totalEmiInterestCollected, activeEmiCount: activeEmi.length,
+        activeBorrowersCount: activeBorrowers.length,
         emiCollectionRate: totalEmiDue>0 ? Math.min(100,(totalEmiCollected/totalEmiDue)*100) : 0,
         curMonthFineIncome,
         loanBalance: Math.max(0,totalReceivable-totalCollected),
         emiBalance: Math.max(0,totalEmiDue-totalEmiCollected),
         combinedNetProfitMonth: totalCollected + totalEmiInterestCollected - totalPaidOut + curMonthFineIncome - totalExpensesMonth,
+        monthlyLoanPrincipal, loanBalanceMonth, loanNetProfitMonth,
+        monthlyDepositPrincipal, depositBalanceMonth,
+        monthlyEmiPrincipal, emiBalanceMonth, emiNetProfitMonth,
         totalExpensesMonth,
       });
     } catch(e) { toast.error('Failed to load'); console.error(e); }
@@ -209,6 +227,36 @@ export default function MonthlyReceivable() {
           <button onClick={()=>setMonth(curMonthStr())} style={{ padding:'7px 14px', borderRadius:9, border:'1px solid rgba(0,0,0,0.1)', background:'rgba(118,118,128,0.07)', cursor:'pointer', fontSize:12.5, fontWeight:600, color:'var(--text-secondary)', fontFamily:'inherit' }}>This Month</button>
         )}
       </div>
+
+      {/* Loans — Overview (this month) — same structure as the Overall Dashboard */}
+      <SectionHeader title="📋 Loans — This Month"/>
+      <div className="grid-4" style={{ marginBottom:20 }}>
+        <StatCard label="Total Loan Amount" value={formatCurrency(Math.round(d.monthlyLoanPrincipal||0))} sub={`${d.activeBorrowersCount||0} active loans this month`} color="#ff9500"/>
+        <StatCard label="Total Collected" value={formatCurrency(Math.round(d.totalCollected||0))} sub="Interest only — fine excluded" color="#0a84ff"/>
+        <StatCard label="Balance to Collect" value={formatCurrency(Math.round(d.loanBalanceMonth||0))} sub="Still due this month" color="#ff453a"/>
+        <StatCard label="Net Profit (Loans)" value={formatCurrency(Math.round(d.loanNetProfitMonth||0))} sub="Interest + Fine — never principal repaid" color="#30d158"/>
+      </div>
+
+      {/* Deposits — Overview (this month) */}
+      <SectionHeader title="🏦 Deposits — This Month"/>
+      <div className="grid-4" style={{ marginBottom:20 }}>
+        <StatCard label="Total Deposit Amount" value={formatCurrency(Math.round(d.monthlyDepositPrincipal||0))} sub="Active deposits this month" color="#bf5af2"/>
+        <StatCard label="Interest to Give" value={formatCurrency(Math.round(d.totalPayable||0))} sub="Due this month" color="#ff9500"/>
+        <StatCard label="Interest Given" value={formatCurrency(Math.round(d.totalPaidOut||0))} sub="Cash paid + compounded" color="#5e5ce6"/>
+        <StatCard label="Interest Remaining" value={formatCurrency(Math.round(d.depositBalanceMonth||0))} sub="Still owed to depositors" color="#ff453a"/>
+      </div>
+
+      {(d.activeEmiCount||0) > 0 && (
+        <>
+          <SectionHeader title="📆 EMI Loans — This Month"/>
+          <div className="grid-4" style={{ marginBottom:20 }}>
+            <StatCard label="Total Loan Amount" value={formatCurrency(Math.round(d.monthlyEmiPrincipal||0))} sub={`${d.activeEmiCount||0} active EMI loans`} color="#ff9500"/>
+            <StatCard label="Total Collected" value={formatCurrency(Math.round(d.totalEmiCollected||0))} sub="Fine excluded" color="#0a84ff"/>
+            <StatCard label="Balance to Collect" value={formatCurrency(Math.round(d.emiBalanceMonth||0))} sub="Still due this month" color="#ff453a"/>
+            <StatCard label="Net Profit (EMI)" value={formatCurrency(Math.round(d.emiNetProfitMonth||0))} sub="Interest + Fine — never principal recovered" color="#30d158"/>
+          </div>
+        </>
+      )}
 
       {/* KPI Row */}
       <div className="grid-4" style={{ marginBottom:20 }}>

@@ -176,30 +176,61 @@ export function printBorrowerReport(borrower, repayments, interestPayments){
 
     <!-- Interest Collection History -->
     <h2>Interest Collection History (${ints.length} months)</h2>
-    ${ints.length===0?'<p style="color:#9ca3af;font-size:12px;margin-bottom:16px;">No interest records yet.</p>':`
+    <p style="font-size:11px;color:#6b7280;margin:-6px 0 10px;">Months paid together in one bulk settlement are shown as a single combined entry.</p>
+    ${ints.length===0?'<p style="color:#9ca3af;font-size:12px;margin-bottom:16px;">No interest records yet.</p>':(()=>{
+      // Group consecutive PAID months that share the same payment date into ONE
+      // row — e.g. bulk-settling 6 months in one action becomes "2026-04 –
+      // 2026-09: Paid ₹2,250" instead of 6 separate lines all showing the same date.
+      const intsAsc=[...ints].sort((a,b)=>(a.month||'').localeCompare(b.month||''));
+      const groups=[];
+      let cur=null;
+      for(const i of intsAsc){
+        const paid=i.status==='Paid';
+        const dateKey=paid?(i.paymentDate||''):null;
+        if(cur && paid && cur.paid && dateKey && cur.dateKey===dateKey){
+          cur.items.push(i);
+        } else {
+          cur={paid,dateKey,items:[i]};
+          groups.push(cur);
+        }
+      }
+      groups.reverse(); // most recent first, matching the page's convention
+      const rows=groups.map(g=>{
+        const isGroup=g.items.length>1;
+        const paid=g.paid;
+        const dueG=g.items.reduce((s,i)=>s+(i.amountDue||0),0);
+        const paidG=g.items.reduce((s,i)=>s+(i.amountPaid||0),0);
+        const fineG=g.items.reduce((s,i)=>s+(i.fine||0),0);
+        const first=g.items[0], last=g.items[g.items.length-1];
+        const monthLabel=isGroup?`${first.month} – ${last.month}`:(first.month||'—');
+        const remarksText=isGroup?`Bulk settlement (${g.items.length} months)${first.remarks?' · '+first.remarks:''}`:(first.remarks||'—');
+        return `
+        <tr>
+          <td style="font-weight:600;">${monthLabel}${isGroup?` <span style="color:#9ca3af;font-weight:400;font-size:9px;">(${g.items.length} months)</span>`:''}</td>
+          <td>${INR(first.outstandingBalance||0)}</td>
+          <td>${first.interestRate||0}%</td>
+          <td class="text-amber">${INR(dueG)}</td>
+          <td class="${paid?'text-green':'text-red'}">${INR(paidG)}</td>
+          <td>${fineG>0?INR(fineG):'—'}</td>
+          <td><span class="badge ${paid?'badge-green':'badge-amber'}">${paid?'Paid':(first.status||'Pending')}</span></td>
+          <td>${fmtDate(first.paymentDate)}</td>
+          <td>${first.paymentMode||'—'}</td>
+          <td style="color:#6b7280;font-size:10px;">${remarksText}</td>
+        </tr>`;
+      }).join('');
+      return `
     <table>
       <thead><tr><th>Month</th><th>Outstanding</th><th>Rate</th><th>Amount Due</th><th>Amount Paid</th><th>Fine</th><th>Status</th><th>Date</th><th>Mode</th><th>Remarks</th></tr></thead>
       <tbody>
-        ${ints.map(i=>`
-        <tr>
-          <td style="font-weight:600;">${i.month||'—'}</td>
-          <td>${INR(i.outstandingBalance||0)}</td>
-          <td>${i.interestRate||0}%</td>
-          <td class="text-amber">${INR(i.amountDue||0)}</td>
-          <td class="${i.status==='Paid'?'text-green':'text-red'}">${INR(i.amountPaid||0)}</td>
-          <td>${i.fine>0?INR(i.fine):'—'}</td>
-          <td><span class="badge ${i.status==='Paid'?'badge-green':'badge-amber'}">${i.status||'Pending'}</span></td>
-          <td>${fmtDate(i.paymentDate)}</td>
-          <td>${i.paymentMode||'—'}</td>
-          <td style="color:#6b7280;font-size:10px;">${i.remarks||'—'}</td>
-        </tr>`).join('')}
+        ${rows}
         <tr class="total-row">
           <td colspan="4"><strong>Total Collected</strong></td>
           <td class="text-green">${INR(totalInterestColl)}</td>
           <td></td><td colspan="4"></td>
         </tr>
       </tbody>
-    </table>`}
+    </table>`;
+    })()}
 
     ${borrower.notes?`<div class="note-box"><strong>Notes:</strong> ${borrower.notes}</div>`:''}
 
@@ -295,36 +326,62 @@ export function printDepositorReport(depositor, payments, history){
     </div>
 
     <h2>Interest Payout History (${pays.length} periods)</h2>
-    <p style="font-size:11px;color:#6b7280;margin:-6px 0 10px;">"Settlement" shows exactly how each period was handled — cash paid in hand, added back to the deposit, or split between both.</p>
-    ${pays.length===0?'<p style="color:#9ca3af;font-size:12px;margin-bottom:16px;">No payout records yet.</p>':`
+    <p style="font-size:11px;color:#6b7280;margin:-6px 0 10px;">"Settlement" shows exactly how each period was handled — cash paid in hand, added back to the deposit, or split between both. Periods paid together in one bulk settlement are shown as a single combined entry.</p>
+    ${pays.length===0?'<p style="color:#9ca3af;font-size:12px;margin-bottom:16px;">No payout records yet.</p>':(()=>{
+      // Group consecutive SETTLED periods that share the same payment date into
+      // ONE row — e.g. bulk-settling 4 months in one action becomes "Jun 2026 –
+      // Sep 2026: Paid ₹12,000" instead of 4 separate lines all showing the same date.
+      const paysAsc=[...pays].sort((a,b)=>(a.month||'').localeCompare(b.month||''));
+      const groups=[];
+      let cur=null;
+      for(const p of paysAsc){
+        const settled=isSettled(p);
+        const dateKey=settled?(p.paymentDate||''):null;
+        if(cur && settled && cur.settled && dateKey && cur.dateKey===dateKey){
+          cur.periods.push(p);
+        } else {
+          cur={settled,dateKey,periods:[p]};
+          groups.push(cur);
+        }
+      }
+      groups.reverse(); // most recent first, matching the page's convention
+      const rows=groups.map((g,i)=>{
+        const isGroup=g.periods.length>1;
+        const settled=g.settled;
+        const totalDueG=g.periods.reduce((s,p)=>s+(p.amountDue||0),0);
+        const cashPartG=g.periods.reduce((s,p)=>s+(p.amountPaid||0),0);
+        const compoundPartG=g.periods.reduce((s,p)=>s+(p.addedAmount||0),0);
+        const fineG=g.periods.reduce((s,p)=>s+(p.fine||0),0);
+        const displayAmt=cashPartG+compoundPartG;
+        const first=g.periods[0], last=g.periods[g.periods.length-1];
+        const periodLabel=isGroup?`${first.month} – ${last.month}`:(first.month||'—');
+        let settlementBadges='—';
+        if(settled){
+          const badges=[];
+          if(cashPartG>0) badges.push(`<span class="badge badge-green">💰 ${INR(cashPartG)} in hand</span>`);
+          if(compoundPartG>0) badges.push(`<span class="badge badge-blue">🔄 ${INR(compoundPartG)} to deposit</span>`);
+          settlementBadges=badges.length>0?badges.join(' '):`<span class="badge badge-green">💰 Taken in Hand</span>`;
+        }
+        const remarksText=isGroup?`Bulk settlement (${g.periods.length} periods)${first.remarks?' · '+first.remarks:''}`:(first.remarks||'—');
+        return `
+        <tr>
+          <td>${i+1}</td>
+          <td style="font-weight:600;">${periodLabel}${isGroup?` <span style="color:#9ca3af;font-weight:400;font-size:9px;">(${g.periods.length} periods)</span>`:''}</td>
+          <td>${INR(totalDueG)}</td>
+          <td class="${settled?'text-green':'text-red'}">${INR(displayAmt)}</td>
+          <td>${fineG>0?INR(fineG):'—'}</td>
+          <td><span class="badge ${settled?'badge-green':'badge-amber'}">${settled?'Settled':(first.status||'Pending')}</span></td>
+          <td>${settlementBadges}</td>
+          <td>${fmtDate(first.paymentDate)}</td>
+          <td>${first.paymentMode||'—'}</td>
+          <td style="color:#6b7280;font-size:10px;">${remarksText}</td>
+        </tr>`;
+      }).join('');
+      return `
     <table>
       <thead><tr><th>#</th><th>Period</th><th>Amount Due</th><th>Amount Settled</th><th>Fine</th><th>Status</th><th>Settlement</th><th>Payment Date</th><th>Mode</th><th>Remarks</th></tr></thead>
       <tbody>
-        ${pays.map((p,i)=>{
-          const settled = isSettled(p);
-          const cashPart = p.amountPaid||0;
-          const compoundPart = p.addedAmount||0;
-          const displayAmt = cashPart + compoundPart;
-          let settlementBadges = '—';
-          if (settled) {
-            const badges = [];
-            if (cashPart > 0) badges.push(`<span class="badge badge-green">💰 ${INR(cashPart)} in hand</span>`);
-            if (compoundPart > 0) badges.push(`<span class="badge badge-blue">🔄 ${INR(compoundPart)} to deposit</span>`);
-            settlementBadges = badges.length > 0 ? badges.join(' ') : `<span class="badge badge-green">💰 Taken in Hand</span>`;
-          }
-          return `
-        <tr>
-          <td>${i+1}</td>
-          <td style="font-weight:600;">${p.month||'—'}</td>
-          <td>${INR(p.amountDue||0)}</td>
-          <td class="${settled?'text-green':'text-red'}">${INR(displayAmt)}</td>
-          <td>${(p.fine||0)>0?INR(p.fine):'—'}</td>
-          <td><span class="badge ${settled?'badge-green':'badge-amber'}">${settled?'Settled':(p.status||'Pending')}</span></td>
-          <td>${settlementBadges}</td>
-          <td>${fmtDate(p.paymentDate)}</td>
-          <td>${p.paymentMode||'—'}</td>
-          <td style="color:#6b7280;font-size:10px;">${p.remarks||'—'}</td>
-        </tr>`;}).join('')}
+        ${rows}
         <tr class="total-row">
           <td colspan="3"><strong>Total</strong></td>
           <td class="text-green">${INR(totalPaid)}</td>
@@ -333,7 +390,8 @@ export function printDepositorReport(depositor, payments, history){
           <td colspan="2"></td>
         </tr>
       </tbody>
-    </table>`}
+    </table>`;
+    })()}
 
     ${additions.length===0?'':`
     <h2>Additional Amounts Added (${additions.length})</h2>

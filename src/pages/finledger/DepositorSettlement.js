@@ -144,15 +144,52 @@ export default function DepositorSettlement(){
       // matching the combined total the user confirmed.
       if(bulkPendingDep && paid){
         const fine=pf.collectFine?parseFloat(pf.fine)||0:0;
+        const totalCash=parseFloat(pf.cashAmount)||0;
+        const totalCompound=parseFloat(pf.compoundAmount)||0;
+        const combinedBudget=totalCash+totalCompound;
+        // Keep the same cash-vs-compound RATIO the user entered, applied to
+        // whichever periods actually get settled — e.g. entering ₹20,000 cash +
+        // ₹20,000 compound (50/50) against 5 pending periods of ₹10,000 each
+        // settles 4 whole periods, each split ₹5,000 cash + ₹5,000 compound.
+        const cashRatio=combinedBudget>0?totalCash/combinedBudget:1;
+        let budget=combinedBudget;
+        const settledPeriods=[];
+        const stillPendingPeriods=[];
         for(const period of bulkPendingDep){
+          if(budget>=period.amount){
+            budget-=period.amount;
+            settledPeriods.push(period);
+          } else {
+            stillPendingPeriods.push(period);
+          }
+        }
+        // BUG FIX: any money left over after settling whole periods was previously
+        // just discarded — pay ₹20,000 against 6 periods of ₹3,000 (₹18,000) and
+        // the remaining ₹2,000 vanished instead of being recorded anywhere. That
+        // leftover now becomes a PARTIAL payment on the next pending period (split
+        // by the same cash/compound ratio), so the full amount actually received
+        // is always accounted for somewhere.
+        let partialPeriod=null, partialAmount=0;
+        if(budget>0 && stillPendingPeriods.length>0){
+          partialPeriod=stillPendingPeriods.shift();
+          partialAmount=budget;
+        }
+        let totalCompoundDelta=0; // BUG FIX: bulk settlement recorded addedAmount on each
+        // period's payment record, but never actually applied that compounded amount to
+        // the deposit's real principal — the deposit stayed at its old amount forever,
+        // even though the settlement clearly said "₹60,000 added to deposit."
+        for(const period of settledPeriods){
+          const periodCash=Math.round(period.amount*cashRatio);
+          const periodCompound=period.amount-periodCash;
           const pKey=`${depositor.id}_${period.month}`;
           const existingP=payments[pKey];
+          totalCompoundDelta += periodCompound - (existingP?.addedAmount||0);
           const data={
             depositId:depositor.id,depositorName:depositor.name,
             depositAmount:depositor.depositAmount,interestRate:depositor.interestRate,
-            amountDue:period.amount,amountPaid:period.amount,
-            fine:0,totalPayout:period.amount,
-            status:'Paid',addedToDeposit:false,addedAmount:0,
+            amountDue:period.amount,amountPaid:periodCash,
+            fine:0,totalPayout:periodCash,
+            status:'Paid',addedToDeposit:periodCompound>0,addedAmount:periodCompound,
             paymentDate:pf.date,paymentMode:pf.mode,
             remarks:pf.remarks,month:period.month,updatedAt:serverTimestamp()
           };
@@ -160,24 +197,70 @@ export default function DepositorSettlement(){
           if(existingP){await updateDoc(doc(db,'deposit_payments',existingP.id),data);}
           else{data.createdAt=serverTimestamp();data.createdBy=user?.uid||null;const r=await addDoc(collection(db,'deposit_payments'),data);payDocId=r.id;}
 
-          await addDoc(collection(db,'finance_ledger_entries'),{
-            type:'Debit',category:'Deposit Settlement',
-            description:`Interest payout to ${depositor.name} — ${period.label} (bulk settlement)`,
-            amount:period.amount,paymentMode:pf.mode,date:pf.date,
-            depositorName:depositor.name,depositId:depositor.id,
-            linkedDepositPaymentId:payDocId,createdAt:serverTimestamp(),createdBy:user?.uid||null
+          if(periodCash>0){
+            await addDoc(collection(db,'finance_ledger_entries'),{
+              type:'Debit',category:'Deposit Settlement',
+              description:`Interest payout to ${depositor.name} — ${period.label} (bulk settlement)${periodCompound>0?` + ₹${periodCompound} compounded`:''}`,
+              amount:periodCash,paymentMode:pf.mode,date:pf.date,
+              depositorName:depositor.name,depositId:depositor.id,
+              linkedDepositPaymentId:payDocId,createdAt:serverTimestamp(),createdBy:user?.uid||null
+            });
+          }
+        }
+        if(partialPeriod){
+          const periodPartialCash=Math.round(partialAmount*cashRatio);
+          const periodPartialCompound=partialAmount-periodPartialCash;
+          const pKeyPartial=`${depositor.id}_${partialPeriod.month}`;
+          const existingPartial=payments[pKeyPartial];
+          totalCompoundDelta += periodPartialCompound - (existingPartial?.addedAmount||0);
+          const partialData={
+            depositId:depositor.id,depositorName:depositor.name,
+            depositAmount:depositor.depositAmount,interestRate:depositor.interestRate,
+            amountDue:partialPeriod.amount,amountPaid:periodPartialCash,
+            fine:0,totalPayout:periodPartialCash,
+            status:'Partial',addedToDeposit:periodPartialCompound>0,addedAmount:periodPartialCompound,
+            paymentDate:pf.date,paymentMode:pf.mode,
+            remarks:pf.remarks?`${pf.remarks} (partial from bulk settlement)`:'Partial from bulk settlement',
+            month:partialPeriod.month,updatedAt:serverTimestamp()
+          };
+          let partialPayDocId=existingPartial?.id;
+          if(existingPartial){await updateDoc(doc(db,'deposit_payments',existingPartial.id),partialData);}
+          else{partialData.createdAt=serverTimestamp();partialData.createdBy=user?.uid||null;const r=await addDoc(collection(db,'deposit_payments'),partialData);partialPayDocId=r.id;}
+          if(periodPartialCash>0){
+            await addDoc(collection(db,'finance_ledger_entries'),{
+              type:'Debit',category:'Deposit Settlement',
+              description:`Interest payout to ${depositor.name} — ${partialPeriod.label} (partial, from bulk settlement leftover)${periodPartialCompound>0?` + ₹${periodPartialCompound} compounded`:''}`,
+              amount:periodPartialCash,paymentMode:pf.mode,date:pf.date,
+              depositorName:depositor.name,depositId:depositor.id,
+              linkedDepositPaymentId:partialPayDocId,createdAt:serverTimestamp(),createdBy:user?.uid||null
+            });
+          }
+        }
+        // Apply the actual principal change — this is the step that was missing entirely.
+        if(totalCompoundDelta!==0){
+          const newDepositAmt=Math.max(0,(depositor.depositAmount||0)+totalCompoundDelta);
+          await updateDoc(doc(db,'deposit_master',depositor.id),{
+            depositAmount:newDepositAmt,
+            periodInterest:calcPeriodInt({...depositor,depositAmount:newDepositAmt}),
+            updatedAt:serverTimestamp()
           });
         }
         if(fine>0){
           await addDoc(collection(db,'finance_ledger_entries'),{
             type:'Credit',category:'Fine Income',
-            description:`Late-settlement fine from ${depositor.name} — bulk settlement of ${bulkPendingDep.length} periods`,
+            description:`Late-settlement fine from ${depositor.name} — bulk settlement of ${settledPeriods.length} periods`,
             amount:fine,paymentMode:pf.mode,date:pf.date,
             depositorName:depositor.name,depositId:depositor.id,
             createdAt:serverTimestamp(),createdBy:user?.uid||null
           });
         }
-        toast.success(`✓ ${bulkPendingDep.length} pending periods settled — ${formatCurrency(bulkPendingDep.reduce((s,p)=>s+p.amount,0)+fine)} total`);
+        const stillPendingTotal=stillPendingPeriods.reduce((s,p)=>s+p.amount,0);
+        const partialNote=partialPeriod?` (${formatCurrency(partialAmount)} applied as a partial payment for ${partialPeriod.label})`:'';
+        if(stillPendingPeriods.length>0 || partialPeriod){
+          toast.success(`✓ ${settledPeriods.length} period${settledPeriods.length!==1?'s':''} fully settled${partialNote}. ${formatCurrency(stillPendingTotal)} still pending for ${stillPendingPeriods.length} period${stillPendingPeriods.length!==1?'s':''}.`);
+        } else {
+          toast.success(`✓ All ${settledPeriods.length} pending periods settled — ${formatCurrency(settledPeriods.reduce((s,p)=>s+p.amount,0)+fine)} total`);
+        }
         setModal(null);setBulkPendingDep(null);setSaving(false);
         return;
       }
@@ -427,22 +510,24 @@ export default function DepositorSettlement(){
                         const key=`${dep.id}_${slot.month}`;
                         const p=payments[key];
                         const isPaid=p?.status==='Paid';
+                        const isPartial=p?.status==='Partial';
                         const isAdded=p?.addedToDeposit;
                         const isCur=slot.month===curMo;
                         const isFut=slot.isFuture;
                         const dOD=isFut?0:getDaysOverdue(slot.dueDate);
-                        const bg=isPaid?'rgba(52,199,89,0.08)':isAdded?'rgba(88,86,214,0.08)':isFut?'rgba(0,0,0,0.02)':isCur?'rgba(0,122,255,0.08)':dOD>2?'rgba(255,59,48,0.06)':'rgba(0,0,0,0.02)';
-                        const border=isPaid?'1.5px solid rgba(52,199,89,0.3)':isAdded?'1.5px solid rgba(88,86,214,0.3)':isFut?'1px dashed rgba(0,0,0,0.12)':isCur?'2px solid rgba(0,122,255,0.4)':dOD>2?'1.5px solid rgba(255,59,48,0.25)':'1px solid rgba(0,0,0,0.08)';
-                        const col=isPaid?'#34c759':isAdded?'#5856d6':isFut?'var(--text-secondary)':isCur?'#007aff':dOD>2?'#ff3b30':'var(--text-primary)';
+                        const bg=isPaid?'rgba(52,199,89,0.08)':isPartial?'rgba(255,149,0,0.08)':isAdded?'rgba(88,86,214,0.08)':isFut?'rgba(0,0,0,0.02)':isCur?'rgba(0,122,255,0.08)':dOD>2?'rgba(255,59,48,0.06)':'rgba(0,0,0,0.02)';
+                        const border=isPaid?'1.5px solid rgba(52,199,89,0.3)':isPartial?'1.5px solid rgba(255,149,0,0.3)':isAdded?'1.5px solid rgba(88,86,214,0.3)':isFut?'1px dashed rgba(0,0,0,0.12)':isCur?'2px solid rgba(0,122,255,0.4)':dOD>2?'1.5px solid rgba(255,59,48,0.25)':'1px solid rgba(0,0,0,0.08)';
+                        const col=isPaid?'#34c759':isPartial?'#ff9500':isAdded?'#5856d6':isFut?'var(--text-secondary)':isCur?'#007aff':dOD>2?'#ff3b30':'var(--text-primary)';
                         return(
                           <div key={slot.month} onClick={()=>openPay(dep,slot)} style={{padding:'10px 11px',borderRadius:10,border,background:bg,cursor:'pointer',position:'relative',opacity:isFut?0.7:1}}>
                             {isCur&&<div style={{position:'absolute',top:-8,left:'50%',transform:'translateX(-50%)',background:'#007aff',color:'#fff',fontSize:8.5,fontWeight:800,padding:'2px 7px',borderRadius:99,whiteSpace:'nowrap'}}>CURRENT</div>}
                             {isFut&&<div style={{position:'absolute',top:-8,left:'50%',transform:'translateX(-50%)',background:'rgba(0,0,0,0.3)',color:'#fff',fontSize:8.5,fontWeight:800,padding:'2px 7px',borderRadius:99,whiteSpace:'nowrap'}}>UPCOMING</div>}
                             <div style={{fontSize:11,fontWeight:700,color:col,marginBottom:2}}>{slot.label}</div>
-                            <div style={{fontSize:13,fontWeight:800,color:col}}>{isPaid?formatCurrency(p.totalPayout||p.amountPaid):isAdded?'+ Principal':formatCurrency(Math.round(periodInt))}</div>
+                            <div style={{fontSize:13,fontWeight:800,color:col}}>{isPaid?formatCurrency(p.totalPayout||p.amountPaid):isPartial?formatCurrency((p.amountPaid||0)+(p.addedAmount||0)):isAdded?'+ Principal':formatCurrency(Math.round(periodInt))}</div>
                             {isPaid&&<div style={{fontSize:9.5,color:'#34c759',marginTop:2}}>✓ paid</div>}
+                            {isPartial&&<div style={{fontSize:9.5,color:'#ff9500',marginTop:2}}>{formatCurrency(Math.max(0,(p.amountDue||0)-(p.amountPaid||0)-(p.addedAmount||0)))} remaining</div>}
                             {isFut&&!isPaid&&<div style={{fontSize:9.5,color:'var(--text-secondary)',marginTop:2}}>advance allowed</div>}
-                            {!isFut&&!isPaid&&dOD>2&&!isAdded&&<div style={{fontSize:9.5,color:'#ff3b30',fontWeight:600,marginTop:2}}>{dOD}d late</div>}
+                            {!isFut&&!isPaid&&!isPartial&&dOD>2&&!isAdded&&<div style={{fontSize:9.5,color:'#ff3b30',fontWeight:600,marginTop:2}}>{dOD}d late</div>}
                             {p?.remarks&&<div style={{fontSize:9,color:'var(--text-tertiary)',marginTop:3,fontStyle:'italic',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={p.remarks}>📝 {p.remarks}</div>}
                           </div>
                         );
@@ -488,7 +573,11 @@ export default function DepositorSettlement(){
       <Modal open={!!modal} onClose={()=>{setModal(null);setBulkPendingDep(null);}} title={`Settle Interest — ${modal?.depositor?.name}`} width={500}
         footer={modal&&(
           <div style={{display:'flex',gap:10,width:'100%'}}>
-            <Button onClick={()=>savePay(true)} disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?'Saving…':bulkPendingDep?`✓ Settle All ${bulkPendingDep.length} Periods`:'✓ Settle'}</Button>
+            <Button onClick={()=>savePay(true)} disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?'Saving…':bulkPendingDep?(()=>{
+              let budget=(parseFloat(pf.cashAmount)||0)+(parseFloat(pf.compoundAmount)||0),covered=0;
+              for(const p of bulkPendingDep){if(budget>=p.amount){budget-=p.amount;covered++;}else break;}
+              return covered===bulkPendingDep.length?`✓ Settle All ${bulkPendingDep.length} Periods`:`✓ Settle ${covered} of ${bulkPendingDep.length} Periods`;
+            })():'✓ Settle'}</Button>
             {!bulkPendingDep&&<Button variant="danger" onClick={()=>savePay(false)} disabled={saving}>Mark Unpaid</Button>}
           </div>
         )}>
