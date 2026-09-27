@@ -1,5 +1,5 @@
 import React,{useEffect,useState} from 'react';
-import {collection,onSnapshot,addDoc,serverTimestamp,doc,updateDoc} from 'firebase/firestore';
+import {collection,onSnapshot,addDoc,serverTimestamp,doc,updateDoc,deleteDoc,getDocs,query,where} from 'firebase/firestore';
 import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
 import {scopeToUser} from '../../utils/scopeHelper';
@@ -39,10 +39,17 @@ export default function InterestCollection(){
   const[repayments,setRepayments]=useState({});
   const[additions,setAdditions]=useState({}); // extra amounts added, per borrower — used to keep the CURRENT month's interest from jumping early
   const[bulkPending,setBulkPending]=useState(null); // when >1 period is pending, holds each period's own fixed amount for one-shot settlement
+  const[payThroughMonth,setPayThroughMonth]=useState(null); // "pay through" month picked from the pending range — same calendar-picker logic as Depositor Settlement: settlement only covers earliest-pending..this month (cumulative), shown in blue
   const[loading,setLoading]=useState(true);
   const[modal,setModal]=useState(null); // borrower
-  const[pf,setPf]=useState({date:'',mode:'Cash',amount:'',fine:'0',collectFine:false,addToLoan:false,remarks:''});
+  // cashAmount / addAmount — independent split, exactly like Depositor Settlement's
+  // Cash in Hand / Add to Deposit: cash paid out vs interest added back into the
+  // loan principal (compound), any ratio, not an all-or-nothing checkbox anymore.
+  const[pf,setPf]=useState({date:'',mode:'Cash',cashAmount:'',addAmount:'',fine:'0',collectFine:false,remarks:''});
   const[saving,setSaving]=useState(false);
+  const[axisLedger,setAxisLedger]=useState([]); // this borrower's settlement ledger entries, shown inside the Collect Interest popup for one-click Undo
+  const[axisLedgerLoading,setAxisLedgerLoading]=useState(false);
+  const[undoingKey,setUndoingKey]=useState(null);
   const _flt=(()=>{try{return JSON.parse(localStorage.getItem('fl_ic_filters'))||{}}catch(e){return{}}})();
   const[viewMode]=useState('history'); // "This Month" view removed — always shows full history now
   const[search,setSearch]=useState('');
@@ -53,6 +60,7 @@ export default function InterestCollection(){
   useEffect(()=>{try{localStorage.setItem('fl_ic_filters',JSON.stringify({viewMode,statusFilter,amtRange,monthsFilter,sortBy}))}catch(e){}},[viewMode,statusFilter,amtRange,monthsFilter,sortBy]);
   const[month,setMonth]=useState(()=>{const n=new Date();return`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;});
   const[selected,setSelected]=useState(null);
+  const[scope,setScope]=useState('month'); // 'month' = selected month only, 'overall' = full history up to date — toggle for the header stat tiles + Export PDF
   const DAILY_FINE=50;
 
   useEffect(()=>{
@@ -87,10 +95,11 @@ export default function InterestCollection(){
     const repaid=reps.reduce((s,r)=>s+(r.repaidAmount||r.amount||0),0);
     let outstanding = Math.max(0,(b.loanAmount||0)-repaid);
     const adds = additions[b.id]||[];
-    // An addition applies STARTING the month it was made — a top-up in August
-    // means August itself already uses the new, larger principal. Only months
-    // BEFORE the addition (June, July) keep the old, smaller amount.
-    const notYetEffective = adds.filter(a=>a.date && a.date.slice(0,7)>targetMonth).reduce((s,a)=>s+(a.amount||0),0);
+    // BUG FIX: the comment above always said "next month onward" but this line used
+    // `>` instead of `>=`, so an addition was actually taking effect the SAME month
+    // it was made. An addition made DURING a month hasn't been held all month, so
+    // it only starts counting from the FOLLOWING month.
+    const notYetEffective = adds.filter(a=>a.date && a.date.slice(0,7)>=targetMonth).reduce((s,a)=>s+(a.amount||0),0);
     return Math.max(0, outstanding-notYetEffective);
   }
 
@@ -99,7 +108,19 @@ export default function InterestCollection(){
     return outstanding*(b.interestRate||0)/100;
   }
 
-  function openModal(b,forMonth){
+  // `throughMonth` mirrors Depositor Settlement's openPay(): omitted, the bulk
+  // default is unchanged — the full pending range (the ⋮ axis button never
+  // passes one). Passed explicitly (as the calendar cards below now do, with the
+  // clicked card's own month), it scopes settlement to the cumulative range up
+  // to that month only. Same engine either way — nothing about the underlying
+  // settlement math changes based on how it was opened.
+  function activeBulkPeriods(list,through){
+    if(!list)return null;
+    if(!through)return list;
+    return list.filter(p=>p.month<=through);
+  }
+
+  function openModal(b,forMonth,throughMonth){
     const m=forMonth||month;
     if(forMonth&&forMonth!==month) setMonth(forMonth); // keep 'month' state in sync for the view, but don't rely on it below — state updates are async
     const outstanding=getOutstanding(b,m); // BUG FIX: was getOutstanding(b) with no month, which silently used the OLD selected month (a stale closure) instead of the month actually being opened
@@ -120,18 +141,25 @@ export default function InterestCollection(){
       month:mo,
       amount:Math.round(calcInterest(b,getOutstanding(b,mo))),
     }));
-    const combinedTotal=pendingBreakdown.reduce((s,p)=>s+p.amount,0);
 
     setModal(b);
-    setBulkPending(pendingBreakdown.length>1?pendingBreakdown:null);
+    const isBulk=pendingBreakdown.length>1;
+    setBulkPending(isBulk?pendingBreakdown:null);
+    // Default "pay through" = the full pending range (last pending month) unless a
+    // specific target was passed in — nothing changes for the ⋮ button, which
+    // never passes one.
+    const resolvedThrough=isBulk?(throughMonth&&pendingBreakdown.some(p=>p.month===throughMonth)?throughMonth:pendingBreakdown[pendingBreakdown.length-1].month):null;
+    setPayThroughMonth(resolvedThrough);
+    const combinedTotal=isBulk?pendingBreakdown.filter(p=>p.month<=resolvedThrough).reduce((s,p)=>s+p.amount,0):pendingBreakdown.reduce((s,p)=>s+p.amount,0);
+    const existing=payments[b.id]?.[m];
     setPf({
       date:new Date().toISOString().split('T')[0],
-      mode:'Cash',
-      amount:String(pendingBreakdown.length>1?combinedTotal:Math.round(interest)),
+      mode:existing?.paymentMode||'Cash',
+      cashAmount:String(isBulk?combinedTotal:(existing?(existing.amountPaid||0):Math.round(interest))),
+      addAmount:String(isBulk?0:(existing?.addedAmount||0)),
       fine:'',  // empty — user enters manually
       collectFine:false, // OFF by default
-      addToLoan:false, // for compound — add interest to loan principal
-      remarks:''
+      remarks:existing?.remarks||''
     });
   }
 
@@ -139,74 +167,75 @@ export default function InterestCollection(){
     if(!modal)return;
     setSaving(true);
     try{
-      // Bulk settle — several periods were pending, and the user is closing them
-      // all out in one action. Each period still gets recorded with its OWN
-      // correct fixed interest amount (never split from the combined total) —
-      // the single entered amount is just a convenient way to confirm the total.
+      // Bulk settle — several periods were pending, closed out in one action.
+      // Exactly the Depositor Settlement engine: cash covers as many WHOLE
+      // periods as it reaches, oldest first; once cash runs out, the "add to
+      // loan" portion continues covering whole periods the same way; whatever's
+      // left over becomes ONE Partial on the next period. Only periods up to the
+      // picked "pay through" month are touched — anything after stays pending.
       if(bulkPending && paid===true){
+        const batchId=`${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
         const fine=pf.collectFine?parseFloat(pf.fine)||0:0;
-        // The entered amount might be LESS than the full combined total — allocate
-        // it to whole periods only, oldest first, and stop once it runs out. A
-        // period only gets marked Paid if there's enough left to cover it FULLY;
-        // anything that doesn't fit stays genuinely Pending, not partially settled.
-        let budget=parseFloat(pf.amount)||0;
+        const totalCash=parseFloat(pf.cashAmount)||0;
+        const totalAdd=parseFloat(pf.addAmount)||0;
+        const periodsInScope=activeBulkPeriods(bulkPending,payThroughMonth);
+        const periodsBeyond=bulkPending.filter(p=>!periodsInScope.includes(p));
+        let cashBudget=totalCash, addBudget=totalAdd;
         const settledPeriods=[];
         const stillPendingPeriods=[];
-        for(const period of bulkPending){
-          if(budget>=period.amount){
-            budget-=period.amount;
-            settledPeriods.push(period);
+        let partialPeriod=null, partialCash=0, partialAdd=0;
+        let exhausted=false;
+        for(const period of periodsInScope){
+          if(exhausted){ stillPendingPeriods.push(period); continue; }
+          const fromCash=Math.min(cashBudget,period.amount); cashBudget-=fromCash;
+          let remaining=period.amount-fromCash;
+          const fromAdd=Math.min(addBudget,remaining); addBudget-=fromAdd;
+          remaining-=fromAdd;
+          if(remaining<=0){
+            settledPeriods.push({...period,cash:fromCash,add:fromAdd});
+          } else if(fromCash>0||fromAdd>0){
+            partialPeriod=period; partialCash=fromCash; partialAdd=fromAdd;
+            exhausted=true;
           } else {
             stillPendingPeriods.push(period);
+            exhausted=true;
           }
         }
-        // BUG FIX: any money left over after settling whole periods was previously
-        // just discarded — pay ₹20,000 against 6 periods of ₹3,000 (₹18,000) and
-        // the remaining ₹2,000 vanished instead of being recorded anywhere. That
-        // leftover now becomes a PARTIAL payment on the next pending period, so
-        // the full amount actually received is always accounted for somewhere.
-        let partialPeriod=null, partialAmount=0;
-        if(budget>0 && stillPendingPeriods.length>0){
-          partialPeriod=stillPendingPeriods.shift();
-          partialAmount=budget;
-        }
+        const partialAmount=partialCash+partialAdd;
+        let totalAddDelta=0,totalCashSettled=0,totalAddSettled=0;
         for(const period of settledPeriods){
           const bPays=payments[modal.id]||{};
           const existing=bPays[period.month];
+          totalAddDelta += period.add - (existing?.addedAmount||0);
+          totalCashSettled += period.cash; totalAddSettled += period.add;
           const data={
             borrowerId:modal.id,borrowerName:modal.borrowerName,
             loanAmount:modal.loanAmount,
             interestRate:modal.interestRate,amountDue:period.amount,
-            amountPaid:period.amount,
-            fine:0,totalCollected:period.amount, // fine (if any) recorded once, separately, below — not per period
-            status:'Paid',
-            paymentDate:pf.date,paymentMode:pf.mode,
+            amountPaid:period.cash,
+            fine:0,totalCollected:period.cash, // fine (if any) recorded once, separately, below — not per period
+            status:'Paid',addedToLoan:period.add>0,addedAmount:period.add,
+            paymentDate:pf.date,paymentMode:pf.mode,settlementBatchId:batchId,
             remarks:pf.remarks,month:period.month,
             updatedAt:serverTimestamp()
           };
           let payId=existing?.id;
           if(existing){await updateDoc(doc(db,'borrower_interest_payments',existing.id),data);}
           else{data.createdAt=serverTimestamp();data.createdBy=user?.uid||null;const r=await addDoc(collection(db,'borrower_interest_payments'),data);payId=r.id;}
-
-          await addDoc(collection(db,'finance_ledger_entries'),{
-            type:'Credit',category:'Loan Interest',
-            description:`Interest (bulk settlement) from ${modal.borrowerName} — ${period.month}`,
-            amount:period.amount,paymentMode:pf.mode,date:pf.date,
-            borrowerName:modal.borrowerName,borrowerId:modal.id,
-            linkedPaymentId:payId,createdAt:serverTimestamp(),createdBy:user?.uid||null
-          });
         }
         if(partialPeriod){
           const bPays=payments[modal.id]||{};
           const existingPartial=bPays[partialPeriod.month];
+          totalAddDelta += partialAdd - (existingPartial?.addedAmount||0);
+          totalCashSettled += partialCash; totalAddSettled += partialAdd;
           const partialData={
             borrowerId:modal.id,borrowerName:modal.borrowerName,
             loanAmount:modal.loanAmount,
             interestRate:modal.interestRate,amountDue:partialPeriod.amount,
-            amountPaid:partialAmount,
-            fine:0,totalCollected:partialAmount,
-            status:'Partial',
-            paymentDate:pf.date,paymentMode:pf.mode,
+            amountPaid:partialCash,
+            fine:0,totalCollected:partialCash,
+            status:'Partial',addedToLoan:partialAdd>0,addedAmount:partialAdd,
+            paymentDate:pf.date,paymentMode:pf.mode,settlementBatchId:batchId,
             remarks:pf.remarks?`${pf.remarks} (partial from bulk settlement)`:'Partial from bulk settlement',
             month:partialPeriod.month,
             updatedAt:serverTimestamp()
@@ -214,105 +243,294 @@ export default function InterestCollection(){
           let partialPayId=existingPartial?.id;
           if(existingPartial){await updateDoc(doc(db,'borrower_interest_payments',existingPartial.id),partialData);}
           else{partialData.createdAt=serverTimestamp();partialData.createdBy=user?.uid||null;const r=await addDoc(collection(db,'borrower_interest_payments'),partialData);partialPayId=r.id;}
+        }
+        const periodCount=settledPeriods.length+(partialPeriod?1:0);
+        const rangeLabel=periodCount>0?(periodCount===1?(settledPeriods[0]||partialPeriod).month:`${bulkPending[0].month} – ${(partialPeriod||settledPeriods[settledPeriods.length-1]).month}`):'';
+        // ONE combined ledger row for the whole cash payout, whatever it covers —
+        // matches Depositor Settlement's single-row-per-action ledger model.
+        if(totalCashSettled>0){
           await addDoc(collection(db,'finance_ledger_entries'),{
             type:'Credit',category:'Loan Interest',
-            description:`Interest (partial, from bulk settlement leftover) from ${modal.borrowerName} — ${partialPeriod.month}`,
-            amount:partialAmount,paymentMode:pf.mode,date:pf.date,
-            borrowerName:modal.borrowerName,borrowerId:modal.id,
-            linkedPaymentId:partialPayId,createdAt:serverTimestamp(),createdBy:user?.uid||null
+            description:`Interest collected from ${modal.borrowerName} — ${periodCount} period${periodCount!==1?'s':''} (${rangeLabel}) settled today${totalAddSettled>0?` + ₹${totalAddSettled.toLocaleString('en-IN')} added to loan`:''}`,
+            amount:totalCashSettled,paymentMode:pf.mode,date:pf.date,remarks:pf.remarks||'',
+            borrowerName:modal.borrowerName,borrowerId:modal.id,settlementBatchId:batchId,
+            createdAt:serverTimestamp(),createdBy:user?.uid||null
           });
+        }
+        // Apply the actual principal change, AND record it as one dated addition
+        // (like loan_additions elsewhere) so getOutstanding correctly excludes it
+        // from THIS settlement month's own interest and only counts it starting
+        // next month — same fix v152 gave the deposit side.
+        if(totalAddDelta!==0){
+          const newLoanAmt=Math.max(0,(modal.loanAmount||0)+totalAddDelta);
+          await updateDoc(doc(db,'borrower_master',modal.id),{
+            loanAmount:newLoanAmt,
+            monthlyInterest:newLoanAmt*(modal.interestRate||0)/100,
+            updatedAt:serverTimestamp()
+          });
+          if(totalAddDelta>0){
+            await addDoc(collection(db,'loan_additions'),{
+              borrowerId:modal.id,borrowerName:modal.borrowerName,loanId:modal.loanId||modal.id,
+              amount:totalAddDelta,previousAmount:modal.loanAmount||0,newAmount:newLoanAmt,
+              date:pf.date,remarks:`Interest added to loan from settling ${periodCount} period${periodCount!==1?'s':''} (${rangeLabel})`,
+              settlementBatchId:batchId,createdAt:serverTimestamp(),createdBy:user?.uid||null
+            });
+          }
+          if(totalAddSettled>0){
+            await addDoc(collection(db,'finance_ledger_entries'),{
+              type:'Credit',category:'Interest Added to Loan',
+              description:`Interest added to ${modal.borrowerName}'s loan principal — ${periodCount} period${periodCount!==1?'s':''} (${rangeLabel}), not collected in cash`,
+              amount:totalAddSettled,paymentMode:'Compound',date:pf.date,remarks:pf.remarks||'',
+              borrowerName:modal.borrowerName,borrowerId:modal.id,settlementBatchId:batchId,
+              createdAt:serverTimestamp(),createdBy:user?.uid||null
+            });
+          }
         }
         if(fine>0){
           await addDoc(collection(db,'finance_ledger_entries'),{
             type:'Credit',category:'Fine Income',
             description:`Late-payment fine from ${modal.borrowerName} — bulk settlement of ${settledPeriods.length} periods`,
-            amount:fine,paymentMode:pf.mode,date:pf.date,
-            borrowerName:modal.borrowerName,borrowerId:modal.id,
+            amount:fine,paymentMode:pf.mode,date:pf.date,remarks:pf.remarks||'',
+            borrowerName:modal.borrowerName,borrowerId:modal.id,settlementBatchId:batchId,
             createdAt:serverTimestamp(),createdBy:user?.uid||null
           });
         }
-        const stillPendingTotal=stillPendingPeriods.reduce((s,p)=>s+p.amount,0);
+        const stillPendingTotal=stillPendingPeriods.reduce((s,p)=>s+p.amount,0)+periodsBeyond.reduce((s,p)=>s+p.amount,0);
+        const stillPendingCount=stillPendingPeriods.length+periodsBeyond.length;
         const partialNote=partialPeriod?` (${formatCurrency(partialAmount)} applied as a partial payment for ${partialPeriod.month})`:'';
-        if(stillPendingPeriods.length>0 || partialPeriod){
-          toast.success(`✓ ${settledPeriods.length} period${settledPeriods.length!==1?'s':''} fully settled${partialNote}. ${formatCurrency(stillPendingTotal)} still pending for ${stillPendingPeriods.length} period${stillPendingPeriods.length!==1?'s':''}.`);
+        const throughNote=periodsBeyond.length>0?` Settled through ${periodsInScope[periodsInScope.length-1].month} — ${periodsBeyond.length} period${periodsBeyond.length!==1?'s':''} from ${periodsBeyond[0].month} onward left pending as chosen.`:'';
+        if(stillPendingCount>0 || partialPeriod){
+          toast.success(`✓ ${settledPeriods.length} period${settledPeriods.length!==1?'s':''} fully settled${partialNote}. ${formatCurrency(stillPendingTotal)} still pending for ${stillPendingCount} period${stillPendingCount!==1?'s':''}.${throughNote}`);
         } else {
           toast.success(`✓ All ${settledPeriods.length} pending periods settled — ${formatCurrency(settledPeriods.reduce((s,p)=>s+p.amount,0)+fine)} total`);
         }
-        setModal(null);setBulkPending(null);setSaving(false);
+        setModal(null);setBulkPending(null);setPayThroughMonth(null);setSaving(false);
         return;
       }
 
       const isPartial=paid==='partial';const isPaid=paid===true;
-      const collected=isPaid||isPartial;
       const bPays=payments[modal.id]||{};
       const existing=bPays[month];
       const outstanding=getOutstanding(modal);
       const interest=calcInterest(modal,outstanding);
       const fine=pf.collectFine?parseFloat(pf.fine)||0:0;
-      const totalCollected=collected?(parseFloat(pf.amount)||0)+fine:0;
+
+      // Independent split — cash collected vs interest added back to the loan
+      // principal (compound), any ratio, exactly like Depositor Settlement's
+      // Cash in Hand / Add to Deposit split (no longer an all-or-nothing toggle).
+      const cashVal=(isPaid||isPartial)?(parseFloat(pf.cashAmount)||0):0;
+      const addVal=(isPaid||isPartial)?(parseFloat(pf.addAmount)||0):0;
+      const prevAdd=existing?.addedAmount||0;
+      const principalDelta=addVal-prevAdd; // reverses cleanly if edited or unpaid
+
+      const totalGiven=cashVal+addVal;
+      const dueRounded=Math.round(interest);
+      const newStatus=(!isPaid&&!isPartial)?'Unpaid':(totalGiven>=dueRounded?'Paid':(totalGiven>0?'Partial':'Unpaid'));
+      const collected=newStatus==='Paid'||newStatus==='Partial';
+      const batchId=collected?`${Date.now()}_${Math.random().toString(36).slice(2,8)}`:(existing?.settlementBatchId||null);
+      const totalCollected=collected?cashVal+fine:0;
 
       const data={
         borrowerId:modal.id,borrowerName:modal.borrowerName,
         loanAmount:modal.loanAmount,outstandingBalance:outstanding,
-        interestRate:modal.interestRate,amountDue:Math.round(interest),
-        amountPaid:collected?(parseFloat(pf.amount)||0):0,
+        interestRate:modal.interestRate,amountDue:dueRounded,
+        amountPaid:cashVal,
         fine:collected?fine:0,totalCollected,
-        status:isPaid?'Paid':isPartial?'Partial':'Unpaid',
+        status:newStatus,addedToLoan:addVal>0,addedAmount:addVal,
         paymentDate:collected?pf.date:null,paymentMode:collected?pf.mode:null,
-        remarks:pf.remarks,month,addedToLoan:pf.addToLoan&&!collected,
-        updatedAt:serverTimestamp()
+        settlementBatchId:batchId,
+        remarks:pf.remarks,month,updatedAt:serverTimestamp()
       };
 
       let payId=existing?.id;
       if(existing){await updateDoc(doc(db,'borrower_interest_payments',existing.id),data);}
       else{data.createdAt=serverTimestamp();data.createdBy=user?.uid||null;const r=await addDoc(collection(db,'borrower_interest_payments'),data);payId=r.id;}
 
-      if(collected){
-        // Ledger entry for the interest itself — fine is recorded SEPARATELY below, so
-        // it never gets mixed into loan/interest accounting; fine income flows straight
-        // to net profit on its own, as its own line item.
-        const interestOnly=parseFloat(pf.amount)||0;
+      if(collected&&cashVal>0){
+        // Ledger entry for the cash interest itself — fine is recorded SEPARATELY
+        // below, so it never gets mixed into loan/interest accounting.
         const lData={
           type:'Credit',category:'Loan Interest',
-          description:`Interest${isPartial?' (partial)':''} from ${modal.borrowerName} — ${month}`,
-          amount:interestOnly,paymentMode:pf.mode,date:pf.date,
+          description:`Interest${isPartial?' (partial)':''} from ${modal.borrowerName} — ${month}${addVal>0?` (₹${addVal} added to loan separately)`:''}`,
+          amount:cashVal,paymentMode:pf.mode,date:pf.date,remarks:pf.remarks||'',
           borrowerName:modal.borrowerName,borrowerId:modal.id,
+          settlementBatchId:batchId,
           linkedPaymentId:payId,createdAt:serverTimestamp(),createdBy:user?.uid||null
         };
         if(existing?.ledgerEntryId){await updateDoc(doc(db,'finance_ledger_entries',existing.ledgerEntryId),{...lData,createdAt:undefined,updatedAt:serverTimestamp()});}
         else await addDoc(collection(db,'finance_ledger_entries'),lData);
+      }
+      // Interest-added-to-loan ledger row — update in place on re-edit, remove if
+      // the add amount is edited back down to zero. Same pattern as Depositor
+      // Settlement's compoundLedgerEntryId.
+      let addLedgerEntryId=existing?.addLedgerEntryId||null;
+      if(collected&&addVal>0){
+        const aData={
+          type:'Credit',category:'Interest Added to Loan',
+          description:`Interest added to ${modal.borrowerName}'s loan principal — ${month} (not collected in cash)`,
+          amount:addVal,paymentMode:'Compound',date:pf.date,remarks:pf.remarks||'',
+          borrowerName:modal.borrowerName,borrowerId:modal.id,
+          settlementBatchId:batchId,
+          linkedPaymentId:payId,createdAt:serverTimestamp(),createdBy:user?.uid||null
+        };
+        if(addLedgerEntryId){await updateDoc(doc(db,'finance_ledger_entries',addLedgerEntryId),{...aData,createdAt:undefined,updatedAt:serverTimestamp()});}
+        else{const r=await addDoc(collection(db,'finance_ledger_entries'),aData);addLedgerEntryId=r.id;}
+      } else if(addLedgerEntryId){
+        await updateDoc(doc(db,'finance_ledger_entries',addLedgerEntryId),{deleted:true,deletedAt:serverTimestamp(),deletedBy:user?.uid||null});
+        addLedgerEntryId=null;
+      }
+      await updateDoc(doc(db,'borrower_interest_payments',payId),{addLedgerEntryId});
 
-        if(fine>0){
-          await addDoc(collection(db,'finance_ledger_entries'),{
-            type:'Credit',category:'Fine Income',
-            description:`Late-payment fine from ${modal.borrowerName} — ${month}`,
-            amount:fine,paymentMode:pf.mode,date:pf.date,
-            borrowerName:modal.borrowerName,borrowerId:modal.id,
-            linkedPaymentId:payId,createdAt:serverTimestamp(),createdBy:user?.uid||null
-          });
-        }
+      if(collected&&fine>0){
+        await addDoc(collection(db,'finance_ledger_entries'),{
+          type:'Credit',category:'Fine Income',
+          description:`Late-payment fine from ${modal.borrowerName} — ${month}`,
+          amount:fine,paymentMode:pf.mode,date:pf.date,remarks:pf.remarks||'',
+          borrowerName:modal.borrowerName,borrowerId:modal.id,
+          settlementBatchId:batchId,
+          linkedPaymentId:payId,createdAt:serverTimestamp(),createdBy:user?.uid||null
+        });
       }
 
-      // Compound interest: add interest amount to loan principal
-      if(pf.addToLoan&&!collected){
-        const newLoanAmount=(modal.loanAmount||0)+Math.round(interest);
+      // Compound portion: apply the principal delta, cleanly reversible if
+      // edited/unpaid. ALSO record it as a dated loan_additions entry so
+      // getOutstanding correctly excludes it from THIS month's own interest and
+      // only starts counting it from next month onward.
+      let addAdditionId=existing?.addAdditionId||null;
+      if(principalDelta!==0){
+        const newAmt=Math.max(0,(modal.loanAmount||0)+principalDelta);
         await updateDoc(doc(db,'borrower_master',modal.id),{
-          loanAmount:newLoanAmount,
-          monthlyInterest:newLoanAmount*(modal.interestRate||0)/100,
+          loanAmount:newAmt,
+          monthlyInterest:newAmt*(modal.interestRate||0)/100,
           updatedAt:serverTimestamp()
         });
-        toast.success(`Interest ₹${Math.round(interest).toLocaleString('en-IN')} added to loan principal. New loan: ${formatCurrency(newLoanAmount)}`);
-      } else {
-        toast.success(isPaid?`Payment recorded!${fine>0?` (incl. fine ₹${fine})`:''}`:isPartial?'Partial payment recorded':'Marked as unpaid');
       }
+      if(addVal>0){
+        const adData={
+          borrowerId:modal.id,borrowerName:modal.borrowerName,loanId:modal.loanId||modal.id,
+          amount:addVal,date:pf.date,
+          remarks:`Interest added to loan from settling ${month}`,
+          settlementBatchId:batchId,updatedAt:serverTimestamp()
+        };
+        if(addAdditionId){await updateDoc(doc(db,'loan_additions',addAdditionId),adData);}
+        else{adData.createdAt=serverTimestamp();adData.createdBy=user?.uid||null;const r=await addDoc(collection(db,'loan_additions'),adData);addAdditionId=r.id;}
+      } else if(addAdditionId){
+        await deleteDoc(doc(db,'loan_additions',addAdditionId));
+        addAdditionId=null;
+      }
+      await updateDoc(doc(db,'borrower_interest_payments',payId),{addAdditionId});
+
+      const partialNote2=newStatus==='Partial'?` — ₹${(dueRounded-totalGiven).toLocaleString('en-IN')} still pending for this period`:'';
+      toast.success(collected
+        ?(addVal>0&&cashVal>0?`✓ Settled — ${formatCurrency(cashVal)} collected + ${formatCurrency(addVal)} added to loan${partialNote2}`:addVal>0?`✓ ${formatCurrency(addVal)} added to loan principal${partialNote2}`:`✓ Payment recorded!${fine>0?` (incl. fine ₹${fine})`:''}${partialNote2}`)
+        :'Marked as unpaid'
+      );
       setModal(null);
     }catch(e){toast.error('Failed: '+e.message);}finally{setSaving(false);}
   }
 
-  const totalDue=borrowers.reduce((s,b)=>s+calcInterest(b),0);
-  const totalColl=borrowers.filter(b=>['Paid','Partial'].includes(payments[b.id]?.[month]?.status)).reduce((s,b)=>s+(payments[b.id]?.[month]?.amountPaid||0),0); // fine excluded
-  const pending=totalDue-totalColl;
-  const rate=totalDue>0?Math.round((totalColl/totalDue)*100):0;
+  // ── Undo an ENTIRE settlement action (one click = one Collect Interest = one
+  // settlementBatchId, whether it covered 1 month or 10) — reverses it EVERYWHERE
+  // it touched: every period it settled goes back to Unpaid, the added-to-loan
+  // amount's own dated addition record is deleted and subtracted back out of the
+  // real loan principal, and every ledger entry the action created is
+  // soft-deleted (same Trash/Restore convention used elsewhere) so it's
+  // recoverable there if the undo itself turns out to be wrong.
+  async function undoBatch(borrower,batchId,label){
+    if(!batchId)return toast.error('This entry has no settlement to undo (older data from before Undo existed).');
+    if(!window.confirm(`Undo this settlement${label?` — ${label}`:''}?\n\nThis reverses the loan principal, deletes every ledger entry it created, and puts every period it covered back to Unpaid.`))return;
+    setUndoingKey(batchId);
+    try{
+      const bPays=payments[borrower.id]||{};
+      const touchedPayments=Object.values(bPays).filter(p=>p.settlementBatchId===batchId);
+      for(const p of touchedPayments){
+        await updateDoc(doc(db,'borrower_interest_payments',p.id),{
+          amountPaid:0,addedAmount:0,fine:0,totalCollected:0,
+          status:'Unpaid',addedToLoan:false,
+          paymentDate:null,paymentMode:null,addAdditionId:null,addLedgerEntryId:null,
+          remarks:p.remarks?`${p.remarks} (undone)`:'Undone',
+          updatedAt:serverTimestamp()
+        });
+      }
+      const addSnap=await getDocs(query(collection(db,'loan_additions'),where('settlementBatchId','==',batchId)));
+      let totalAdded=0;
+      for(const ad of addSnap.docs){ totalAdded+=ad.data().amount||0; await deleteDoc(doc(db,'loan_additions',ad.id)); }
+      if(totalAdded>0){
+        const revertedAmt=Math.max(0,(borrower.loanAmount||0)-totalAdded);
+        await updateDoc(doc(db,'borrower_master',borrower.id),{
+          loanAmount:revertedAmt,
+          monthlyInterest:revertedAmt*(borrower.interestRate||0)/100,
+          updatedAt:serverTimestamp()
+        });
+      }
+      const ledgerSnap=await getDocs(query(collection(db,'finance_ledger_entries'),where('settlementBatchId','==',batchId)));
+      for(const ld of ledgerSnap.docs){
+        await updateDoc(doc(db,'finance_ledger_entries',ld.id),{
+          deleted:true,deletedAt:serverTimestamp(),deletedBy:user?.uid||null,
+          revertedLinkedData:{loanBatch:{payments:touchedPayments,additionsTotal:totalAdded},loanPrincipalBefore:borrower.loanAmount}
+        });
+      }
+      toast.success(`✓ Undone — ${touchedPayments.length} period${touchedPayments.length!==1?'s':''} back to Unpaid${totalAdded>0?`, ${formatCurrency(totalAdded)} removed from principal`:''}`);
+    }catch(e){toast.error('Undo failed: '+e.message);}finally{setUndoingKey(null);}
+  }
+
+  // ── Loads this borrower's own settlement ledger entries so they can be undone
+  // right here in the Collect Interest popup — no need to hunt through the
+  // (now read-only-for-settled) monthly cards or the Ledger page separately.
+  async function loadAxisLedger(borrower){
+    setAxisLedgerLoading(true);
+    try{
+      const snap=await getDocs(query(collection(db,'finance_ledger_entries'),where('borrowerId','==',borrower.id)));
+      const list=scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid)
+        .filter(e=>!e.deleted&&['Loan Interest','Interest Added to Loan','Fine Income'].includes(e.category))
+        .sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||((b.createdAt?.toMillis?.()||0)-(a.createdAt?.toMillis?.()||0)));
+      setAxisLedger(list);
+    }catch(e){toast.error('Could not load ledger entries: '+e.message);}finally{setAxisLedgerLoading(false);}
+  }
+
+  // THIS MONTH — the selected month only.
+  const monthDue=borrowers.reduce((s,b)=>{
+    const pp=payments[b.id]?.[month];
+    return s+(pp&&pp.amountDue!=null?pp.amountDue:calcInterest(b,getOutstanding(b,month)));
+  },0);
+  const monthColl=borrowers.reduce((s,b)=>{
+    const pp=payments[b.id]?.[month];
+    if(!pp)return s;
+    if(pp.status==='Paid'||pp.status==='Partial'||pp.addedToLoan)return s+(pp.amountPaid||0)+(pp.addedAmount||0);
+    return s;
+  },0); // fine excluded
+  const monthPending=Math.max(0,monthDue-monthColl);
+  const monthRate=monthDue>0?Math.round((monthColl/monthDue)*100):0;
+
+  // OVERALL — every month from each loan's start date up to today, matching the
+  // exact same "up to date" logic used in the Export PDF and the per-borrower
+  // Full History rows below (falls back to calcInterest for months with no
+  // stored payment doc yet, so untouched pending months are never dropped).
+  const _curActualMo=(()=>{const n=new Date();return`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;})();
+  const overallDue=borrowers.reduce((s,b)=>{
+    const slots=getMonths(b.loanStartDate).filter(mo=>mo<=_curActualMo);
+    return s+slots.reduce((ss,mo)=>{
+      const pp=payments[b.id]?.[mo];
+      return ss+(pp&&pp.amountDue!=null?pp.amountDue:calcInterest(b,getOutstanding(b,mo)));
+    },0);
+  },0);
+  const overallColl=borrowers.reduce((s,b)=>{
+    const slots=getMonths(b.loanStartDate).filter(mo=>mo<=_curActualMo);
+    return s+slots.reduce((ss,mo)=>{
+      const pp=payments[b.id]?.[mo];
+      if(!pp)return ss;
+      if(pp.status==='Paid'||pp.status==='Partial'||pp.addedToLoan)return ss+(pp.amountPaid||0)+(pp.addedAmount||0);
+      return ss;
+    },0);
+  },0);
+  const overallPending=Math.max(0,overallDue-overallColl);
+  const overallRate=overallDue>0?Math.round((overallColl/overallDue)*100):0;
+
+  const isOverall=scope==='overall';
+  const totalDue=isOverall?overallDue:monthDue;
+  const totalColl=isOverall?overallColl:monthColl;
+  const pending=isOverall?overallPending:monthPending;
+  const rate=isOverall?overallRate:monthRate;
 
   const _today2=new Date();
   const _getMoUnpaid=b=>{
@@ -344,15 +562,23 @@ export default function InterestCollection(){
       <PageHeader title="Interest Collection" subtitle="Full interest history from loan start — with fine and compound interest support"
         action={
           <div style={{display:'flex',gap:10,alignItems:'center'}}>
-            <Button variant="secondary" onClick={()=>printCollectInterestSummary(filtBorrowers, payments, month, getOutstanding, calcInterest)}>Export PDF</Button>
+            <div style={{display:'flex',background:'rgba(118,118,128,0.1)',borderRadius:10,padding:3}}>
+              {['month','overall'].map(sc=>(
+                <button key={sc} onClick={()=>setScope(sc)}
+                  style={{padding:'6px 14px',borderRadius:8,border:'none',background:scope===sc?'#fff':'transparent',boxShadow:scope===sc?'0 1px 3px rgba(0,0,0,0.15)':'none',fontSize:12.5,fontWeight:700,color:scope===sc?'var(--text-primary)':'var(--text-secondary)',cursor:'pointer',fontFamily:'inherit'}}>
+                  {sc==='month'?'This Month':'Overall'}
+                </button>
+              ))}
+            </div>
+            <Button variant="secondary" onClick={()=>printCollectInterestSummary(filtBorrowers, payments, month, getOutstanding, calcInterest, scope)}>Export PDF</Button>
           </div>
         }/>
 
 
       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>
-        <StatCard label="Total Due" value={formatCurrency(Math.round(totalDue))} sub="Interest on outstanding" color="#ff9500"/>
-        <StatCard label="Collected" value={formatCurrency(Math.round(totalColl))} sub="Received this month" color="#34c759"/>
-        <StatCard label="Pending" value={formatCurrency(Math.round(pending))} sub="Still outstanding" color={pending>0?'#ff3b30':'#34c759'}/>
+        <StatCard label={isOverall?'Total Interest Up to Date':`Interest Due — ${new Date(month+'-01').toLocaleDateString('en-IN',{month:'short',year:'numeric'})}`} value={formatCurrency(Math.round(totalDue))} sub={isOverall?'All loans, from start to today':'Interest on outstanding, this month only'} color="#ff9500"/>
+        <StatCard label="Collected" value={formatCurrency(Math.round(totalColl))} sub={isOverall?'Collected all-time':'Received this month'} color="#34c759"/>
+        <StatCard label="Balance to Collect" value={formatCurrency(Math.round(pending))} sub={isOverall?'Still outstanding, up to date':'Still outstanding, this month'} color={pending>0?'#ff3b30':'#34c759'}/>
         <StatCard label="Collection Rate" value={`${rate}%`} sub="Of total due" color={rate>=90?'#34c759':rate>=60?'#ff9500':'#ff3b30'}/>
       </div>
 
@@ -372,17 +598,6 @@ export default function InterestCollection(){
           <option value="name">Sort: Name A–Z</option><option value="loan">Sort: Highest Loan</option><option value="interest">Sort: Highest Interest</option><option value="unpaid">Sort: Most Months Unpaid</option>
         </select>
       </div>
-
-      {/* Progress bar */}
-      <Card style={{marginBottom:16,padding:'16px 20px'}}>
-        <div style={{display:'flex',justifyContent:'space-between',marginBottom:8}}>
-          <span style={{fontSize:13,color:'var(--text-secondary)'}}>Collection Progress — {new Date(month+'-01').toLocaleDateString('en-IN',{month:'long',year:'numeric'})}</span>
-          <span style={{fontSize:14,fontWeight:700,color:rate>=90?'#34c759':rate>=60?'#ff9500':'#ff3b30'}}>{rate}%</span>
-        </div>
-        <div style={{background:'rgba(118,118,128,0.1)',borderRadius:99,height:8,overflow:'hidden'}}>
-          <div style={{width:`${rate}%`,height:'100%',background:rate>=90?'#34c759':rate>=60?'#ff9500':'#ff3b30',borderRadius:99,transition:'width 0.8s ease'}}/>
-        </div>
-      </Card>
 
       {/* Month view */}
       {viewMode==='month'&&(
@@ -420,7 +635,7 @@ export default function InterestCollection(){
                       <td style={{padding:'12px 14px',fontSize:13,color:'#ff3b30',fontWeight:fine>0?700:400}}>{fine>0?formatCurrency(fine):'—'}</td>
                       <td style={{padding:'12px 14px'}}>{p?<Badge label={p.status} type={p.status.toLowerCase()}/>:<Badge label="Pending" type="pending"/>}</td>
                       <td style={{padding:'12px 14px'}}>
-                        <Button size="sm" variant={['Paid','Partial'].includes(p?.status)?'secondary':'primary'} onClick={()=>openModal(b)}>{p?.status==='Paid'?'Update':p?.status==='Partial'?'Partial ✎':'Collect'}</Button>
+                        <Button size="sm" variant={['Paid','Partial'].includes(p?.status)?'secondary':'primary'} onClick={()=>{openModal(b);loadAxisLedger(b);}}>{p?.status==='Paid'?'Update':p?.status==='Partial'?'Partial ✎':'Collect'}</Button>
                       </td>
                     </tr>
                   );
@@ -441,10 +656,14 @@ export default function InterestCollection(){
               const slots=getMonths(b.loanStartDate);
               const isOpen=selected===b.id;
               const outstanding=getOutstanding(b);
-              const totalColl=slots.reduce((s,mo)=>s+(payments[b.id]?.[mo]?.amountPaid||0),0); // fine excluded
-              const paidCount=slots.filter(mo=>payments[b.id]?.[mo]?.status==='Paid').length;
+              // A month settled by adding to the loan (compounding) is JUST AS
+              // SETTLED as one collected in cash — count it here too, matching the
+              // same fix on the deposit side.
+              const totalColl=slots.reduce((s,mo)=>{const p=payments[b.id]?.[mo];return s+(p?.amountPaid||0)+(p?.addedAmount||0);},0);
+              const paidCount=slots.filter(mo=>{const p=payments[b.id]?.[mo];return p?.status==='Paid'||p?.addedToLoan;}).length;
               const curActualMo=(()=>{const n=new Date();return`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;})();
               const dueSlotsCount=slots.filter(mo=>mo<=curActualMo).length; // exclude future "advance allowed" slots from the X/Y count
+              const pendingSlots=slots.filter(mo=>mo<=curActualMo&&(()=>{const p=payments[b.id]?.[mo];return !(p?.status==='Paid'||p?.addedToLoan);})());
               // Total interest owed from loan START to END (now): use the STORED amountDue for months
               // that already have a record (historically accurate for that point in time); for months
               // never touched yet, fall back to today's estimate. Then subtract what's actually been
@@ -458,7 +677,7 @@ export default function InterestCollection(){
               const totalInterestCollected=dueSlots.reduce((s,mo)=>{
                 const pp=payments[b.id]?.[mo];
                 if(!pp)return s;
-                if(pp.status==='Paid'||pp.status==='Partial')return s+(pp.amountPaid||0); // fine excluded — never counted as interest
+                if(pp.status==='Paid'||pp.status==='Partial'||pp.addedToLoan)return s+(pp.amountPaid||0)+(pp.addedAmount||0);
                 return s;
               },0);
               const remainingInterestToPay=Math.max(0,totalInterestDue-totalInterestCollected);
@@ -485,6 +704,23 @@ export default function InterestCollection(){
                         <div style={{fontSize:11,color:'var(--text-secondary)'}}>{paidCount}/{dueSlotsCount} PAID</div>
                         <div style={{fontSize:15,fontWeight:700,color:'#34c759'}}>{formatCurrency(Math.round(totalColl))}</div>
                       </div>
+                      {pendingSlots.length>0&&(
+                        <div style={{padding:'4px 10px',borderRadius:99,background:'rgba(255,59,48,0.08)',border:'1px solid rgba(255,59,48,0.2)',fontSize:12,fontWeight:700,color:'#ff3b30'}}>{pendingSlots.length} pending</div>
+                      )}
+                      {/* Axis (⋮) button — same as Depositor Settlement: opens Collect
+                          Interest targeting the latest pending month (full pending
+                          range by default) and loads this borrower's undo ledger. */}
+                      {slots.length>0&&(
+                        <button title="Collect Interest / Undo" onClick={e=>{
+                          e.stopPropagation();
+                          const targetMo=pendingSlots.length>0?pendingSlots[pendingSlots.length-1]:slots[slots.length-1];
+                          openModal(b,targetMo);
+                          loadAxisLedger(b);
+                        }}
+                          style={{width:30,height:30,flexShrink:0,borderRadius:9,border:'1px solid rgba(0,0,0,0.1)',background:'#fff',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',color:'#3c3c43'}}>
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+                        </button>
+                      )}
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6e6e73" strokeWidth="2" style={{transform:isOpen?'rotate(180deg)':'none',transition:'transform 0.2s'}}><polyline points="6 9 12 15 18 9"/></svg>
                     </div>
                   </div>
@@ -509,17 +745,29 @@ export default function InterestCollection(){
                             const p=payments[b.id]?.[mo];
                             const isPaid=p?.status==='Paid';
                             const isPartial=p?.status==='Partial';
+                            const isAdded=p?.addedToLoan;
                             const curActualMonth=(()=>{const n=new Date();return`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;})();
                             const isFuture=mo>curActualMonth;
                             const label=new Date(mo+'-01').toLocaleDateString('en-IN',{month:'short',year:'numeric'});
+                            // Click a card to pay through it — same calendar-picker logic as
+                            // Depositor Settlement: clicking, say, August opens Collect Interest
+                            // already scoped to settle everything from the earliest pending
+                            // month cumulatively up through August, and this card turns blue.
+                            // Future ("advance allowed") months keep their original single-month
+                            // click-to-pay behavior — nothing changes there.
+                            const isPayTarget=modal&&modal.id===b.id&&(payThroughMonth?payThroughMonth===mo:month===mo&&!!modal);
+                            const monthInt=calcInterest(b,getOutstanding(b,mo)); // date-aware — each card computes its OWN month's amount, never a stale shared figure
                             return(
-                              <div key={mo} onClick={()=>openModal(b,mo)}
-                                style={{padding:'10px 12px',borderRadius:10,border:`1px ${isFuture?'dashed':'solid'} ${isPaid?'rgba(52,199,89,0.25)':isPartial?'rgba(255,149,0,0.3)':mo===curActualMonth?'rgba(0,122,255,0.3)':isFuture?'rgba(0,0,0,0.12)':'rgba(0,0,0,0.07)'}`,background:isPaid?'rgba(52,199,89,0.04)':isPartial?'rgba(255,149,0,0.05)':mo===curActualMonth?'rgba(0,122,255,0.04)':isFuture?'rgba(0,0,0,0.015)':'#fafafa',cursor:'pointer',opacity:isFuture&&!isPaid?0.85:1}}>
-                                <div style={{fontSize:12,fontWeight:600,color:isPaid?'#1a7a34':isPartial?'#b45309':mo===curActualMonth?'#007aff':'var(--text-primary)',marginBottom:4}}>{label}</div>
-                                <div style={{fontSize:13,fontWeight:700,color:isPaid?'#34c759':isPartial?'#ff9500':'var(--text-secondary)'}}>{isPaid?formatCurrency(p.amountPaid):isPartial?formatCurrency(p.amountPaid||0):'Pending'}</div>
-                                {isPartial&&<div style={{fontSize:9.5,color:'#ff9500',marginTop:2}}>{formatCurrency(Math.max(0,(p.amountDue||0)-(p.amountPaid||0)))} remaining</div>}
+                              <div key={mo} onClick={()=>{openModal(b,mo,mo);loadAxisLedger(b);}}
+                                style={{padding:'10px 12px',borderRadius:10,
+                                  border:isPayTarget?'2px solid #007aff':`1px ${isFuture?'dashed':'solid'} ${isPaid?'rgba(52,199,89,0.25)':isPartial?'rgba(255,149,0,0.3)':isAdded?'rgba(88,86,214,0.3)':mo===curActualMonth?'rgba(0,122,255,0.3)':isFuture?'rgba(0,0,0,0.12)':'rgba(0,0,0,0.07)'}`,
+                                  background:isPayTarget?'rgba(0,122,255,0.1)':isPaid?'rgba(52,199,89,0.04)':isPartial?'rgba(255,149,0,0.05)':isAdded?'rgba(88,86,214,0.05)':mo===curActualMonth?'rgba(0,122,255,0.04)':isFuture?'rgba(0,0,0,0.015)':'#fafafa',
+                                  position:'relative',cursor:'pointer',opacity:isFuture&&!isPaid?0.85:1}}>
+                                {isPayTarget&&<div style={{position:'absolute',top:-8,left:'50%',transform:'translateX(-50%)',background:'#007aff',color:'#fff',fontSize:8.5,fontWeight:800,padding:'2px 7px',borderRadius:99,whiteSpace:'nowrap'}}>📅 PAYING TO</div>}
+                                <div style={{fontSize:12,fontWeight:600,color:isPayTarget?'#007aff':isPaid?'#1a7a34':isPartial?'#b45309':isAdded?'#5856d6':mo===curActualMonth?'#007aff':'var(--text-primary)',marginBottom:4}}>{label}</div>
+                                <div style={{fontSize:13,fontWeight:700,color:isPaid?'#34c759':isPartial?'#ff9500':isAdded?'#5856d6':'var(--text-secondary)'}}>{(isPaid||isPartial)?formatCurrency((p.amountPaid||0)+(p.addedAmount||0)):isAdded?'+ Principal':formatCurrency(Math.round(monthInt))}</div>
+                                {isPartial&&<div style={{fontSize:9.5,color:'#ff9500',marginTop:2}}>{formatCurrency(Math.max(0,(p.amountDue||0)-(p.amountPaid||0)-(p.addedAmount||0)))} remaining</div>}
                                 {isFuture&&!isPaid&&!isPartial&&<div style={{fontSize:9.5,color:'var(--text-tertiary)',marginTop:2}}>advance allowed</div>}
-                                {p?.addedToLoan&&<div style={{fontSize:10,color:'#5856d6',marginTop:2}}>Added to principal</div>}
                                 {p?.remarks&&<div style={{fontSize:10,color:'var(--text-tertiary)',marginTop:3,fontStyle:'italic',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={p.remarks}>📝 {p.remarks}</div>}
                               </div>
                             );
@@ -539,19 +787,18 @@ export default function InterestCollection(){
       )}
 
       {/* Collection Modal */}
-      <Modal open={!!modal} onClose={()=>{setModal(null);setBulkPending(null);}} title={`Collect Interest — ${modal?.borrowerName}`} width={500}
+      <Modal open={!!modal} onClose={()=>{setModal(null);setBulkPending(null);setPayThroughMonth(null);setAxisLedger([]);}} title={`Collect Interest — ${modal?.borrowerName}`} width={500}
         footer={modal&&(
           <div style={{display:'flex',gap:10,width:'100%'}}>
-            {pf.addToLoan
-              ?<Button onClick={()=>savePay(false)} disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?'Saving…':'Add Interest to Principal'}</Button>
-              :<><Button onClick={()=>savePay(true)} disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?'Saving…':bulkPending?(()=>{
-                let budget=parseFloat(pf.amount)||0,covered=0;
-                for(const p of bulkPending){if(budget>=p.amount){budget-=p.amount;covered++;}else break;}
-                return covered===bulkPending.length?`✓ Settle All ${bulkPending.length} Periods`:`✓ Settle ${covered} of ${bulkPending.length} Periods`;
-              })():'✓ Mark as Paid'}</Button>
-              {!bulkPending&&<Button variant="secondary" onClick={()=>savePay('partial')} disabled={saving}>Partial</Button>}
-              <Button variant="danger" onClick={()=>savePay(false)} disabled={saving}>Mark Unpaid</Button></>
-            }
+            <Button onClick={()=>savePay(true)} disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?'Saving…':bulkPending?(()=>{
+              const scoped=activeBulkPeriods(bulkPending,payThroughMonth);
+              let budget=(parseFloat(pf.cashAmount)||0)+(parseFloat(pf.addAmount)||0),covered=0;
+              for(const p of scoped){if(budget>=p.amount){budget-=p.amount;covered++;}else break;}
+              const throughLabel=scoped[scoped.length-1]?.month?new Date(scoped[scoped.length-1].month+'-01').toLocaleDateString('en-IN',{month:'short',year:'2-digit'}):'';
+              return covered===scoped.length?`✓ Settle All ${scoped.length} Periods (through ${throughLabel})`:`✓ Settle ${covered} of ${scoped.length} Periods (through ${throughLabel})`;
+            })():'✓ Settle'}</Button>
+            {!bulkPending&&<Button variant="secondary" onClick={()=>savePay('partial')} disabled={saving}>Partial</Button>}
+            {!bulkPending&&<Button variant="danger" onClick={()=>savePay(false)} disabled={saving}>Mark Unpaid</Button>}
           </div>
         )}>
         {modal&&(()=>{
@@ -561,6 +808,8 @@ export default function InterestCollection(){
           const fineAmt=parseFloat(pf.fine)||0;
           const existingPay=payments[modal.id]?.[month];
           const payStatus=existingPay?.status; // 'Paid' | 'Partial' | undefined (pending)
+          const scopedBulk=bulkPending?activeBulkPeriods(bulkPending,payThroughMonth):null;
+          const effectiveDue=scopedBulk?scopedBulk.reduce((s,p)=>s+p.amount,0):interest;
           return(
             <> {/* intColV3 */}
               {/* Status shown first — before anything else */}
@@ -573,15 +822,34 @@ export default function InterestCollection(){
               </div>
               {bulkPending && (
                 <div style={{marginBottom:16,padding:'12px 14px',borderRadius:12,background:'rgba(255,149,0,0.06)',border:'1px solid rgba(255,149,0,0.25)'}}>
-                  <div style={{fontSize:12.5,fontWeight:700,color:'#b45309',marginBottom:8}}>⚠ {bulkPending.length} periods pending — settle them all together</div>
+                  <div style={{fontSize:12.5,fontWeight:700,color:'#b45309',marginBottom:4}}>⚠ {bulkPending.length} periods pending, {new Date(bulkPending[0].month+'-01').toLocaleDateString('en-IN',{month:'short',year:'2-digit'})} – {new Date(bulkPending[bulkPending.length-1].month+'-01').toLocaleDateString('en-IN',{month:'short',year:'2-digit'})}</div>
+                  <div style={{fontSize:11.5,color:'var(--text-secondary)',marginBottom:8}}>Click a month below to pay through it — settles the cumulative total up to the month you pick (shown in blue), leaving anything after it pending.</div>
+                  {/* Same calendar-style "pay through" picker as Depositor Settlement */}
                   <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
-                    {bulkPending.map(p=>(
-                      <div key={p.month} style={{padding:'4px 10px',borderRadius:99,background:'#fff',border:'1px solid rgba(255,149,0,0.3)',fontSize:11.5,fontWeight:600,color:'var(--text-primary)'}}>
-                        {new Date(p.month+'-01').toLocaleDateString('en-IN',{month:'short',year:'2-digit'})}: {formatCurrency(p.amount)}
-                      </div>
-                    ))}
+                    {bulkPending.map(p=>{
+                      const isThrough=p.month===payThroughMonth;
+                      const isIncluded=payThroughMonth?p.month<=payThroughMonth:true;
+                      return(
+                        <button key={p.month} type="button" onClick={()=>{
+                          setPayThroughMonth(p.month);
+                          const newScoped=activeBulkPeriods(bulkPending,p.month);
+                          const newTotal=newScoped.reduce((s,x)=>s+x.amount,0);
+                          setPf(pf=>({...pf,cashAmount:String(newTotal),addAmount:'0'}));
+                        }}
+                          style={{padding:'5px 11px',borderRadius:99,cursor:'pointer',fontSize:11.5,fontWeight:700,
+                            background:isThrough?'#007aff':isIncluded?'rgba(0,122,255,0.1)':'#fff',
+                            border:isThrough?'1.5px solid #007aff':isIncluded?'1px solid rgba(0,122,255,0.3)':'1px solid rgba(0,0,0,0.12)',
+                            color:isThrough?'#fff':isIncluded?'#007aff':'var(--text-tertiary)',
+                            opacity:isIncluded?1:0.55}}>
+                          {isThrough?'📅 ':''}{new Date(p.month+'-01').toLocaleDateString('en-IN',{month:'short',year:'2-digit'})}: {formatCurrency(p.amount)}
+                        </button>
+                      );
+                    })}
                   </div>
-                  <div style={{fontSize:12.5,marginTop:8,color:'var(--text-secondary)'}}>Combined total: <strong style={{color:'var(--text-primary)'}}>{formatCurrency(bulkPending.reduce((s,p)=>s+p.amount,0))}</strong> — each period is still recorded at its own correct amount.</div>
+                  <div style={{fontSize:12.5,marginTop:8,color:'var(--text-secondary)'}}>
+                    Paying through <strong style={{color:'#007aff'}}>{new Date((scopedBulk[scopedBulk.length-1]||bulkPending[bulkPending.length-1]).month+'-01').toLocaleDateString('en-IN',{month:'short',year:'2-digit'})}</strong> — combined total: <strong style={{color:'var(--text-primary)'}}>{formatCurrency(effectiveDue)}</strong> — settled oldest month first, each at its own correct amount; any leftover after whole months become a Partial on the next one.
+                    {payThroughMonth!==bulkPending[bulkPending.length-1].month&&<> {bulkPending.length-scopedBulk.length} period{bulkPending.length-scopedBulk.length!==1?'s':''} after this stay pending.</>}
+                  </div>
                 </div>
               )}
               {/* identity strip */}
@@ -594,7 +862,7 @@ export default function InterestCollection(){
               </div>
               {/* 3-col stats */}
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>
-                {[{l:'Outstanding',v:formatCurrency(Math.round(outstanding)),c:'#007aff'},{l:'Interest Due',v:formatCurrency(Math.round(interest)),c:'#ff9500'},{l:'Days OD',v:daysOD>0?`${daysOD} days`:'On time',c:daysOD>2?'#ff3b30':'#34c759'}].map((s,i)=>(
+                {[{l:'Outstanding',v:formatCurrency(Math.round(outstanding)),c:'#007aff'},{l:bulkPending?'Total Pending Interest':'Interest Due',v:formatCurrency(Math.round(effectiveDue)),c:'#ff9500'},{l:'Days OD',v:daysOD>0?`${daysOD} days`:'On time',c:daysOD>2?'#ff3b30':'#34c759'}].map((s,i)=>(
                   <div key={i} style={{padding:'10px 12px',borderRadius:10,background:`${s.c}0d`,textAlign:'center'}}>
                     <div style={{fontSize:10,color:'var(--text-secondary)',fontWeight:600,textTransform:'uppercase',marginBottom:3}}>{s.l}</div>
                     <div style={{fontSize:14,fontWeight:800,color:s.c}}>{s.v}</div>
@@ -635,56 +903,100 @@ export default function InterestCollection(){
                 </div>
               )}
 
-              {/* Compound interest option */}
-              {modal.compounding&&(
-                <div style={{background:'rgba(88,86,214,0.06)',border:'1px solid rgba(88,86,214,0.15)',borderRadius:10,padding:'12px 14px',marginBottom:14}}>
-                  <div style={{fontSize:13,color:'#5856d6',fontWeight:600,marginBottom:6}}>Compound Interest Option</div>
-                  <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:13}}>
-                    <input type="checkbox" checked={pf.addToLoan} onChange={e=>setPf(p=>({...p,addToLoan:e.target.checked,collectFine:e.target.checked?false:p.collectFine}))} style={{width:15,height:15,accentColor:'#5856d6'}}/>
-                    <span>Add interest <strong>{formatCurrency(Math.round(interest))}</strong> to loan principal instead of collecting</span>
-                  </label>
-                  {pf.addToLoan&&(
+              {/* Split settlement — cash collected vs added back to the loan principal
+                  (compound), any ratio. Same as Depositor Settlement's Cash in Hand /
+                  Add to Deposit split — independent fields, no forced remainder. */}
+              {(()=>{
+                const cashV=parseFloat(pf.cashAmount)||0, addV=parseFloat(pf.addAmount)||0;
+                const splitTotal=cashV+addV;
+                const mismatch=Math.round(splitTotal)!==Math.round(effectiveDue);
+                return(
+                <div style={{background:'rgba(88,86,214,0.05)',border:'1px solid rgba(88,86,214,0.15)',borderRadius:12,padding:'12px 14px',marginBottom:14}}>
+                  <div style={{fontSize:12,color:'var(--text-secondary)',marginBottom:10}}>Split how the {bulkPending?'total pending interest is':'interest is'} handled — cash collected vs added back to the loan principal. Whole periods are settled oldest first: cash covers as many full months as it can, then the loan-principal portion continues from there — any leftover becomes a Partial on the next month.</div>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:mismatch?8:0}}>
+                    <div>
+                      <label style={{fontSize:11.5,fontWeight:700,color:'var(--text-secondary)',display:'block',marginBottom:5}}>💵 Cash Collected (₹)</label>
+                      <input type="number" value={pf.cashAmount} onChange={e=>setPf(p=>({...p,cashAmount:e.target.value}))}
+                        style={{width:'100%',boxSizing:'border-box',height:38,padding:'0 12px',borderRadius:9,border:'1.5px solid rgba(0,0,0,0.1)',fontSize:14,fontFamily:'inherit',outline:'none'}}/>
+                    </div>
+                    <div>
+                      <label style={{fontSize:11.5,fontWeight:700,color:'#5856d6',display:'block',marginBottom:5}}>🏦 Add to Loan Amount (₹)</label>
+                      <input type="number" value={pf.addAmount} onChange={e=>setPf(p=>({...p,addAmount:e.target.value}))}
+                        style={{width:'100%',boxSizing:'border-box',height:38,padding:'0 12px',borderRadius:9,border:'1.5px solid rgba(88,86,214,0.3)',fontSize:14,fontFamily:'inherit',outline:'none'}}/>
+                    </div>
+                  </div>
+                  <div style={{display:'flex',gap:8,marginBottom:mismatch?8:0}}>
+                    <button type="button" onClick={()=>setPf(p=>({...p,cashAmount:String(Math.round(effectiveDue)),addAmount:'0'}))}
+                      style={{fontSize:10.5,fontWeight:600,color:'var(--text-secondary)',background:'rgba(0,0,0,0.04)',border:'1px solid rgba(0,0,0,0.08)',borderRadius:7,padding:'4px 9px',cursor:'pointer'}}>Fill full amount as cash</button>
+                    <button type="button" onClick={()=>setPf(p=>({...p,cashAmount:'0',addAmount:String(Math.round(effectiveDue))}))}
+                      style={{fontSize:10.5,fontWeight:600,color:'#5856d6',background:'rgba(88,86,214,0.06)',border:'1px solid rgba(88,86,214,0.15)',borderRadius:7,padding:'4px 9px',cursor:'pointer'}}>Fill full amount to loan</button>
+                  </div>
+                  {mismatch && (
+                    <div style={{fontSize:11.5,color:splitTotal<Math.round(effectiveDue)?'#b45309':'#1a7a34'}}>
+                      {splitTotal<Math.round(effectiveDue)
+                        ?<>⚠ ₹{(Math.round(effectiveDue)-splitTotal).toLocaleString('en-IN')} of the {bulkPending?'total pending interest':"this period's interest"} will stay pending — recorded as Partial. That's fine if this is intentional.</>
+                        :<>ℹ Cash + Loan addition ({formatCurrency(splitTotal)}) is more than the interest due ({formatCurrency(Math.round(effectiveDue))}) — the extra will be recorded as-is.</>
+                      }
+                    </div>
+                  )}
+                  {addV>0 && (
                     <div style={{marginTop:8,fontSize:12,color:'#5856d6',background:'rgba(88,86,214,0.08)',borderRadius:8,padding:'8px 10px'}}>
-                      New principal will be: {formatCurrency((modal.loanAmount||0)+Math.round(interest))}
+                      New loan principal: {formatCurrency((modal.loanAmount||0)+addV)}
                     </div>
                   )}
                 </div>
-              )}
+                );
+              })()}
 
-              {!pf.addToLoan&&(
-                <div style={{display:'flex',flexDirection:'column',gap:12}}>
-                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-                    <div>
-                      <label style={{fontSize:12,fontWeight:500,color:'var(--text-primary)',display:'block',marginBottom:5}}>Payment Date</label>
-                      <input type="date" value={pf.date} onChange={e=>setPf(p=>({...p,date:e.target.value}))}
-                        style={{width:'100%',height:38,padding:'0 12px',borderRadius:10,border:'1.5px solid rgba(0,0,0,0.08)',fontSize:14,fontFamily:'inherit',background:'rgba(118,118,128,0.07)',color:'var(--text-primary)',outline:'none'}}/>
-                    </div>
-                    <div>
-                      <label style={{fontSize:12,fontWeight:500,color:'var(--text-primary)',display:'block',marginBottom:5}}>Mode</label>
-                      <select value={pf.mode} onChange={e=>setPf(p=>({...p,mode:e.target.value}))}
-                        style={{width:'100%',height:38,padding:'0 12px',borderRadius:10,border:'1.5px solid rgba(0,0,0,0.08)',fontSize:14,fontFamily:'inherit',background:'rgba(118,118,128,0.07)',color:'var(--text-primary)',outline:'none',appearance:'none',cursor:'pointer'}}>
-                        <option>Cash</option><option>Bank Transfer</option><option>UPI</option><option>Cheque</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div>
-                    <label style={{fontSize:12,fontWeight:500,color:'var(--text-primary)',display:'block',marginBottom:5}}>Amount (₹)</label>
-                    <input type="number" value={pf.amount} onChange={e=>setPf(p=>({...p,amount:e.target.value}))}
-                      style={{width:'100%',height:38,padding:'0 12px',borderRadius:10,border:'1.5px solid rgba(0,0,0,0.08)',fontSize:14,fontFamily:'inherit',background:'rgba(118,118,128,0.07)',color:'var(--text-primary)',outline:'none'}}/>
-                  </div>
-                  {(pf.collectFine&&fineAmt>0)&&(
-                    <div style={{padding:'8px 12px',background:'rgba(52,199,89,0.06)',borderRadius:8,fontSize:13,color:'#1a7a34'}}>
-                      Total collecting: {formatCurrency(parseFloat(pf.amount)||0)} + Fine {formatCurrency(fineAmt)} = <strong>{formatCurrency((parseFloat(pf.amount)||0)+fineAmt)}</strong>
-                    </div>
-                  )}
-                  <div>
-                    <label style={{fontSize:12,fontWeight:500,color:'var(--text-primary)',display:'block',marginBottom:5}}>Remarks</label>
-                    <textarea value={pf.remarks} onChange={e=>setPf(p=>({...p,remarks:e.target.value}))} placeholder="Optional…"
-                      style={{width:'100%',padding:'10px 12px',borderRadius:10,border:'1.5px solid rgba(0,0,0,0.08)',fontSize:13,fontFamily:'inherit',background:'rgba(118,118,128,0.07)',color:'var(--text-primary)',outline:'none',minHeight:60,resize:'vertical'}}/>
-                  </div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+                <div>
+                  <label style={{fontSize:12,fontWeight:500,color:'var(--text-primary)',display:'block',marginBottom:5}}>Payment Date</label>
+                  <input type="date" value={pf.date} onChange={e=>setPf(p=>({...p,date:e.target.value}))}
+                    style={{width:'100%',height:38,padding:'0 12px',borderRadius:10,border:'1.5px solid rgba(0,0,0,0.08)',fontSize:14,fontFamily:'inherit',background:'rgba(118,118,128,0.07)',color:'var(--text-primary)',outline:'none'}}/>
+                </div>
+                <div>
+                  <label style={{fontSize:12,fontWeight:500,color:'var(--text-primary)',display:'block',marginBottom:5}}>Mode (for cash portion)</label>
+                  <select value={pf.mode} onChange={e=>setPf(p=>({...p,mode:e.target.value}))}
+                    style={{width:'100%',height:38,padding:'0 12px',borderRadius:10,border:'1.5px solid rgba(0,0,0,0.08)',fontSize:14,fontFamily:'inherit',background:'rgba(118,118,128,0.07)',color:'var(--text-primary)',outline:'none',appearance:'none',cursor:'pointer'}}>
+                    <option>Cash</option><option>Bank Transfer</option><option>UPI</option><option>Cheque</option>
+                  </select>
+                </div>
+              </div>
+              {(pf.collectFine&&fineAmt>0)&&(
+                <div style={{padding:'8px 12px',background:'rgba(52,199,89,0.06)',borderRadius:8,fontSize:13,color:'#1a7a34',marginBottom:12}}>
+                  Cash collected: {formatCurrency(parseFloat(pf.cashAmount)||0)} + Fine {formatCurrency(fineAmt)} = <strong>{formatCurrency((parseFloat(pf.cashAmount)||0)+fineAmt)}</strong>
                 </div>
               )}
+              <div>
+                <label style={{fontSize:12,fontWeight:500,color:'var(--text-primary)',display:'block',marginBottom:5}}>Remarks</label>
+                <textarea value={pf.remarks} onChange={e=>setPf(p=>({...p,remarks:e.target.value}))} placeholder="Optional…"
+                  style={{width:'100%',padding:'10px 12px',borderRadius:10,border:'1.5px solid rgba(0,0,0,0.08)',fontSize:13,fontFamily:'inherit',background:'rgba(118,118,128,0.07)',color:'var(--text-primary)',outline:'none',minHeight:60,resize:'vertical'}}/>
+              </div>
 
+              {/* Scroll down to find this borrower's settlement ledger entries, each
+                  with its own Undo — reverses that action's payment everywhere (loan
+                  principal, payment record, ledger) — same as Depositor Settlement. */}
+              <div style={{marginTop:22,paddingTop:16,borderTop:'1px solid rgba(0,0,0,0.08)'}}>
+                <div style={{fontSize:12.5,fontWeight:700,color:'var(--text-secondary)',marginBottom:10,textTransform:'uppercase',letterSpacing:'0.02em'}}>Ledger Entries — Undo</div>
+                {axisLedgerLoading&&<div style={{fontSize:12.5,color:'var(--text-secondary)',padding:'8px 0'}}>Loading…</div>}
+                {!axisLedgerLoading&&axisLedger.length===0&&<div style={{fontSize:12.5,color:'var(--text-secondary)',padding:'8px 0'}}>No settlement entries yet for this borrower.</div>}
+                {!axisLedgerLoading&&axisLedger.length>0&&(
+                  <div style={{display:'flex',flexDirection:'column',gap:8,maxHeight:220,overflowY:'auto'}}>
+                    {axisLedger.map(entry=>(
+                      <div key={entry.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',borderRadius:9,background:'rgba(0,0,0,0.03)',border:'1px solid rgba(0,0,0,0.06)'}}>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:12,fontWeight:600,color:'var(--text-primary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={entry.description}>{entry.description}</div>
+                          <div style={{fontSize:11,color:'var(--text-secondary)',marginTop:1}}>{entry.category} · {formatCurrency(entry.amount)} · {entry.date}</div>
+                        </div>
+                        <button onClick={async()=>{await undoBatch(modal,entry.settlementBatchId,entry.description);loadAxisLedger(modal);}} disabled={!!undoingKey}
+                          style={{flexShrink:0,fontSize:11,fontWeight:700,color:'#ff3b30',background:'#fff',border:'1px solid rgba(255,59,48,0.3)',borderRadius:7,padding:'5px 10px',cursor:undoingKey?'wait':'pointer'}}>
+                          {undoingKey===entry.settlementBatchId?'…':'↺ Undo'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </>
           );
         })()}

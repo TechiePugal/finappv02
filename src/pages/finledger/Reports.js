@@ -103,14 +103,21 @@ export default function Reports() {
   }
 
   // Derived stats for selected period
-  const filtIntPays = intPayments.filter(p => p.status === 'Paid' && p.paymentDate >= fromDate && p.paymentDate <= toDate);
+  // BUG FIX: 'Partial' loan-interest settlements were excluded, and a period
+  // settled entirely via "add to loan principal" (Interest Collection's new
+  // cash/compound split, mirroring the deposit side) has amountPaid:0 with the
+  // real amount in addedAmount — kept in sync with the deposit-side fix above.
+  const filtIntPays = intPayments.filter(p => ['Paid','Partial'].includes(p.status) && p.paymentDate >= fromDate && p.paymentDate <= toDate);
   const filtReps    = repayments.filter(r => !r.deleted && r.date >= fromDate && r.date <= toDate);
   const filtExps    = expenses.filter(e => e.date >= fromDate && e.date <= toDate);
   const filtEmi     = emiCols.filter(e => e.date >= fromDate && e.date <= toDate);
-  const filtDepPays = depPayments.filter(p => p.status === 'Paid' && p.paymentDate >= fromDate && p.paymentDate <= toDate);
+  // BUG FIX: 'Partial' deposit settlements (e.g. from the pay-through-month picker,
+  // where cash collected falls short of the full interest due) were excluded here —
+  // kept in sync with 'Paid' so a partial settlement's actual date/amount is counted.
+  const filtDepPays = depPayments.filter(p => ['Paid','Partial'].includes(p.status) && p.paymentDate >= fromDate && p.paymentDate <= toDate);
   const filtFineIncome = ledgerEntries.filter(e => e.date >= fromDate && e.date <= toDate);
 
-  const totalInterest = filtIntPays.reduce((s,p) => s + (p.amountPaid || 0), 0); // fine excluded — tracked separately
+  const totalInterest = filtIntPays.reduce((s,p) => s + (p.amountPaid || 0) + (p.addedAmount || 0), 0); // fine excluded — tracked separately
   const totalRepaid   = filtReps.reduce((s,r) => s + (r.repaidAmount || r.amount || 0), 0);
   const totalEMI      = filtEmi.reduce((s,e) => s + (e.amount || 0), 0); // fine excluded — tracked separately
   const totalExpense  = filtExps.reduce((s,e) => s + (e.amount || 0), 0);
@@ -175,7 +182,7 @@ export default function Reports() {
 
   // Monthly breakdown
   const months = {};
-  filtIntPays.forEach(p => { const m = p.month || p.paymentDate?.slice(0,7); if(!m) return; if(!months[m]) months[m] = {interest:0,repaid:0,emi:0,expenses:0}; months[m].interest += p.amountPaid||0; });
+  filtIntPays.forEach(p => { const m = p.month || p.paymentDate?.slice(0,7); if(!m) return; if(!months[m]) months[m] = {interest:0,repaid:0,emi:0,expenses:0}; months[m].interest += (p.amountPaid||0)+(p.addedAmount||0); });
   filtReps.forEach(r => { const m = r.date?.slice(0,7); if(!m) return; if(!months[m]) months[m] = {interest:0,repaid:0,emi:0,expenses:0}; months[m].repaid += r.repaidAmount||r.amount||0; });
   filtEmi.forEach(e => { const m = e.date?.slice(0,7); if(!m) return; if(!months[m]) months[m] = {interest:0,repaid:0,emi:0,expenses:0}; months[m].emi += e.amount||0; });
   filtExps.forEach(e => { const m = e.date?.slice(0,7); if(!m) return; if(!months[m]) months[m] = {interest:0,repaid:0,emi:0,expenses:0}; months[m].expenses += e.amount||0; });

@@ -26,6 +26,7 @@ function setCache(key, data) {
 }
 
 export function clearCache(col) {
+  if (col === undefined) { cache.clear(); return; }
   for (const key of cache.keys()) {
     if (key.startsWith(col)) cache.delete(key);
   }
@@ -101,6 +102,39 @@ export async function restoreFromBackup(backupData) {
   }
   await batch.commit();
   return count;
+}
+
+// Every Firestore collection the Finance Ledger module writes to — kept as one
+// list so Backup, Restore and Delete All all stay in sync with each other.
+export const FINLEDGER_COLLECTIONS = [
+  'deposit_master','deposit_payments','deposit_additions','deposit_interest_schedule','deposit_refunds',
+  'borrower_master','borrower_interest_payments','loan_repayments','loan_additions',
+  'emi_loans','emi_collections',
+  'finance_expenses','finance_ledger_entries','customer_master',
+];
+
+// Development-purpose full reset: wipes every Finance Ledger document that
+// belongs to THIS account only (same ownership rule as everywhere else in the
+// app — scopeToUser treats a doc as yours if createdBy matches you, or the doc
+// predates the ownership field entirely). Other modules (Chit Fund, Real
+// Estate) and other accounts' data are never touched.
+export async function deleteAllFinanceData(uid, onProgress) {
+  if (!uid) throw new Error('Not signed in');
+  let deleted = 0;
+  for (const col of FINLEDGER_COLLECTIONS) {
+    const snap = await getDocs(collection(db, col));
+    const mine = snap.docs.filter(d => { const v = d.data(); return !v.createdBy || v.createdBy === uid; });
+    for (let i = 0; i < mine.length; i += 450) {
+      const chunk = mine.slice(i, i + 450);
+      const batch = writeBatch(db);
+      chunk.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+      deleted += chunk.length;
+      if (onProgress) onProgress({ collection: col, deletedSoFar: deleted });
+    }
+  }
+  clearCache();
+  return deleted;
 }
 
 export { serverTimestamp };

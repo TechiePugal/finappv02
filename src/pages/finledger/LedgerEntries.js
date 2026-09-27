@@ -1,5 +1,5 @@
 import React,{useEffect,useState} from 'react';
-import {collection,onSnapshot,addDoc,updateDoc,deleteDoc,doc,query,orderBy,serverTimestamp,getDoc} from 'firebase/firestore';
+import {collection,onSnapshot,addDoc,updateDoc,deleteDoc,doc,query,orderBy,where,getDocs,serverTimestamp,getDoc} from 'firebase/firestore';
 import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
 import {PageHeader,Card,StatCard,Button,SearchBar,FilterTabs,Modal,formatCurrency,formatDate,Loader,SectionHeader} from '../../components/finledger/UI';
@@ -121,15 +121,52 @@ export default function LedgerEntries(){
       if(entry.linkedPaymentId){
         try{
           const snap = await getDoc(doc(db,'borrower_interest_payments',entry.linkedPaymentId));
-          if(snap.exists()) revertedLinkedData.borrowerPayment = { id: entry.linkedPaymentId, ...snap.data() };
-          await updateDoc(doc(db,'borrower_interest_payments',entry.linkedPaymentId),{status:'Unpaid',amountPaid:0,paymentDate:null,updatedAt:serverTimestamp()});
+          if(snap.exists()){
+            const payData=snap.data();
+            revertedLinkedData.borrowerPayment = { id: entry.linkedPaymentId, ...payData };
+            // BUG FIX: same as the deposit side below — deleting a settlement entry
+            // reset the payment record but never reversed a compounded amount back
+            // out of the loan's real principal, leaving the loan inflated even after
+            // the settlement that grew it was deleted.
+            if((payData.addedAmount||0)>0 && payData.borrowerId){
+              const borSnap=await getDoc(doc(db,'borrower_master',payData.borrowerId));
+              if(borSnap.exists()){
+                const borData=borSnap.data();
+                revertedLinkedData.loanPrincipalBefore=borData.loanAmount||0;
+                const revertedAmt=Math.max(0,(borData.loanAmount||0)-(payData.addedAmount||0));
+                await updateDoc(doc(db,'borrower_master',payData.borrowerId),{
+                  loanAmount:revertedAmt,monthlyInterest:revertedAmt*(borData.interestRate||0)/100,updatedAt:serverTimestamp()
+                });
+              }
+            }
+          }
+          await updateDoc(doc(db,'borrower_interest_payments',entry.linkedPaymentId),{status:'Unpaid',amountPaid:0,addedAmount:0,addedToLoan:false,paymentDate:null,updatedAt:serverTimestamp()});
         }catch{}
       }
       if(entry.linkedDepositPaymentId){
         try{
           const snap = await getDoc(doc(db,'deposit_payments',entry.linkedDepositPaymentId));
-          if(snap.exists()) revertedLinkedData.depositPayment = { id: entry.linkedDepositPaymentId, ...snap.data() };
-          await updateDoc(doc(db,'deposit_payments',entry.linkedDepositPaymentId),{status:'Unpaid',amountPaid:0,paymentDate:null,updatedAt:serverTimestamp()});
+          if(snap.exists()){
+            const payData=snap.data();
+            revertedLinkedData.depositPayment = { id: entry.linkedDepositPaymentId, ...payData };
+            // BUG FIX: deleting a settlement entry from the Ledger reset the payment
+            // record back to Unpaid, but never actually reversed a compounded amount
+            // back out of the deposit's real principal — the deposit stayed inflated
+            // even after the settlement that grew it was deleted. Snapshot the
+            // principal now (so Restore can put it back exactly) and reverse it.
+            if((payData.addedAmount||0)>0 && payData.depositId){
+              const depSnap=await getDoc(doc(db,'deposit_master',payData.depositId));
+              if(depSnap.exists()){
+                const depData=depSnap.data();
+                revertedLinkedData.depositPrincipalBefore=depData.depositAmount||0;
+                const revertedAmt=Math.max(0,(depData.depositAmount||0)-(payData.addedAmount||0));
+                await updateDoc(doc(db,'deposit_master',payData.depositId),{
+                  depositAmount:revertedAmt,updatedAt:serverTimestamp()
+                });
+              }
+            }
+          }
+          await updateDoc(doc(db,'deposit_payments',entry.linkedDepositPaymentId),{status:'Unpaid',amountPaid:0,addedAmount:0,addedToDeposit:false,paymentDate:null,updatedAt:serverTimestamp()});
         }catch{}
       }
       if(entry.linkedRepaymentId){
@@ -137,6 +174,70 @@ export default function LedgerEntries(){
           const snap = await getDoc(doc(db,'loan_repayments',entry.linkedRepaymentId));
           if(snap.exists()) revertedLinkedData.repayment = { id: entry.linkedRepaymentId, ...snap.data() };
           await updateDoc(doc(db,'loan_repayments',entry.linkedRepaymentId),{deleted:true,updatedAt:serverTimestamp()});
+        }catch{}
+      }
+      // A combined bulk-settlement entry ("5 periods settled today") has no single
+      // linkedDepositPaymentId — it covers several deposit_payments records at once,
+      // tied together by settlementBatchId instead. Reverse all of them together,
+      // plus the one dated compound addition (if any) the whole batch created.
+      if(entry.settlementBatchId && !entry.linkedDepositPaymentId){
+        try{
+          const paySnap=await getDocs(query(collection(db,'deposit_payments'),where('settlementBatchId','==',entry.settlementBatchId)));
+          const touchedPayments=paySnap.docs.map(d=>({id:d.id,...d.data()}));
+          for(const p of touchedPayments){
+            await updateDoc(doc(db,'deposit_payments',p.id),{amountPaid:0,addedAmount:0,fine:0,totalPayout:0,status:'Unpaid',addedToDeposit:false,paymentDate:null,compoundAdditionId:null,compoundLedgerEntryId:null,updatedAt:serverTimestamp()});
+          }
+          const addSnap=await getDocs(query(collection(db,'deposit_additions'),where('settlementBatchId','==',entry.settlementBatchId)));
+          let totalAdded=0;
+          for(const ad of addSnap.docs){ totalAdded+=ad.data().amount||0; await deleteDoc(doc(db,'deposit_additions',ad.id)); }
+          if(totalAdded>0 && entry.depositId){
+            const depSnap=await getDoc(doc(db,'deposit_master',entry.depositId));
+            if(depSnap.exists()){
+              const depData=depSnap.data();
+              revertedLinkedData.depositPrincipalBefore=depData.depositAmount||0;
+              const revertedAmt=Math.max(0,(depData.depositAmount||0)-totalAdded);
+              await updateDoc(doc(db,'deposit_master',entry.depositId),{depositAmount:revertedAmt,updatedAt:serverTimestamp()});
+            }
+          }
+          revertedLinkedData.depositBatch={payments:touchedPayments,additionsTotal:totalAdded};
+          // A whole batch usually has more than one ledger row (cash + compound + fine)
+          // sharing this same settlementBatchId — soft-delete its siblings too, or
+          // deleting just the row the person clicked would leave the others behind.
+          const siblingSnap=await getDocs(query(collection(db,'finance_ledger_entries'),where('settlementBatchId','==',entry.settlementBatchId)));
+          for(const sib of siblingSnap.docs){
+            if(sib.id===entry.id)continue;
+            await updateDoc(doc(db,'finance_ledger_entries',sib.id),{deleted:true,deletedAt:serverTimestamp(),deletedBy:user?.uid||null});
+          }
+        }catch{}
+      }
+      // Same combined-entry reversal as above, for a loan-side bulk Interest
+      // Collection settlement (borrower_interest_payments + loan_additions) instead
+      // of the deposit collections.
+      if(entry.settlementBatchId && !entry.linkedPaymentId && entry.borrowerId){
+        try{
+          const paySnap=await getDocs(query(collection(db,'borrower_interest_payments'),where('settlementBatchId','==',entry.settlementBatchId)));
+          const touchedPayments=paySnap.docs.map(d=>({id:d.id,...d.data()}));
+          for(const p of touchedPayments){
+            await updateDoc(doc(db,'borrower_interest_payments',p.id),{amountPaid:0,addedAmount:0,fine:0,totalCollected:0,status:'Unpaid',addedToLoan:false,paymentDate:null,addAdditionId:null,addLedgerEntryId:null,updatedAt:serverTimestamp()});
+          }
+          const addSnap=await getDocs(query(collection(db,'loan_additions'),where('settlementBatchId','==',entry.settlementBatchId)));
+          let totalAdded2=0;
+          for(const ad of addSnap.docs){ totalAdded2+=ad.data().amount||0; await deleteDoc(doc(db,'loan_additions',ad.id)); }
+          if(totalAdded2>0 && entry.borrowerId){
+            const borSnap=await getDoc(doc(db,'borrower_master',entry.borrowerId));
+            if(borSnap.exists()){
+              const borData=borSnap.data();
+              revertedLinkedData.loanPrincipalBefore=borData.loanAmount||0;
+              const revertedAmt=Math.max(0,(borData.loanAmount||0)-totalAdded2);
+              await updateDoc(doc(db,'borrower_master',entry.borrowerId),{loanAmount:revertedAmt,monthlyInterest:revertedAmt*(borData.interestRate||0)/100,updatedAt:serverTimestamp()});
+            }
+          }
+          revertedLinkedData.loanBatch={payments:touchedPayments,additionsTotal:totalAdded2};
+          const siblingSnap2=await getDocs(query(collection(db,'finance_ledger_entries'),where('settlementBatchId','==',entry.settlementBatchId)));
+          for(const sib of siblingSnap2.docs){
+            if(sib.id===entry.id)continue;
+            await updateDoc(doc(db,'finance_ledger_entries',sib.id),{deleted:true,deletedAt:serverTimestamp(),deletedBy:user?.uid||null});
+          }
         }catch{}
       }
       await updateDoc(doc(db,'finance_ledger_entries',entry.id),{
@@ -155,14 +256,70 @@ export default function LedgerEntries(){
       if(rd?.borrowerPayment){
         const { id, ...data } = rd.borrowerPayment;
         try{await updateDoc(doc(db,'borrower_interest_payments',id),{...data,updatedAt:serverTimestamp()});}catch{}
+        if(typeof rd.loanPrincipalBefore==='number' && data.borrowerId){
+          try{await updateDoc(doc(db,'borrower_master',data.borrowerId),{loanAmount:rd.loanPrincipalBefore,updatedAt:serverTimestamp()});}catch{}
+        }
       }
       if(rd?.depositPayment){
         const { id, ...data } = rd.depositPayment;
         try{await updateDoc(doc(db,'deposit_payments',id),{...data,updatedAt:serverTimestamp()});}catch{}
+        // Put the deposit's real principal back exactly as it was before the delete
+        // reversed it — not just the payment row, or the two would go out of sync again.
+        if(typeof rd.depositPrincipalBefore==='number' && data.depositId){
+          try{await updateDoc(doc(db,'deposit_master',data.depositId),{depositAmount:rd.depositPrincipalBefore,updatedAt:serverTimestamp()});}catch{}
+        }
       }
       if(rd?.repayment){
         const { id, ...data } = rd.repayment;
         try{await updateDoc(doc(db,'loan_repayments',id),{...data,updatedAt:serverTimestamp()});}catch{}
+      }
+      // A combined bulk-settlement entry restores every period it covered, puts the
+      // exact same compound amount back as a fresh dated addition, and un-deletes
+      // its sibling ledger rows (cash/compound/fine) that were soft-deleted together.
+      if(rd?.depositBatch){
+        for(const p of rd.depositBatch.payments||[]){
+          const { id, ...data } = p;
+          try{await updateDoc(doc(db,'deposit_payments',id),{...data,updatedAt:serverTimestamp()});}catch{}
+        }
+        if(typeof rd.depositPrincipalBefore==='number' && entry.depositId){
+          try{await updateDoc(doc(db,'deposit_master',entry.depositId),{depositAmount:rd.depositPrincipalBefore,updatedAt:serverTimestamp()});}catch{}
+        }
+        if((rd.depositBatch.additionsTotal||0)>0 && entry.depositId){
+          try{await addDoc(collection(db,'deposit_additions'),{
+            depositorId:entry.depositId,depositorName:entry.depositorName,depositId:entry.depositId,
+            amount:rd.depositBatch.additionsTotal,date:entry.date,remarks:'Restored from Ledger Trash',
+            settlementBatchId:entry.settlementBatchId,createdAt:serverTimestamp(),createdBy:user?.uid||null
+          });}catch{}
+        }
+        if(entry.settlementBatchId){
+          try{
+            const sibSnap=await getDocs(query(collection(db,'finance_ledger_entries'),where('settlementBatchId','==',entry.settlementBatchId)));
+            for(const sib of sibSnap.docs){ if(sib.id!==entry.id) await updateDoc(doc(db,'finance_ledger_entries',sib.id),{deleted:false,deletedAt:null,deletedBy:null}); }
+          }catch{}
+        }
+      }
+      // Loan-side equivalent of the depositBatch restore above.
+      if(rd?.loanBatch){
+        for(const p of rd.loanBatch.payments||[]){
+          const { id, ...data } = p;
+          try{await updateDoc(doc(db,'borrower_interest_payments',id),{...data,updatedAt:serverTimestamp()});}catch{}
+        }
+        if(typeof rd.loanPrincipalBefore==='number' && entry.borrowerId){
+          try{await updateDoc(doc(db,'borrower_master',entry.borrowerId),{loanAmount:rd.loanPrincipalBefore,updatedAt:serverTimestamp()});}catch{}
+        }
+        if((rd.loanBatch.additionsTotal||0)>0 && entry.borrowerId){
+          try{await addDoc(collection(db,'loan_additions'),{
+            borrowerId:entry.borrowerId,borrowerName:entry.borrowerName,loanId:entry.borrowerId,
+            amount:rd.loanBatch.additionsTotal,date:entry.date,remarks:'Restored from Ledger Trash',
+            settlementBatchId:entry.settlementBatchId,createdAt:serverTimestamp(),createdBy:user?.uid||null
+          });}catch{}
+        }
+        if(entry.settlementBatchId){
+          try{
+            const sibSnap2=await getDocs(query(collection(db,'finance_ledger_entries'),where('settlementBatchId','==',entry.settlementBatchId)));
+            for(const sib of sibSnap2.docs){ if(sib.id!==entry.id) await updateDoc(doc(db,'finance_ledger_entries',sib.id),{deleted:false,deletedAt:null,deletedBy:null}); }
+          }catch{}
+        }
       }
       await updateDoc(doc(db,'finance_ledger_entries',entry.id),{
         deleted:false, deletedAt:null, deletedBy:null, revertedLinkedData:null, updatedAt:serverTimestamp(),
@@ -170,6 +327,30 @@ export default function LedgerEntries(){
       setTrashedEntries(prev=>prev.filter(e=>e.id!==entry.id));
       toast.success('Entry and linked records restored');
     }catch(err){toast.error('Restore failed: '+err.message);}finally{setDeleting(null);}
+  }
+
+  // Permanently removes a trashed entry — the soft-delete (deleteEntry above) only
+  // marks it deleted:true so it can be restored; this is the actual, unrecoverable
+  // Firestore delete the person asked for from the Trash view.
+  async function permanentlyDelete(entry){
+    if(!window.confirm(`Permanently delete this ledger entry? This cannot be undone.\n\n${entry.description||entry.category} — ${formatCurrency(entry.amount)}`)) return;
+    setDeleting(entry.id);
+    try{
+      await deleteDoc(doc(db,'finance_ledger_entries',entry.id));
+      setTrashedEntries(prev=>prev.filter(e=>e.id!==entry.id));
+      toast.success('Entry permanently deleted');
+    }catch(err){toast.error('Delete failed: '+err.message);}finally{setDeleting(null);}
+  }
+
+  async function emptyTrash(){
+    if(trashedEntries.length===0) return;
+    if(!window.confirm(`Permanently delete all ${trashedEntries.length} trashed entr${trashedEntries.length===1?'y':'ies'}? This cannot be undone.`)) return;
+    setDeleting('__all__');
+    try{
+      await Promise.all(trashedEntries.map(e=>deleteDoc(doc(db,'finance_ledger_entries',e.id))));
+      setTrashedEntries([]);
+      toast.success('Trash emptied');
+    }catch(err){toast.error('Failed to empty trash: '+err.message);}finally{setDeleting(null);}
   }
 
   const CATS=['All','Loan Interest','Deposit Interest','Loan Repayment','Deposit Received','Deposit Settlement','Expense','Other'];
@@ -185,6 +366,21 @@ export default function LedgerEntries(){
   const totalC=entries.filter(e=>e.type==='Credit').reduce((s,e)=>s+(e.amount||0),0);
   const totalD=entries.filter(e=>e.type==='Debit').reduce((s,e)=>s+(e.amount||0),0);
   const net=totalC-totalD;
+
+  // Split by module — same grouping logic as the Overall Dashboard (borrowerId =
+  // Loan, depositId = Deposit, loanId = EMI, Finance Expense category = Expense)
+  // so this view lines up with the dashboard's own numbers, not a different cut.
+  const moduleGroups=[
+    {key:'loan',label:'📋 Loan',match:e=>!!e.borrowerId,color:'#ff9500'},
+    {key:'deposit',label:'🏦 Deposit',match:e=>!!e.depositId,color:'#bf5af2'},
+    {key:'emi',label:'📆 EMI',match:e=>!!e.loanId,color:'#5e5ce6'},
+    {key:'expense',label:'💸 Expense',match:e=>e.category==='Finance Expense',color:'#ff453a'},
+  ].map(g=>{
+    const rows=entries.filter(g.match);
+    const c=rows.filter(e=>e.type==='Credit').reduce((s,e)=>s+(e.amount||0),0);
+    const dd=rows.filter(e=>e.type==='Debit').reduce((s,e)=>s+(e.amount||0),0);
+    return {...g,count:rows.length,credit:c,debit:dd};
+  });
 
   if(loading)return <PageLoader stats={4}/>;
   return(
@@ -206,6 +402,22 @@ export default function LedgerEntries(){
           icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>}/>
       </div>
 
+      {/* Split by module — mirrors the Overall Dashboard's Loan/Deposit/EMI/Expense cut */}
+      <Card style={{marginBottom:20}}>
+        <SectionHeader title="Split by Module"/>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14}}>
+          {moduleGroups.map(g=>(
+            <div key={g.key} style={{padding:'12px 14px',borderRadius:10,background:'var(--bg-secondary)',borderLeft:`3px solid ${g.color}`}}>
+              <div style={{fontSize:12,fontWeight:700,color:'var(--text-secondary)',marginBottom:6}}>{g.label} <span style={{color:'var(--text-tertiary)',fontWeight:400}}>({g.count})</span></div>
+              <div style={{display:'flex',justifyContent:'space-between',fontSize:12.5}}>
+                <span style={{color:'#34c759',fontWeight:700}}>+{formatCurrency(Math.round(g.credit))}</span>
+                <span style={{color:'#ff3b30',fontWeight:700}}>-{formatCurrency(Math.round(g.debit))}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
       {showTrash ? (
         <Card>
           {trashedEntries.length===0 ? (
@@ -214,6 +426,13 @@ export default function LedgerEntries(){
               <p style={{fontSize:14}}>Trash is empty</p>
             </div>
           ) : (
+            <>
+            <div style={{display:'flex',justifyContent:'flex-end',marginBottom:12}}>
+              <Button size="sm" onClick={emptyTrash} disabled={deleting==='__all__'}
+                style={{background:'rgba(255,59,48,0.08)',color:'#ff3b30',border:'1px solid rgba(255,59,48,0.25)'}}>
+                {deleting==='__all__'?'Emptying…':`🗑 Empty Trash (${trashedEntries.length})`}
+              </Button>
+            </div>
             <div style={{display:'flex',flexDirection:'column',gap:10}}>
               {trashedEntries.map(e=>(
                 <div key={e.id} style={{display:'flex',alignItems:'center',gap:14,padding:'13px 16px',borderRadius:12,border:'1px solid rgba(0,0,0,0.07)',opacity:0.85}}>
@@ -222,10 +441,15 @@ export default function LedgerEntries(){
                     <div style={{fontWeight:600,fontSize:13.5}}>{e.description||e.category}</div>
                     <div style={{fontSize:11.5,color:'var(--text-secondary)',marginTop:2}}>{e.category} · {formatCurrency(e.amount)} · Deleted {e.deletedAt?.toDate?.()?.toLocaleDateString('en-IN')||'—'}</div>
                   </div>
-                  <Button size="sm" onClick={()=>restoreEntry(e)} disabled={deleting===e.id}>{deleting===e.id?'Restoring…':'↩ Restore'}</Button>
+                  <Button size="sm" onClick={()=>restoreEntry(e)} disabled={!!deleting}>{deleting===e.id?'Restoring…':'↩ Restore'}</Button>
+                  <Button size="sm" onClick={()=>permanentlyDelete(e)} disabled={!!deleting}
+                    style={{background:'rgba(255,59,48,0.08)',color:'#ff3b30',border:'1px solid rgba(255,59,48,0.25)'}}>
+                    {deleting===e.id?'Deleting…':'🗑 Delete Permanently'}
+                  </Button>
                 </div>
               ))}
             </div>
+            </>
           )}
         </Card>
       ) : (
@@ -245,12 +469,12 @@ export default function LedgerEntries(){
         <div style={{overflowX:'auto'}}>
           <table style={{width:'100%',borderCollapse:'collapse'}}>
             <thead><tr style={{background:'rgba(118,118,128,0.06)'}}>
-              {['Date','Type','Category','Description','Party','Mode','Amount','Running Balance','Actions'].map(h=>(
+              {['Date','Type','Category','Description','Remarks','Party','Mode','Amount','Running Balance','Actions'].map(h=>(
                 <th key={h} style={{padding:'10px 14px',textAlign:'left',fontSize:11,fontWeight:600,color:'var(--text-secondary)',textTransform:'uppercase',letterSpacing:'0.05em',borderBottom:'1px solid var(--divider)',whiteSpace:'nowrap'}}>{h}</th>
               ))}
             </tr></thead>
             <tbody>
-              {filtered.length===0?<tr><td colSpan={9} style={{padding:48,textAlign:'center',color:'var(--text-tertiary)'}}><div style={{fontSize:32,marginBottom:8}}>📒</div><p style={{fontSize:14}}>No ledger entries found</p></td></tr>
+              {filtered.length===0?<tr><td colSpan={10} style={{padding:48,textAlign:'center',color:'var(--text-tertiary)'}}><div style={{fontSize:32,marginBottom:8}}>📒</div><p style={{fontSize:14}}>No ledger entries found</p></td></tr>
               :(() => {
                 let rb=0;
                 return [...filtered].reverse().map(e=>{rb+=e.type==='Credit'?(e.amount||0):-(e.amount||0);return {...e,rb};}).reverse().map(e=>(
@@ -261,6 +485,7 @@ export default function LedgerEntries(){
                     <td style={{padding:'11px 14px'}}><span style={{padding:'3px 10px',borderRadius:20,fontSize:12,fontWeight:600,background:e.type==='Credit'?'rgba(52,199,89,0.1)':'rgba(255,59,48,0.1)',color:e.type==='Credit'?'#1a7a34':'#c0392b'}}>{e.type}</span></td>
                     <td style={{padding:'11px 14px',fontSize:12,color:'#5856d6',maxWidth:120}}><span style={{display:'block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{e.category}</span></td>
                     <td style={{padding:'11px 14px',fontSize:13,color:'var(--text-primary)',maxWidth:180}}><p style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{e.description}</p></td>
+                    <td style={{padding:'11px 14px',fontSize:12,color:'var(--text-secondary)',maxWidth:150}}><p style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={e.remarks||''}>{e.remarks||'—'}</p></td>
                     <td style={{padding:'11px 14px',fontSize:12,color:'var(--text-secondary)',whiteSpace:'nowrap'}}>{e.borrowerName||e.depositorName||e.partyName||'—'}</td>
                     <td style={{padding:'11px 14px',fontSize:12,color:'var(--text-secondary)'}}>{e.paymentMode||'—'}</td>
                     <td style={{padding:'11px 14px',fontSize:14,fontWeight:700,color:e.type==='Credit'?'#34c759':'#ff3b30',whiteSpace:'nowrap'}} className="num">{e.type==='Credit'?'+':'-'}{formatCurrency(e.amount)}</td>

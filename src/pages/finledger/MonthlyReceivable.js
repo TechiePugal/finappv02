@@ -2,12 +2,13 @@ import React,{useEffect,useState} from 'react';
 import {collection,onSnapshot,getDocs,query,where} from 'firebase/firestore';
 import {db} from '../../firebase/config';
 import toast from 'react-hot-toast';
-import {PageHeader,Card,Badge,StatCard,ProgressBar,SectionHeader,formatCurrency,Loader} from '../../components/finledger/UI';
+import {PageHeader,Card,Badge,Button,StatCard,ProgressBar,SectionHeader,formatCurrency,Loader} from '../../components/finledger/UI';
 import {BarChart,Bar,XAxis,YAxis,CartesianGrid,Tooltip,ResponsiveContainer,Cell,LineChart,Line,Legend} from 'recharts';
 import { PageLoader } from '../../components/Skeleton';
 import {useAuth} from '../../contexts/AuthContext';
 import {scopeToUser} from '../../utils/scopeHelper';
 import {calcLoanInterestForMonth, calcDepositInterestForMonth} from '../../utils/interestCalc';
+import {printMonthDashboardReport} from '../../utils/pdfReport';
 
 // ─── BUG FIX: recalculate interest on outstanding balance, not stale monthlyInterest field ───
 function calcInterestOnOutstanding(borrower, repaymentsByBorrower, loanAdditionsMap, targetMonth) {
@@ -146,6 +147,19 @@ export default function MonthlyReceivable() {
       // Uses interest-only EMI collection — repaid principal is never counted as profit
       const netRevenue = totalCollected + totalEmiInterestCollected - totalPaidOut + curMonthFineIncome - totalExpensesMonth;
 
+      // ══ MONTH FINANCIAL SUMMARY (top of page) — same formula as the Overall
+      // Dashboard, scoped to just this month: Total Income = interest collected
+      // (loan+EMI, this month) + fine (loan+EMI, this month). Net Profit = Income
+      // − (Expense + Interest Given to Depositors), all for this month only. Cash
+      // Flow here only nets revenue/expense/interest-paid — new loan/EMI
+      // disbursement and new deposits taken in THIS specific month aren't tracked
+      // by this page, so principal movements are intentionally left out rather
+      // than approximated with a misleading number. ══
+      const monthTotalIncome = totalCollected + totalEmiInterestCollected + loanFineIncomeMonth + emiFineIncomeMonth;
+      const monthTotalExpense = totalExpensesMonth;
+      const monthNetProfit = monthTotalIncome - (monthTotalExpense + totalPaidOut);
+      const monthCashFlow = monthTotalIncome - monthTotalExpense - totalPaidOut;
+
       // Per-borrower rows with correct interest
       const borrowerRows = activeBorrowers.map(b => {
         const interest = calcInterestOnOutstanding(b, repsByBorrower, loanAdditionsMap, month);
@@ -194,6 +208,7 @@ export default function MonthlyReceivable() {
         monthlyDepositPrincipal, depositBalanceMonth,
         monthlyEmiPrincipal, emiBalanceMonth, emiNetProfitMonth,
         totalExpensesMonth,
+        monthTotalIncome, monthTotalExpense, monthNetProfit, monthCashFlow,
       });
     } catch(e) { toast.error('Failed to load'); console.error(e); }
     finally { setLoading(false); }
@@ -214,8 +229,9 @@ export default function MonthlyReceivable() {
   return (
     <div className="page-enter">
       <PageHeader
-        title="Monthly Report"
+        title="Monthly Dashboard"
         subtitle={`Interest flow analysis — ${label}${month===curMonthStr()?' (current month)':''}`}
+        action={<Button variant="secondary" onClick={()=>printMonthDashboardReport(d, label)}>Export PDF</Button>}
       />
 
       {/* Month navigation */}
@@ -226,6 +242,15 @@ export default function MonthlyReceivable() {
         {month!==curMonthStr() && (
           <button onClick={()=>setMonth(curMonthStr())} style={{ padding:'7px 14px', borderRadius:9, border:'1px solid rgba(0,0,0,0.1)', background:'rgba(118,118,128,0.07)', cursor:'pointer', fontSize:12.5, fontWeight:600, color:'var(--text-secondary)', fontFamily:'inherit' }}>This Month</button>
         )}
+      </div>
+
+      {/* MONTH FINANCIAL SUMMARY — Total Cash Flow / Total Income / Total Expense / Net Profit, for THIS month only */}
+      <SectionHeader title={`💰 Financial Summary — ${label}`}/>
+      <div className="grid-4" style={{marginBottom:20}}>
+        <StatCard label="Total Cash Flow" value={`${(d.monthCashFlow||0)>=0?'+':'-'}${formatCurrency(Math.round(Math.abs(d.monthCashFlow||0)))}`} sub="Income − Expense − Interest Paid, this month" color={(d.monthCashFlow||0)>=0?'#30d158':'#ff453a'}/>
+        <StatCard label="Total Income" value={formatCurrency(Math.round(d.monthTotalIncome||0))} sub="Interest collected (loan+EMI) + fine, this month" color="#0a84ff"/>
+        <StatCard label="Total Expense" value={formatCurrency(Math.round(d.monthTotalExpense||0))} sub="Operational expenses, this month" color="#ff453a"/>
+        <StatCard label="Net Profit" value={`${(d.monthNetProfit||0)>=0?'+':'-'}${formatCurrency(Math.round(Math.abs(d.monthNetProfit||0)))}`} sub="Income − (Expense + Interest Given), this month" color={(d.monthNetProfit||0)>=0?'#30d158':'#ff453a'}/>
       </div>
 
       {/* Loans — Overview (this month) — same structure as the Overall Dashboard */}

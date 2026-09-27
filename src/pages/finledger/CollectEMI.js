@@ -14,6 +14,7 @@ import { PageLoader } from '../../components/Skeleton';
 import {
   today, calcFine, getDaysOverdue, getScheduleWithStatus, emiPrincipalPerPeriod, emiInterestPerPeriod, fmtEmiDate,
 } from '../../utils/emiHelpers';
+import { printCollectEMISummary } from '../../utils/pdfReport';
 
 export default function CollectEMI() {
   const { user } = useAuth();
@@ -175,7 +176,8 @@ export default function CollectEMI() {
 
   return (
     <div className="page-enter">
-      <PageHeader title="Collect EMI" subtitle="Record EMI payments, view schedules and manage overdue instalments" />
+      <PageHeader title="Collect EMI" subtitle="Record EMI payments, view schedules and manage overdue instalments"
+        action={<Button variant="secondary" onClick={() => printCollectEMISummary(filtered, collections, filter==='all'?'All':filter==='closed'?'Closed':'Active')}>📄 Export PDF</Button>} />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14, marginBottom: 20 }} className="grid-4">
         <StatCard label="Active EMI Due" value={formatCurrency(Math.round(totalDue))} sub={`${activeLoans.length} active loan${activeLoans.length !== 1 ? 's' : ''}`} color="#007aff" />

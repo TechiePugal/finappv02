@@ -1,12 +1,35 @@
 import React,{useState} from 'react';
 import {PageHeader,Card,Button,SectionHeader} from '../../components/finledger/UI';
-import {backupAllData,restoreFromBackup} from '../../utils/fl_firestore';
+import {backupAllData,restoreFromBackup,deleteAllFinanceData} from '../../utils/fl_firestore';
+import {useAuth} from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
 
 export default function BackupRestore(){
+  const {user}=useAuth();
   const [backing,setBacking]=useState(false);
   const [restoring,setRestoring]=useState(false);
   const [lastBackup,setLastBackup]=useState(null);
+  const [wiping,setWiping]=useState(false);
+  const [wipeProgress,setWipeProgress]=useState(null);
+  const [confirmText,setConfirmText]=useState('');
+  const CONFIRM_PHRASE='DELETE ALL';
+
+  // ── Development-purpose full reset — wipes every Finance Ledger record for
+  // THIS account (depositors, borrowers, payments, EMI, expenses, ledger — every
+  // collection this module writes to), scoped the exact same way the rest of the
+  // app already scopes data (yours if createdBy matches, or it predates the
+  // ownership field). Other modules and other accounts are never touched. ──
+  async function doDeleteAll(){
+    if(confirmText.trim()!==CONFIRM_PHRASE)return toast.error(`Type "${CONFIRM_PHRASE}" exactly to confirm`);
+    if(!window.confirm('This permanently deletes ALL Finance Ledger data for your account — every depositor, borrower, payment, EMI loan, expense and ledger entry. This CANNOT be undone.\n\nStrongly recommended: download a backup first.\n\nProceed?'))return;
+    setWiping(true);setWipeProgress({collection:'starting…',deletedSoFar:0});
+    try{
+      const total=await deleteAllFinanceData(user?.uid,p=>setWipeProgress(p));
+      toast.success(`✓ Wiped ${total} records — Finance Ledger is now empty`);
+      setConfirmText('');
+    }catch(e){toast.error('Delete failed: '+e.message);}
+    finally{setWiping(false);setWipeProgress(null);}
+  }
 
   async function doBackup(){
     setBacking(true);
@@ -103,6 +126,40 @@ export default function BackupRestore(){
               <p style={{fontSize:11,color:'var(--text-secondary)'}}>{c.desc}</p>
             </div>
           ))}
+        </div>
+      </Card>
+
+      <Card style={{marginTop:16,border:'1.5px solid rgba(255,59,48,0.25)'}}>
+        <SectionHeader title="⚠️ Danger Zone — Delete All Finance Data"/>
+        <p style={{fontSize:13,color:'var(--text-secondary)',marginBottom:16,lineHeight:1.6}}>
+          For development / testing purposes only. This permanently deletes every Finance Ledger
+          record belonging to your account — depositors, borrowers, deposit &amp; loan payments,
+          EMI loans, expenses, and ledger entries. Other modules (Chit Fund, Real Estate) and
+          other accounts are never touched. <strong>This action cannot be undone.</strong>
+        </p>
+        <div style={{padding:'14px 16px',background:'rgba(255,59,48,0.06)',borderRadius:12,marginBottom:16,border:'1px solid rgba(255,59,48,0.15)'}}>
+          <p style={{fontSize:12,color:'#c0392b',marginBottom:10}}>Download a backup first — once deleted, this data is gone.</p>
+          <label style={{fontSize:12,color:'var(--text-secondary)',display:'block',marginBottom:6}}>
+            Type <strong style={{fontFamily:'monospace',color:'var(--text-primary)'}}>{CONFIRM_PHRASE}</strong> to confirm
+          </label>
+          <input
+            type="text" value={confirmText} onChange={e=>setConfirmText(e.target.value)}
+            placeholder={CONFIRM_PHRASE} disabled={wiping}
+            style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid rgba(255,59,48,0.3)',fontSize:14,marginBottom:12,boxSizing:'border-box'}}
+          />
+          {wiping&&wipeProgress&&(
+            <p style={{fontSize:12,color:'var(--text-secondary)',marginBottom:12}}>
+              Deleting… {wipeProgress.collection} ({wipeProgress.deletedSoFar} records so far)
+            </p>
+          )}
+          <Button
+            onClick={doDeleteAll}
+            disabled={wiping||confirmText.trim()!==CONFIRM_PHRASE}
+            style={{width:'100%',justifyContent:'center',background:'#ff3b30',borderColor:'#ff3b30'}}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            {wiping?'Deleting all data…':'Delete All Finance Data'}
+          </Button>
         </div>
       </Card>
 

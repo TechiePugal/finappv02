@@ -3,11 +3,12 @@ import {useNavigate} from 'react-router-dom';
 import {collection,onSnapshot,getDocs,query,where} from 'firebase/firestore';
 import {db} from '../../firebase/config';
 import {AreaChart,Area,XAxis,YAxis,CartesianGrid,Tooltip,ResponsiveContainer,BarChart,Bar,Cell} from 'recharts';
-import {StatCard,Card,Badge,formatCurrency,Loader,SectionHeader,ProgressBar} from '../../components/finledger/UI';
+import {StatCard,Card,Badge,Button,formatCurrency,Loader,SectionHeader,ProgressBar} from '../../components/finledger/UI';
 import { PageLoader } from '../../components/Skeleton';
 import {useAuth} from '../../contexts/AuthContext';
 import {scopeToUser} from '../../utils/scopeHelper';
 import {calcLoanInterestForMonth, calcDepositInterestForMonth} from '../../utils/interestCalc';
+import {printOverallDashboardReport} from '../../utils/pdfReport';
 
 const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -87,8 +88,11 @@ export default function Dashboard(){
       const monthlyPay = activeDeps.reduce((s,d)=>s+calcDepositInterestForMonth(d,depAdditionsMap[d.id],curMo),0);
 
       // Current month actuals
-      const curMonthCollected = payDocs.filter(d=>['Paid','Partial'].includes(d.status)&&d.month===curMo).reduce((s,d)=>s+(d.amountPaid||0),0);
-      const curMonthSettled   = setDocs.filter(d=>d.status==='Paid'||d.addedToDeposit).reduce((s,d)=>s+(d.addedToDeposit?(d.addedAmount||0):(d.amountPaid||0)),0);
+      const curMonthCollected = payDocs.filter(d=>['Paid','Partial'].includes(d.status)&&d.month===curMo).reduce((s,d)=>s+(d.amountPaid||0)+(d.addedAmount||0),0);
+      // BUG FIX: was missing 'Partial' — a period settled via the pay-through-month
+      // picker that only partly covers a month (cash collected < interest due) was
+      // silently excluded here, understating what's actually been collected/added.
+      const curMonthSettled   = setDocs.filter(d=>['Paid','Partial'].includes(d.status)||d.addedToDeposit).reduce((s,d)=>s+(d.amountPaid||0)+(d.addedAmount||0),0);
 
       const secVal = bors.reduce((s,b)=>s+(b.securityValue||0),0);
       const overdue = payDocs.filter(d=>d.status==='Unpaid'&&d.month&&d.month<curMo).reduce((s,d)=>s+(d.amountDue||0),0);
@@ -112,14 +116,21 @@ export default function Dashboard(){
       // principal (principal recovery isn't profit, it's just capital coming back).
       const loanTotalPrincipal = activeBors.reduce((s,b)=>s+(b.loanAmount||0),0); // sum of all active loan principal issued
       const loanTotalDue = payDocs.reduce((s,p)=>s+(p.amountDue||0),0);
-      const loanTotalCollected = payDocs.filter(p=>p.status==='Paid'||p.status==='Partial').reduce((s,p)=>s+(p.amountPaid||0),0);
+      // BUG FIX: Interest Collection's new "add to loan principal" split (mirroring
+      // the deposit side) records the compounded portion as addedAmount, separate
+      // from amountPaid — a period settled entirely by adding to principal has
+      // amountPaid:0 and would otherwise vanish from "Collected" here.
+      const loanTotalCollected = payDocs.filter(p=>p.status==='Paid'||p.status==='Partial'||p.addedToLoan).reduce((s,p)=>s+(p.amountPaid||0)+(p.addedAmount||0),0);
       const loanBalance = Math.max(0,loanTotalDue-loanTotalCollected);
       const loanNetProfit = loanTotalCollected + loanFineIncome; // interest + fine — never principal repaid
 
       // ══ DEPOSITOR — Total Deposit / Interest to Give / Interest Given / Remaining ══
       const depTotalDeposit = totalDeposits;
       const depInterestToGive = setDocs.reduce((s,p)=>s+(p.amountDue||0),0);
-      const depInterestGiven = setDocs.filter(p=>p.status==='Paid'||p.addedToDeposit).reduce((s,p)=>s+(p.amountPaid||0)+(p.addedAmount||0),0);
+      // BUG FIX: same 'Partial' omission as curMonthSettled above — a partially
+      // settled period's cash/compounded amount was dropped from "Interest Given"
+      // entirely instead of counting what was actually collected so far.
+      const depInterestGiven = setDocs.filter(p=>['Paid','Partial'].includes(p.status)||p.addedToDeposit).reduce((s,p)=>s+(p.amountPaid||0)+(p.addedAmount||0),0);
       const depInterestRemaining = Math.max(0,depInterestToGive-depInterestGiven);
 
       // 6-month chart data (use actual totals for current month)
@@ -178,6 +189,18 @@ export default function Dashboard(){
       // Net Profit card). Loan/EMI fine is NOT added again here — that would double-count it. ══
       const combinedNetProfit = loanNetProfit + emiNetProfit - depInterestGiven + depositFineIncome - totalExpenses;
 
+      // ══ OVERALL FINANCIAL SUMMARY (top of page) — exactly the formula requested:
+      // Total Income = interest collected (loan + EMI) + fine (loan + EMI only —
+      // deposit fine is tracked separately, see depositFineIncome above).
+      // Net Profit = Total Income − (Total Expense + Total Interest Given to Depositors).
+      // Total Cash Flow is a broader picture that ALSO nets principal movements —
+      // deposits received (cash in) and loans/EMI issued (cash out) — not just
+      // revenue, so it can differ from Net Profit even when both are "healthy". ══
+      const overallTotalIncome = loanTotalCollected + emiTotalCollected + loanFineIncome + emiFineIncome;
+      const overallTotalExpense = totalExpenses; // operational expenses only — interest paid to depositors is shown as its own line
+      const overallNetProfit = overallTotalIncome - (overallTotalExpense + depInterestGiven);
+      const overallCashFlow = (overallTotalIncome + totalRepaid + totalDeposits) - (loanTotalPrincipal + emiTotalPrincipal + depInterestGiven + overallTotalExpense);
+
       const recent=[...bors].sort((a,b)=>(b.createdAt?.toMillis?.()??0)-(a.createdAt?.toMillis?.()??0)).slice(0,5);
 
       setData({
@@ -198,6 +221,7 @@ export default function Dashboard(){
         loanFineIncome, emiFineIncome, depositFineIncome, totalExpenses,
         nonActiveLoanAmount, nonActiveLoanInterest, nonActiveEmiAmount, nonActiveEmiInterest,
         nonActiveEmiCount: nonActiveEmi.length,
+        overallTotalIncome, overallTotalExpense, overallNetProfit, overallCashFlow,
       });
     }catch(e){console.error(e);}finally{setLoading(false);}
   }
@@ -209,11 +233,27 @@ export default function Dashboard(){
   return(
     <div className="page-enter">
       {/* Header */}
-      <div style={{marginBottom:22}}>
-        <h1 style={{fontSize:24,fontWeight:800,color:'var(--text-primary)',letterSpacing:'-0.03em',lineHeight:1}}>Dashboard</h1>
-        <p style={{color:'var(--text-secondary)',fontSize:13,marginTop:5}}>
-          {now.toLocaleDateString('en-IN',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}
-        </p>
+      <div style={{marginBottom:22,display:'flex',justifyContent:'space-between',alignItems:'flex-start',flexWrap:'wrap',gap:12}}>
+        <div>
+          <h1 style={{fontSize:24,fontWeight:800,color:'var(--text-primary)',letterSpacing:'-0.03em',lineHeight:1}}>Overall Dashboard</h1>
+          <p style={{color:'var(--text-secondary)',fontSize:13,marginTop:5}}>
+            {now.toLocaleDateString('en-IN',{weekday:'long',year:'numeric',month:'long',day:'numeric'})} · From the very beginning, up to date
+          </p>
+        </div>
+        <Button variant="secondary" onClick={()=>printOverallDashboardReport(d)}>Export PDF</Button>
+      </div>
+
+      {/* OVERALL FINANCIAL SUMMARY — Total Cash Flow / Total Income / Total Expense / Net Profit */}
+      <SectionHeader title="💰 Overall Financial Summary"/>
+      <div className="grid-4" style={{marginBottom:20}}>
+        <StatCard label="Total Cash Flow" value={`${(d.overallCashFlow||0)>=0?'+':'-'}${formatCurrency(Math.round(Math.abs(d.overallCashFlow||0)))}`} sub="Income+Repaid+Deposits − Loans/EMI Issued − Interest Paid − Expense" color={(d.overallCashFlow||0)>=0?'#30d158':'#ff453a'}
+          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>}/>
+        <StatCard label="Total Income" value={formatCurrency(Math.round(d.overallTotalIncome||0))} sub="Interest collected (loan+EMI) + fine" color="#0a84ff"
+          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="20 6 9 17 4 12"/></svg>}/>
+        <StatCard label="Total Expense" value={formatCurrency(Math.round(d.overallTotalExpense||0))} sub="Operational expenses (excl. interest to depositors)" color="#ff453a"
+          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>}/>
+        <StatCard label="Net Profit" value={`${(d.overallNetProfit||0)>=0?'+':'-'}${formatCurrency(Math.round(Math.abs(d.overallNetProfit||0)))}`} sub="Income − (Expense + Interest Given to Depositors)" color={(d.overallNetProfit||0)>=0?'#30d158':'#ff453a'}
+          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>}/>
       </div>
 
       {/* LOANS — Total to Collect / Collected / Balance / Net Profit (fine excluded) */}
