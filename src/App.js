@@ -35,6 +35,7 @@ import CFJoinedAuctions from './pages/chitfund/JoinedAuctions';
 import CFExpectedFund from './pages/chitfund/ExpectedFund';
 import CFJoinedExposure from './pages/chitfund/JoinedExposure';
 import CFJoinedLedger from './pages/chitfund/JoinedLedger';
+import CFJoinedCalendar from './pages/chitfund/JoinedCalendar';
 
 // Finance Ledger (react-router with /fl prefix)
 import FLLayout from './components/finledger/Layout';
@@ -253,6 +254,7 @@ function AppRouter() {
             <Route path="other-chit-companies" element={<CFOtherChitCompanies />} />
             <Route path="journal" element={<CFJournal />} />
             <Route path="joined-auctions" element={<CFJoinedAuctions />} />
+            <Route path="joined-calendar" element={<CFJoinedCalendar />} />
             <Route path="expected-fund" element={<CFExpectedFund />} />
             <Route path="joined-exposure" element={<CFJoinedExposure />} />
             <Route path="joined-ledger" element={<CFJoinedLedger />} />

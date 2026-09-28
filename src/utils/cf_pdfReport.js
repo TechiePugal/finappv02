@@ -321,7 +321,14 @@ export function printFundProjection(projection, kpis) {
 }
 
 export function printJoinedFundProjection(rows, viewMonthLabel, realizedPL) {
-  const dueRows = rows.filter(r => !r.isPaidThisMonth && !r.isCashed);
+  // BUG FIX: this used to also exclude any row marked isCashed, but a chit
+  // that's already been cashed can still owe its full subscription for every
+  // round right up to the end of the term — excluding it here made an already-
+  // due cashed chit's payment vanish from both the total and the PDF's row
+  // count, even though ExpectedFund.js correctly computed a real amount for
+  // it. Whether a row is due now depends only on isPaidThisMonth/
+  // expectedThisMonth, not on cashed status.
+  const dueRows = rows.filter(r => !r.isPaidThisMonth && r.expectedThisMonth > 0);
   const totalDue = dueRows.reduce((s, r) => s + r.expectedThisMonth, 0);
   const body = `
     <div class="header">
@@ -338,7 +345,7 @@ export function printJoinedFundProjection(rows, viewMonthLabel, realizedPL) {
       <thead><tr><th>#</th><th>Chit</th><th>Company</th><th class="text-right">Round</th><th class="text-right">Subscription</th><th class="text-right">Expected</th><th>Status</th></tr></thead>
       <tbody>
         ${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${r.chitName||r.companyName}</td><td>${r.companyName}</td><td class="text-right">#${r.nextRound}</td><td class="text-right">${INR(r.sub)}</td><td class="text-right">${INR(r.expectedThisMonth)}</td><td>${r.isCashed?'Cashed':r.isPaidThisMonth?'Paid':'Due'}</td></tr>`).join('')}
-        <tr class="total-row"><td colspan="5">TOTAL EXPECTED (unpaid, active)</td><td class="text-right">${INR(totalDue)}</td><td></td></tr>
+        <tr class="total-row"><td colspan="5">TOTAL EXPECTED (unpaid, due)</td><td class="text-right">${INR(totalDue)}</td><td></td></tr>
       </tbody>
     </table>
     <div class="footer"><span>EC Fin 360 Chit Fund</span><span>Joined Chits Fund Projection</span></div>

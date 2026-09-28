@@ -33,7 +33,37 @@ function roundForMonth(chit, targetMonth) {
   const [ty, tm] = targetMonth.split('-').map(Number);
   const diff = (ty * 12 + tm) - (sy * 12 + sm);
   if (diff < 0 || diff % cycle !== 0) return null;
-  return diff / cycle + 1;
+  const round = diff / cycle + 1;
+  // BUG FIX: a chit only has `totalMembers` rounds ever — without this cap the
+  // month math kept "finding" a round number for months long after the chit's
+  // real term had ended (e.g. a 10-month chit starting June 2026 has nothing
+  // due past March 2027), so it kept showing up as due/owing indefinitely.
+  if (chit.totalMembers && round > chit.totalMembers) return null;
+  return round;
+}
+
+// Which round was this chit ACTUALLY taken on? "Cashed" status should only
+// apply from that round onward — a round that happened before the chit was
+// ever taken must still get its normal pre-cash commission treatment.
+function cashRoundOf(c) {
+  if (c.myStatus !== 'Cashed' || !c.actualTakeMonth) return null;
+  return roundForMonth(c, c.actualTakeMonth);
+}
+
+// The calendar month of this chit's last scheduled round — used to drop it
+// from this page once you've browsed past its real closing month, even if a
+// round or two was never actually marked paid (so paidCount alone wouldn't
+// call it "fully paid off").
+function scheduleEndMonth(chit) {
+  if (!chit.startMonth || !chit.totalMembers) return null;
+  const cycle = chit.auctionInterval || 1;
+  if (chit.frequencyType === 'Days') {
+    const [sy, sm] = chit.startMonth.split('-').map(Number);
+    const d = new Date(sy, sm - 1, 1);
+    d.setDate(d.getDate() + (chit.totalMembers - 1) * cycle);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }
+  return shiftMonth(chit.startMonth, (chit.totalMembers - 1) * cycle);
 }
 
 export default function JoinedAuctions() {
@@ -74,24 +104,42 @@ export default function JoinedAuctions() {
     const viewedRound = monthRound || currentRound;
     const nextRound = viewedRound;
     // Adapter matching what getExpectedPayable expects — mirrors OtherChits.js's toChitLike()
+    // BUG FIX (round-aware): "cashed" used to apply to EVERY round unconditionally,
+    // so a chit taken in round 4 of 10 showed the post-cash full-subscription rate
+    // even for rounds 1-3, which happened before it was ever taken. Now it only
+    // applies from the actual take-round onward.
+    const cashRound = cashRoundOf(c);
+    const cashedForThisRound = isCashed && (cashRound === null || nextRound >= cashRound);
     const chitLike = {
       totalChitValue: c.totalChitValue, totalMembers: c.totalMembers,
-      mystatus: isCashed ? 'cashed' : 'active', commissionType: c.commissionType || 'Single',
+      mystatus: cashedForThisRound ? 'cashed' : 'active', commissionType: c.commissionType || 'Single',
       range1: c.range1 || 0, range2: c.range2 || 0, range3: c.range3 || 0, range4: c.range4 || 0,
     };
-    // The real fund-projection rule: if this ticket has ALREADY been taken (cashed),
-    // every future payment is the FULL subscription — no more discount. If not yet
-    // taken, use the configured commission-range ESTIMATE as the expected (discounted)
-    // amount, falling back to full subscription if no range was set. And critically,
-    // if this month isn't a payout month at all for this chit's cycle, nothing is owed.
-    const expectedThisMonth = !isDueThisMonth ? 0 : (isCashed ? sub : getExpectedPayable(chitLike, nextRound));
-    return { ...c, pays, paidCount, sub, expectedThisMonth, isPaidThisMonth, isCashed, isDueThisMonth, nextRound, currentRound, chitLike, recent: [...pays].sort((a, b) => String(b.month).localeCompare(String(a.month))).slice(0, 3) };
-  });
+    // The real fund-projection rule: getExpectedPayable already knows the right
+    // answer for every combination — a cashed Single-commission chit pays the FULL
+    // subscription (no more discount), while a cashed Double-commission chit KEEPS
+    // earning commission every round, same as before it was taken (see cf_engine.js).
+    // Forcing a flat "sub" for every cashed chit here (the old behavior) was wrong
+    // for Double — it silently overcharged the projection for Double chits after
+    // taking. And critically, if this month isn't a payout month at all for this
+    // chit's cycle, nothing is owed.
+    const expectedThisMonth = !isDueThisMonth ? 0 : getExpectedPayable(chitLike, nextRound);
+    const isFullyPaidOff = paidCount >= (c.totalMembers || 0);
+    const endMonth = scheduleEndMonth(c);
+    const pastScheduleEnd = endMonth !== null && viewMonth > endMonth;
+    return { ...c, pays, paidCount, sub, expectedThisMonth, isPaidThisMonth, isCashed, isFullyPaidOff, pastScheduleEnd, isDueThisMonth, nextRound, currentRound, chitLike, recent: [...pays].sort((a, b) => String(b.month).localeCompare(String(a.month))).slice(0, 3) };
+  }).filter(r => !r.pastScheduleEnd);
 
-  const dueNow = rows.filter(r => !r.isCashed && !r.isPaidThisMonth && r.isDueThisMonth);
-  const upToDate = rows.filter(r => !r.isCashed && r.isPaidThisMonth);
+  // BUG FIX: a chit marked "Cashed" (already took the prize) used to be dropped from
+  // every list here outright — Payment Due Now, Up To Date, and the visible card list
+  // — on the assumption a cashed chit needs no more tracking. That's wrong: most chits
+  // still require the full subscription (or, for Double commission, a discounted one)
+  // every remaining round right up to the last one. A cashed chit now only drops out
+  // once it's actually fully paid off — every round settled — matching Expected Fund.
+  const dueNow = rows.filter(r => !r.isFullyPaidOff && !r.isPaidThisMonth && r.isDueThisMonth);
+  const upToDate = rows.filter(r => !r.isFullyPaidOff && r.isPaidThisMonth);
   const cashedOut = rows.filter(r => r.isCashed);
-  const activeRows = rows.filter(r => !r.isCashed); // the visible card list never shows cashed-out chits
+  const activeRows = rows.filter(r => !r.isFullyPaidOff); // only drop chits that are fully paid off
 
   const totalDueAmount = dueNow.reduce((s, r) => s + r.expectedThisMonth, 0); // uses real taken/not-taken projection, not flat subscription
 
@@ -145,7 +193,7 @@ export default function JoinedAuctions() {
       )}
 
       {activeRows.length === 0 ? (
-        <Card><EmptyState icon={Gavel} title="No active joined chits" subtitle="Chits you've already cashed out don't need round-by-round tracking anymore" /></Card>
+        <Card><EmptyState icon={Gavel} title="No active joined chits" subtitle="Chits that are fully paid off don't need round-by-round tracking anymore" /></Card>
       ) : (
         <div style={{ display: 'grid', gap: 12 }}>
           {activeRows.map(r => (
@@ -158,17 +206,16 @@ export default function JoinedAuctions() {
                   </div>
                   <div style={{ fontSize: 12, color: tokens.textSub }}>
                     Round #{r.nextRound} of {r.totalMembers} · Subscription {formatCurrency(r.sub)}/month · Expected {formatCurrency(r.expectedThisMonth)}{r.expectedThisMonth < r.sub ? ' (discounted)' : ''}
+                    {r.isCashed && <span style={{ color: '#5521B5', fontWeight: 600 }}> · already cashed, still owes {Math.max(0, r.totalMembers - r.paidCount)} round{Math.max(0, r.totalMembers - r.paidCount) !== 1 ? 's' : ''}</span>}
                   </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                  {!r.isCashed && (
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: 10.5, color: tokens.textMuted, fontWeight: 700, textTransform: 'uppercase' }}>This Month</div>
-                      <div style={{ fontSize: 15, fontWeight: 800, color: r.isPaidThisMonth ? tokens.green : tokens.amber }}>
-                        {r.isPaidThisMonth ? '✓ Paid' : formatCurrency(r.expectedThisMonth)}
-                      </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 10.5, color: tokens.textMuted, fontWeight: 700, textTransform: 'uppercase' }}>This Month</div>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: r.isPaidThisMonth ? tokens.green : tokens.amber }}>
+                      {r.isPaidThisMonth ? '✓ Paid' : (r.isDueThisMonth ? formatCurrency(r.expectedThisMonth) : 'Not due')}
                     </div>
-                  )}
+                  </div>
                   <ArrowRight size={16} color={tokens.textMuted} />
                 </div>
               </div>
@@ -182,22 +229,20 @@ export default function JoinedAuctions() {
                   ))}
                 </div>
               )}
-              {!r.isCashed && (
-                <div style={{ borderTop: `1px solid ${tokens.border}`, padding: '10px 18px', display: 'flex', gap: 18, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 10.5, color: tokens.textMuted, fontWeight: 700, textTransform: 'uppercase' }}>Next 3 Months (Projected)</span>
-                  {[0, 1, 2].map(i => {
-                    const round = r.nextRound + i;
-                    if (round > r.totalMembers) return null;
-                    const expected = getExpectedPayable(r.chitLike, round);
-                    return (
-                      <div key={i} style={{ fontSize: 11.5, color: tokens.textSub }}>
-                        Round #{round}: <strong style={{ color: tokens.text }}>{formatCurrency(expected)}</strong>
-                        {expected < r.sub && <span style={{ color: tokens.green }}> (discounted)</span>}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              <div style={{ borderTop: `1px solid ${tokens.border}`, padding: '10px 18px', display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 10.5, color: tokens.textMuted, fontWeight: 700, textTransform: 'uppercase' }}>Next 3 Months (Projected)</span>
+                {[0, 1, 2].map(i => {
+                  const round = r.nextRound + i;
+                  if (round > r.totalMembers) return null;
+                  const expected = getExpectedPayable(r.chitLike, round);
+                  return (
+                    <div key={i} style={{ fontSize: 11.5, color: tokens.textSub }}>
+                      Round #{round}: <strong style={{ color: tokens.text }}>{formatCurrency(expected)}</strong>
+                      {expected < r.sub && <span style={{ color: tokens.green }}> (discounted)</span>}
+                    </div>
+                  );
+                })}
+              </div>
             </Card>
           ))}
         </div>

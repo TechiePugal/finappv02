@@ -11,6 +11,42 @@ import { PageLoader } from '../../components/Skeleton';
 
 const fmt = v => formatCurrency(v || 0);
 
+// Which round number does a given calendar month correspond to for a joined
+// chit, respecting its own start month, auction interval and Days/Months
+// frequency — mirrors the same helper used on Expected Fund / Auctions /
+// Exposure so every screen agrees on which months a chit actually owes on.
+function roundForMonth(chit, targetMonth) {
+  if (!chit.startMonth) return null;
+  const cycle = chit.auctionInterval || 1;
+  if (chit.frequencyType === 'Days') {
+    const [sy, sm] = chit.startMonth.split('-').map(Number);
+    const start = new Date(sy, sm - 1, 1);
+    for (let i = 0; i < (chit.totalMembers || 60); i++) {
+      const d = new Date(start); d.setDate(d.getDate() + i * cycle);
+      const mo = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      if (mo === targetMonth) return i + 1;
+    }
+    return null;
+  }
+  const [sy, sm] = chit.startMonth.split('-').map(Number);
+  const [ty, tm] = targetMonth.split('-').map(Number);
+  const diff = (ty * 12 + tm) - (sy * 12 + sm);
+  if (diff < 0 || diff % cycle !== 0) return null;
+  const round = diff / cycle + 1;
+  // BUG FIX: cap at the chit's real number of rounds — otherwise a chit whose
+  // term has already ended (e.g. 10 monthly rounds from June 2026 to March
+  // 2027) kept "owing" something in every month forever after.
+  if (chit.totalMembers && round > chit.totalMembers) return null;
+  return round;
+}
+
+// Which round was a joined chit ACTUALLY taken on — "cashed" status should
+// only apply from that round onward, not to rounds that happened earlier.
+function cashRoundOf(c) {
+  if (c.myStatus !== 'Cashed' || !c.actualTakeMonth) return null;
+  return roundForMonth(c, c.actualTakeMonth);
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   const nav = useNavigate();
@@ -25,8 +61,12 @@ export default function Dashboard() {
     getDashboardData(user.uid).then(d => { setData(d); setLoading(false); }).catch(e => { setLoadErr('Failed to load data — check connection'); setLoading(false); });
     getOtherChits(user.uid).then(list => {
       setJoined(list);
-      const active = list.filter(j => j.myStatus !== 'Cashed');
-      Promise.all(active.map(j => getOtherChitPayments(j.id).then(p => [j.id, p]))).then(pairs => {
+      // BUG FIX: this used to only fetch payments for non-cashed chits, which then
+      // fed every "cashed chits excluded" spot below (reminders, this-month total,
+      // the 8-month chart) — but most chits still owe the full subscription every
+      // remaining round after being cashed. Fetch payments for ALL joined chits so
+      // "still owes" can be worked out per-chit instead of using myStatus alone.
+      Promise.all(list.map(j => getOtherChitPayments(j.id).then(p => [j.id, p]))).then(pairs => {
         setJoinedPays(Object.fromEntries(pairs));
       }).catch(() => {});
     }).catch(() => {});
@@ -44,12 +84,6 @@ export default function Dashboard() {
   const scheds  = data?.schedules || {};
   const active  = chits.filter(c => c.status === 'Active');
   const proj    = buildMonthProjection(chits, scheds);
-  // FIX: proj[0] is just the earliest month with ANY pending auction, not necessarily
-  // the actual current calendar month — find it explicitly so "This Month" is accurate.
-  const _curMoKey = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
-  const next1   = (proj.find(m=>m.key===_curMoKey)?.total) || 0; // formed-only (kept for existing stat cards)
-  const next3   = proj.slice(0,3).reduce((s,m)=>s+m.total,0);
-  const next6   = proj.slice(0,6).reduce((s,m)=>s+m.total,0);
   const totalExposure = chits.reduce((s,c)=>s+Math.max(0,(c.totalInvested||0)-(c.totalCommissionEarned||0)-(c.totalReceived||0)),0);
 
   // This month need per chit (investment model)
@@ -82,20 +116,31 @@ export default function Dashboard() {
     const d = new Date(_today.getFullYear(), _today.getMonth() + i, 1);
     const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
     const m = proj.find(p => p.key === k);
-    const joinedThisMonth = joined.filter(j => j.myStatus !== 'Cashed').reduce((s,j) => {
+    // BUG FIX: this used to test `i % cycle === 0` — months-from-today instead of
+    // the chit's own start month — which misaligned any chit whose cycle isn't
+    // anchored to the current calendar month, and it also excluded every cashed
+    // chit outright and always used a flat subscription amount. Now it uses the
+    // same start-month-anchored roundForMonth logic as Expected Fund/Auctions,
+    // keeps cashed-but-still-owing chits in the total, and uses the real
+    // commission-aware amount (getExpectedPayable) instead of a flat guess.
+    const joinedThisMonth = joined.reduce((s,j) => {
       const pays = joinedPays[j.id] || [];
       const paidCount = pays.filter(p => p.status === 'Paid').length;
-      const sub = (j.totalChitValue||0) / (j.totalMembers||1);
-      // BUG FIX: the old check only verified "hasn't finished all rounds yet," which
-      // shows an amount owed in EVERY future month even for chits with a longer cycle
-      // (e.g. every 2 months). Now it checks whether THIS specific future month actually
-      // lines up with the chit's own auction interval — same fix applied to Expected
-      // Fund and Auctions pages.
-      const cycle = j.auctionInterval || 1;
-      const roundsElapsedByThisMonth = Math.floor(i / cycle);
-      const isPayoutMonth = i % cycle === 0;
-      const stillOwesThisMonth = isPayoutMonth && (paidCount + roundsElapsedByThisMonth) < (j.totalMembers||0);
-      return s + (stillOwesThisMonth ? sub : 0);
+      if (paidCount >= (j.totalMembers||0)) return s; // fully paid off — never owes again
+      const round = roundForMonth(j, k);
+      if (round === null) return s; // not a payout month for this chit's own cycle
+      const isCashed = j.myStatus === 'Cashed';
+      // Round-aware: only treat THIS round as cashed if it's at/after the round
+      // the chit was actually taken on — a round before that still gets its
+      // normal pre-cash commission-adjusted amount.
+      const cashRound = cashRoundOf(j);
+      const cashedForThisRound = isCashed && (cashRound === null || round >= cashRound);
+      const chitLike = {
+        totalChitValue: j.totalChitValue, totalMembers: j.totalMembers,
+        mystatus: cashedForThisRound ? 'cashed' : 'active', commissionType: j.commissionType || 'Single',
+        range1: j.range1||0, range2: j.range2||0, range3: j.range3||0, range4: j.range4||0,
+      };
+      return s + getExpectedPayable(chitLike, round);
     }, 0);
     const formedTotal = m?.total || 0;
     return {
@@ -141,14 +186,28 @@ export default function Dashboard() {
   });
 
   // Joined-chit reminders — payment due/overdue this month
+  // BUG FIX: used to exclude every cashed chit outright — but a cashed chit that
+  // still owes future rounds needs this reminder just as much as an active one;
+  // only a fully paid-off chit has nothing left to remind about.
   const _curMo = (() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`; })();
-  const joinedReminders = joined.filter(j => j.myStatus !== 'Cashed').map(j => {
+  const joinedReminders = joined.filter(j => {
+    const paidCount = (joinedPays[j.id]||[]).filter(p=>p.status==='Paid').length;
+    return paidCount < (j.totalMembers||0);
+  }).map(j => {
     const pays = joinedPays[j.id] || [];
     const thisMoPay = pays.find(p => p.month === _curMo);
     const paid = thisMoPay && thisMoPay.status === 'Paid';
     const sub = (j.totalChitValue || 0) / (j.totalMembers || 1);
     return { j, paid, sub };
   }).filter(r => !r.paid);
+
+  // Joined side of "Net Exposure" — money paid in across still-owing joined
+  // chits, minus prizes already received on any of them (mirrors the Formed
+  // exposure calc above so the KPI tile below reflects BOTH sides of the
+  // business, not Formed chits only).
+  const joinedTotalPaid = joined.reduce((s,j) => s + (joinedPays[j.id]||[]).filter(p=>p.status==='Paid').reduce((ss,p)=>ss+(p.amount||0),0), 0);
+  const joinedTotalReceived = joined.reduce((s,j) => s + (j.prizeReceived || (joinedPays[j.id]||[]).reduce((ss,p)=>ss+(p.iWon?(p.prizeReceived||0):0),0)), 0);
+  const joinedNetExposure = Math.max(0, joinedTotalPaid - joinedTotalReceived);
 
   const now_ = new Date();
   const hour = now_.getHours();
@@ -195,12 +254,17 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* KPI cards */}
+      {/* KPI cards — combined across Formed AND Joined chits.
+          BUG FIX: these 4 tiles used to be Formed-only (thisMonthNeed/next1/
+          totalExposure all came from `chits`, the formed list, never `joined`) even
+          though the chart just below already correctly combines both. Now every
+          tile pulls from the same combined chartData used by that chart, so the
+          headline numbers and the chart underneath always agree. */}
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))', gap:13 }}>
-        <StatCard label="Active Chit Funds"   value={active.length} sub={`${chits.length} total`} icon={FileText}  accent={tokens.blue}/>
-        <StatCard label="This Month Required" value={fmt(thisMonthNeed)} sub={`3mo: ${fmt(next3)}`} icon={Wallet}    accent='#B45309'/>
-        <StatCard label="Next Month"          value={fmt(next1)} sub="projected outflow"            icon={BarChart3} accent={tokens.blue}/>
-        <StatCard label="Net Exposure"        value={fmt(totalExposure)} sub="invested − received"  icon={TrendingUp} accent={totalExposure>0?tokens.red:tokens.green}/>
+        <StatCard label="Active Chit Funds"   value={active.length} sub={`${chits.length} formed · ${joined.length} joined`} icon={FileText}  accent={tokens.blue}/>
+        <StatCard label="This Month Required" value={fmt(chartData[0]?.required||0)} sub={`formed ${fmt(chartData[0]?.formed||0)} + joined ${fmt(chartData[0]?.joinedObligation||0)}`} icon={Wallet}    accent='#B45309'/>
+        <StatCard label="Next Month"          value={fmt(chartData[1]?.required||0)} sub="projected outflow, formed + joined" icon={BarChart3} accent={tokens.blue}/>
+        <StatCard label="Net Exposure"        value={fmt(totalExposure+joinedNetExposure)} sub="invested − received, formed + joined"  icon={TrendingUp} accent={(totalExposure+joinedNetExposure)>0?tokens.red:tokens.green}/>
       </div>
 
       <Card>

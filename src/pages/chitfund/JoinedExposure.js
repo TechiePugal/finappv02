@@ -5,8 +5,38 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import { Zap, TrendingDown, TrendingUp, AlertCircle, ChevronRight } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { getOtherChits, getOtherChitPayments } from '../../utils/cf_firestore';
+import { getExpectedPayable } from '../../utils/cf_engine';
 import { formatCurrency } from '../../utils/cf_format';
 import { Card, PageHeader, StatCard, SectionHeader, Table, Badge, Loader, EmptyState, tokens, KPIRow } from '../../components/chitfund/UI';
+
+// Which round number does a given month fall on for this chit — same logic
+// used on Expected Fund / Auctions / Calendar so every screen agrees.
+function roundForMonth(chit, targetMonth) {
+  if (!chit.startMonth) return null;
+  const cycle = chit.auctionInterval || 1;
+  if (chit.frequencyType === 'Days') {
+    const [sy, sm] = chit.startMonth.split('-').map(Number);
+    const start = new Date(sy, sm - 1, 1);
+    for (let i = 0; i < (chit.totalMembers || 60); i++) {
+      const d = new Date(start); d.setDate(d.getDate() + i * cycle);
+      const mo = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      if (mo === targetMonth) return i + 1;
+    }
+    return null;
+  }
+  const [sy, sm] = chit.startMonth.split('-').map(Number);
+  const [ty, tm] = targetMonth.split('-').map(Number);
+  const diff = (ty * 12 + tm) - (sy * 12 + sm);
+  if (diff < 0 || diff % cycle !== 0) return null;
+  return diff / cycle + 1;
+}
+// Which round was this chit ACTUALLY taken on — "cashed" only applies to the
+// future-liability of rounds at/after this one, not rounds that already
+// happened before the chit was ever taken.
+function cashRoundOf(c) {
+  if (c.myStatus !== 'Cashed' || !c.actualTakeMonth) return null;
+  return roundForMonth(c, c.actualTakeMonth);
+}
 
 const CustomTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
@@ -34,11 +64,20 @@ export default function JoinedExposure() {
   useEffect(() => {
     if (!user) return;
     getOtherChits(user.uid).then(async list => {
-      // Cashed-out chits excluded — nothing left to be "at risk" on once taken.
-      const active = list.filter(c => c.myStatus !== 'Cashed');
-      setChits(active);
-      const pairs = await Promise.all(active.map(c => getOtherChitPayments(c.id).then(p => [c.id, p])));
-      setPayMap(Object.fromEntries(pairs));
+      // BUG FIX: this used to drop every "Cashed" chit outright, on the assumption
+      // there's nothing left to be "at risk" on once taken — same mistaken
+      // assumption fixed elsewhere (Expected Fund, Auctions). Most chits still owe
+      // the full subscription every remaining round after being taken, so a cashed
+      // chit only truly has zero future liability once it's actually fully paid
+      // off. Need payments fetched first to know which is which.
+      const pm = {};
+      await Promise.all(list.map(async c => { pm[c.id] = await getOtherChitPayments(c.id); }));
+      const relevant = list.filter(c => {
+        const paidCount = (pm[c.id] || []).filter(p => p.status === 'Paid').length;
+        return paidCount < (c.totalMembers || 0); // still owes something, cashed or not
+      });
+      setChits(relevant);
+      setPayMap(pm);
       setLoading(false);
     }).catch(() => setLoading(false));
   }, [user]);
@@ -48,14 +87,46 @@ export default function JoinedExposure() {
   const enriched = chits.map(c => {
     const pays = payMap[c.id] || [];
     const paidMonths = pays.filter(p => p.status === 'Paid');
+    const paidCount = paidMonths.length;
     const totalPaid = paidMonths.reduce((s, p) => s + (p.amount || 0), 0);
-    const totalReceived = pays.reduce((s, p) => s + (p.iWon ? (p.prizeReceived || 0) : 0), 0);
+    // BUG FIX: this only counted a prize if some individual PAYMENT record had
+    // iWon set — but backfilled/historical rows never carry iWon at all, only the
+    // chit's own prizeReceived field (set once, when you mark it taken) does. That
+    // meant "Prize Received" showed ₹0 for every cashed chit regardless of the
+    // real prize, on top of cashed chits being excluded from this page entirely.
+    // Prefer the chit's own recorded prize; fall back to summing payment rows for
+    // older data that predates that field being set reliably.
+    const totalReceived = (c.prizeReceived || 0) || pays.reduce((s, p) => s + (p.iWon ? (p.prizeReceived || 0) : 0), 0);
     const sub = (c.totalChitValue || 0) / (c.totalMembers || 1);
-    const remainingMonths = Math.max(0, (c.totalMembers || 0) - paidMonths.length);
     const isCashed = c.myStatus === 'Cashed';
-    // Exposure: money paid in, not yet recovered as prize (0 once cashed and received >= paid)
-    const exposure = isCashed ? Math.max(0, totalPaid - totalReceived) : totalPaid;
-    const futureLiability = isCashed ? 0 : sub * remainingMonths;
+    // Current Exposure: strictly what's actually been paid out to date — full stop.
+    // (Netting the prize against it here used to conflate "money paid in" with "net
+    // position", which is what the separate Net Position KPI further down is for.)
+    const exposure = totalPaid;
+    // Future Liability: sum of what's actually still owed for each remaining round —
+    // using the same per-round commission-aware amount used everywhere else in the
+    // app (getExpectedPayable), not a flat subscription guess. This also no longer
+    // zeroes out just because the chit was cashed — a cashed Single-commission
+    // chit still owes the full subscription every remaining round; a cashed
+    // Double-commission chit keeps getting its discount. Only a fully paid-off
+    // chit (already excluded above) has zero future liability.
+    // BUG FIX (round-aware): a single chitLike used to be applied to EVERY
+    // remaining round — so if a chit was cashed partway through, rounds that
+    // hadn't been paid yet but happened BEFORE the actual take-round were still
+    // being charged the post-cash full-subscription rate. Now each round in the
+    // loop below gets its own cashed/active status based on whether it's at or
+    // after the real take-round.
+    const cashRound = cashRoundOf(c);
+    let futureLiability = 0;
+    for (let r = paidCount + 1; r <= (c.totalMembers || 0); r++) {
+      const cashedForThisRound = isCashed && (cashRound === null || r >= cashRound);
+      const chitLike = {
+        totalChitValue: c.totalChitValue, totalMembers: c.totalMembers,
+        mystatus: cashedForThisRound ? 'cashed' : 'active', commissionType: c.commissionType || 'Single',
+        range1: c.range1 || 0, range2: c.range2 || 0, range3: c.range3 || 0, range4: c.range4 || 0,
+      };
+      futureLiability += getExpectedPayable(chitLike, r);
+    }
     const totalRisk = exposure + futureLiability;
     return { ...c, totalPaid, totalReceived, exposure, futureLiability, totalRisk, isCashed };
   });
@@ -93,7 +164,7 @@ export default function JoinedExposure() {
       </div>
 
       <KPIRow items={[
-        { label: 'Active Joined Chits', value: chits.filter(c => c.myStatus !== 'Cashed').length, sub: 'still paying in' },
+        { label: 'Joined Chits With Balance Due', value: chits.length, sub: 'still owe something' },
         { label: 'Highest Exposure Chit', value: enriched.length > 0 ? enriched.reduce((a, b) => a.exposure > b.exposure ? a : b).companyName : '—', sub: 'largest amount at risk' },
         { label: 'Total Paid In', value: formatCurrency(enriched.reduce((s, c) => s + c.totalPaid, 0)), color: tokens.red },
         { label: 'Net Position', value: formatCurrency(totalReceived - totalExposure - totalFuture), color: (totalReceived - totalExposure - totalFuture) >= 0 ? tokens.green : tokens.red, sub: 'received minus risk' },

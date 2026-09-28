@@ -45,6 +45,14 @@ function fmtMo(m) { if(!m)return'—'; try{return new Date(m+'-01').toLocaleDate
 function fmtDate(d) { if(!d)return'—'; try{const dt=d?.seconds?new Date(d.seconds*1000):new Date(d);return dt.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});}catch{return d;} }
 function addMonths(ym, n) { if(!ym)return''; const [y,m]=ym.split('-').map(Number); let t=y*12+(m-1)+n; return `${Math.floor(t/12)}-${String((t%12)+1).padStart(2,'0')}`; }
 function monthDiff(a, b) { const [ay,am]=a.split('-').map(Number),[by,bm]=b.split('-').map(Number); return (by-ay)*12+(bm-am); }
+// Sensible default date for a backfill row so an already-typed amount doesn't
+// silently get thrown away just because the date field was left blank (see
+// handleBackfillSave) — uses the chit's configured auction day-of-month if set,
+// falling back to the 1st of that round's month.
+function defaultBackfillDate(chit, monthKey) {
+  const day = Math.min(28, Math.max(1, +chit.auctionDayOfMonth || 1));
+  return `${monthKey}-${String(day).padStart(2,'0')}`;
+}
 
 // ── UI atoms ─────────────────────────────────────────────────────────────────
 function IBtn({ icon: Icon, onClick, danger, title, disabled }) {
@@ -90,8 +98,30 @@ function FSel({ children, ...props }) {
  * Build a "joined chit" object that mirrors cf_engine's chit structure
  * so we can reuse getExpectedPayable, calcPhases, etc.
  */
-function toChitLike(c) {
+// Which round number was this chit ACTUALLY taken on, based on its recorded
+// actualTakeMonth? Returns null when it isn't cashed, or the take month can't
+// be matched to a real round on the schedule (older data, say) — callers fall
+// back to treating the whole chit as cashed in that case, same as before.
+function cashRoundOf(c) {
+  if (c.myStatus !== 'Cashed' || !c.actualTakeMonth || !c.startMonth) return null;
+  const months = getAuctionMonths(c, c.totalMembers || 0);
+  const idx = months.indexOf(c.actualTakeMonth);
+  return idx === -1 ? null : idx + 1;
+}
+
+function toChitLike(c, round) {
   const sub = c.totalChitValue / (c.totalMembers || 1);
+  const isCashed = c.myStatus === 'Cashed';
+  // BUG FIX (round-aware cashed status): mystatus used to be a blanket flag —
+  // once a chit was ever cashed, EVERY round (including ones that happened
+  // BEFORE it was taken) got the post-cash "full subscription, no discount"
+  // treatment. A chit taken in round 4 of 10 should still show the normal
+  // commission-adjusted amount for rounds 1-3 (they happened while it was
+  // still active) and only switch to full subscription from round 4 onward.
+  // When `round` isn't passed, or the take month can't be matched to a real
+  // round, this falls back to the old "cashed applies everywhere" behavior.
+  const cashRound = cashRoundOf(c);
+  const cashedForThisRound = isCashed && (round == null || cashRound === null || round >= cashRound);
   return {
     totalChitValue:  c.totalChitValue,
     totalMembers:    c.totalMembers,
@@ -100,8 +130,15 @@ function toChitLike(c) {
     perHeadValue:    sub,
     slabType:        'Fixed',
     slabValue:       sub,  // joined chit: slab = subscription (no formed-chit slab)
-    mystatus:        c.myStatus,
-    companyTakenAuction: c.myStatus === 'Cashed' ? 1 : null,
+    // BUG FIX: cf_engine's getExpectedPayable checks for the lowercase string
+    // 'cashed' (chit.mystatus === 'cashed'), but c.myStatus is stored capitalized
+    // ('Cashed'/'Active') — so this comparison silently never matched, and a
+    // cashed Single-commission chit NEVER got the "full subscription, no more
+    // discount" treatment it's supposed to get after being taken. Every screen
+    // that builds its chitLike through this helper (PayModal's "expected"
+    // amount, the main chit-list projections, etc.) was affected.
+    mystatus:        cashedForThisRound ? 'cashed' : 'active',
+    companyTakenAuction: cashedForThisRound ? 1 : null,
     range_phase1:    c.range1 || 0,
     range_phase2:    c.range2 || 0,
     range_phase3:    c.range3 || 0,
@@ -210,7 +247,7 @@ function PayModal({ chit, payments, onClose, onSave }) {
   const phases = calcPhases(chit.totalMembers || 1);
   const paidCount = payments.filter(p => p.status==='Paid').length;
   const nextRound = paidCount + 1;
-  const chitLike = toChitLike(chit);
+  const chitLike = toChitLike(chit, nextRound);
   const expectedPay = getExpectedPayable(chitLike, nextRound);
 
   // Try reverse calc to show what commission they're getting
@@ -328,7 +365,6 @@ function JoinedChitCard({ chit, payments, onEdit, onDelete, onAddPayment, onTogg
   const { alerts, paidCount, totalPaid, profitIfTakenNow, remainingMonths, futureCost, sub, hasWon, totalReceived, realizedPL } = analyseJoinedChit(chit, payments);
   const isCashed = chit.myStatus === 'Cashed';
   const phases = calcPhases(chit.totalMembers || 1);
-  const chitLike = toChitLike(chit);
 
   const urgentAlerts = alerts.filter(a => a.severity === 'error');
   const warnAlerts   = alerts.filter(a => a.severity === 'warn');
@@ -336,6 +372,11 @@ function JoinedChitCard({ chit, payments, onEdit, onDelete, onAddPayment, onTogg
 
   const pct = chit.totalMembers > 0 ? Math.round((paidCount / chit.totalMembers) * 100) : 0;
   const nextRound = paidCount + 1;
+  // Round-aware: toChitLike(chit, nextRound) only treats THIS round as "cashed"
+  // (full subscription, no more discount) if nextRound actually falls at or
+  // after the round the chit was really taken on — a round that comes before
+  // the take-month still gets its normal pre-cash commission rate.
+  const chitLike = toChitLike(chit, nextRound);
   const expectedThisMonth = getExpectedPayable(chitLike, nextRound);
 
   return (
@@ -692,8 +733,26 @@ export default function OtherChits() {
       };
       if (editTarget) {
         await updateOtherChit(editTarget.id, baseData, user.uid);
+        const editedId = editTarget.id;
         setEditTarget(null);
-        setFormModal(false); setTicketCount(1); load();
+        setFormModal(false); setTicketCount(1);
+        if (baseData.auctionsDone > 0) {
+          // Editing can raise "Auctions Done So Far" too (e.g. noting 4 rounds are
+          // already complete on a chit that previously had fewer/none recorded) —
+          // this used to save silently with no way to enter what was paid for those
+          // rounds. Work out which of the implied past months don't have a payment
+          // record yet (regardless of commission type — Single and Double both need
+          // this) and offer the same "Fill In Past Auctions" grid for just those.
+          const editedChit = { id: editedId, ...baseData };
+          const impliedMonths = getAuctionMonths(editedChit, baseData.auctionsDone);
+          const already = new Set((paymentsMap[editedId] || []).map(p => p.month));
+          const missingMonths = impliedMonths.filter(m => !already.has(m));
+          if (missingMonths.length > 0) {
+            setBackfillTarget(editedChit);
+            setBackfillRows(missingMonths.map(m => ({ month: m, date: defaultBackfillDate(editedChit, m), amount: String(Math.round((baseData.totalChitValue||0)/(baseData.totalMembers||1))) })));
+          }
+        }
+        load();
       } else if (ticketCount > 1) {
         // Create N tickets under the same chit — each its own record, each clearly
         // labeled so they're never confused with each other in the list.
@@ -711,7 +770,7 @@ export default function OtherChits() {
           const newChit = { id: newId, ...baseData };
           const months = getAuctionMonths(newChit, baseData.auctionsDone);
           setBackfillTarget(newChit);
-          setBackfillRows(months.map(m => ({ month: m, date: '', amount: String(Math.round((baseData.totalChitValue||0)/(baseData.totalMembers||1))) })));
+          setBackfillRows(months.map(m => ({ month: m, date: defaultBackfillDate(newChit, m), amount: String(Math.round((baseData.totalChitValue||0)/(baseData.totalMembers||1))) })));
         }
         load();
       }
@@ -738,13 +797,29 @@ export default function OtherChits() {
   async function handleBackfillSave() {
     setBackfillSaving(true);
     try {
+      // BUG FIX: this used to fire "Past auctions recorded" unconditionally, even
+      // when EVERY row got skipped for missing a date or amount — the date field
+      // in particular used to default to blank, so it was easy to type an amount,
+      // click Save, and have the whole thing silently do nothing while the toast
+      // claimed success. The modal would then close and the chit would keep
+      // showing 0 payments/₹0 paid with no indication anything went wrong. Now we
+      // actually count what got written and only ever claim success for that.
+      let savedCount = 0;
       for (const row of backfillRows) {
         if (!row.date || !row.amount) continue; // skip rows left blank
         await addOtherChitPayment(backfillTarget.id, {
           month: row.month, date: row.date, amount: +row.amount, status: 'Paid',
         }, user.uid);
+        savedCount++;
       }
-      toast.success('Past auctions recorded');
+      const skipped = backfillRows.length - savedCount;
+      if (savedCount === 0) {
+        toast.error('Nothing was saved — every row is missing a date and/or amount. Fill both in before saving.');
+        return; // leave the modal open so the amounts already typed aren't lost
+      }
+      toast.success(skipped > 0
+        ? `${savedCount} past auction${savedCount!==1?'s':''} recorded — ${skipped} row${skipped!==1?'s were':' was'} skipped (missing date/amount)`
+        : 'Past auctions recorded');
       setBackfillTarget(null); setBackfillRows([]);
       load();
     } catch (e) { toast.error('Failed: ' + e.message); }
@@ -801,12 +876,17 @@ export default function OtherChits() {
 
   if (loading) return <PageLoader stats={4}/>;
 
-  // Closed (cashed) chits are hidden by default — nothing left to plan for on them
-  // month to month. Still reachable via the Closed/All filter for historical reference.
+  // BUG FIX: "Closed" used to mean "marked Cashed" — but cashing a chit early
+  // doesn't end it; most chits still owe the full subscription every round
+  // right up to the last one. A chit that's cashed but still has rounds left
+  // to pay is still ongoing and belongs under Active, not Closed. "Closed" now
+  // means what it should: every round has actually been paid off.
   const visibleChits = chits.filter(c => {
+    const paidCount = (paymentsMap[c.id] || []).filter(p => p.status === 'Paid').length;
+    const isFullyPaidOff = paidCount >= (c.totalMembers || 0);
     if (statusFilter === 'All') return true;
-    if (statusFilter === 'Closed') return c.myStatus === 'Cashed';
-    return c.myStatus !== 'Cashed';
+    if (statusFilter === 'Closed') return isFullyPaidOff;
+    return !isFullyPaidOff;
   });
 
   const modalBg = { position:'fixed', inset:0, zIndex:1000, background:'rgba(0,0,0,0.4)', backdropFilter:'blur(4px)', display:'flex', alignItems:'center', justifyContent:'center', padding:16 };
@@ -841,21 +921,31 @@ export default function OtherChits() {
 
       {/* 6-Month Payment Projection */}
       {(() => {
+        // BUG FIX: this used to test `i % cycle === 0` — treating "i months from
+        // today" as if it lined up with the chit's own payout cycle, when the real
+        // cycle is anchored to the chit's OWN startMonth (exactly like getAuctionMonths
+        // computes elsewhere). For a monthly chit that coincidentally made every one
+        // of the 6 bars come out identical (owing the same subscription every month,
+        // which IS correct for a monthly chit) — but for anything on a longer cycle
+        // (every 5 months, Days-based, etc.) it could misalign or overcount, and it
+        // always forced a flat "sub" amount instead of the real commission-adjusted
+        // (or cashed-Single full-subscription) figure. Now each month is checked
+        // against the chit's actual auction schedule via getAuctionMonths, cashed
+        // chits stay included until fully paid off (not dropped outright), and the
+        // per-round amount comes from getExpectedPayable so Single vs Double and
+        // cashed vs active are all handled the same way as everywhere else in the app.
         const projData = Array.from({ length: 6 }, (_, i) => {
           const d = new Date(); d.setMonth(d.getMonth() + i);
+          const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
           const label = d.toLocaleDateString('en-IN', { month: 'short', year: '2-digit' });
-          const owed = chits.filter(c => c.myStatus !== 'Cashed').reduce((s, c) => {
+          const owed = chits.reduce((s, c) => {
             const pays = paymentsMap[c.id] || [];
             const paidCount = pays.filter(p => p.status === 'Paid').length;
-            const sub = (c.totalChitValue || 0) / (c.totalMembers || 1);
-            // Same fix as Dashboard/Expected Fund/Auctions: only count an amount owed
-            // in a month that's ACTUALLY a payout month for this chit's own cycle,
-            // not naively in every future month.
-            const cycle = c.auctionInterval || 1;
-            const isPayoutMonth = i % cycle === 0;
-            const roundsElapsedByThisMonth = Math.floor(i / cycle);
-            const stillOwes = isPayoutMonth && (paidCount + roundsElapsedByThisMonth) < (c.totalMembers || 0);
-            return s + (stillOwes ? sub : 0);
+            if (paidCount >= (c.totalMembers || 0)) return s; // fully paid off — nothing left, ever
+            const allMonths = getAuctionMonths(c, c.totalMembers || 0);
+            const round = allMonths.indexOf(monthKey) + 1; // 0 (falsy) when this month isn't a real payout month
+            if (!round) return s;
+            return s + getExpectedPayable(toChitLike(c, round), round);
           }, 0);
           return { label, owed: Math.round(owed) };
         });
