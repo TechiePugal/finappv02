@@ -50,14 +50,14 @@ export default function CFLayout() {
   const moreIsActive = !mobActive;
   function SidebarContent({ onClose }) {
     return (
-      <aside style={{ width:240, height:'100%', display:'flex', flexDirection:'column', background:'rgba(255,255,255,0.92)', backdropFilter:'blur(24px) saturate(180%)', WebkitBackdropFilter:'blur(24px) saturate(180%)', borderRight:'1px solid rgba(0,0,0,0.07)', overflowY:'auto' }}>
+      <aside style={{ width:240, height:'100%', display:'flex', flexDirection:'column', background:'rgba(255,255,255,0.92)', backdropFilter:'blur(24px) saturate(180%)', WebkitBackdropFilter:'blur(24px) saturate(180%)', borderRight:'1px solid rgba(0,0,0,0.07)', overflow:'hidden' }}>
         <div style={{ padding:'16px 14px 12px', borderBottom:'1px solid rgba(0,0,0,0.05)' }}>
           <div style={{ display:'flex', alignItems:'center', gap:10 }}>
             <div style={{ width:36, height:36, borderRadius:11, background:ACCENT, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, boxShadow:'0 3px 12px rgba(0,122,255,0.25)' }}><svg width="19" height="19" viewBox="0 0 22 22" fill="none"><path d="M3 16L8 8l4 4 3-5 3 4" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/><circle cx="4" cy="11" r="2" fill="white" opacity=".85"/></svg></div>
             <div><div style={{ fontSize:15.5, fontWeight:800, color:'#000', letterSpacing:'-0.03em', lineHeight:1 }}>{companyName || 'ChitFlow'}</div><div style={{ fontSize:10.5, color:'#8E8E93', marginTop:2, fontWeight:500 }}>{companyName ? 'Chit Fund' : 'Fund Manager'}</div></div>
           </div>
         </div>
-        <nav style={{ flex:1, padding:'6px 6px 4px', overflowY:'auto' }}>
+        <nav style={{ flex:1, minHeight:0, padding:'6px 6px 4px', overflowY:'auto' }}>
           {NAV.map(group => (
             <div key={group.group} style={{ marginBottom:2 }}>
               <p style={{ fontSize:10, fontWeight:700, color:group.color || '#8E8E93', textTransform:'uppercase', letterSpacing:'0.06em', padding:'10px 10px 5px' }}>{group.group}</p>
@@ -86,14 +86,13 @@ export default function CFLayout() {
     { to:'/cf/other-chits', label:'Joined', icon:<><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8"/></> },
   ];
   return (
-    <div style={{ display:'flex', height:'100vh', overflow:'hidden', background:'#F2F2F7', fontFamily:'-apple-system,BlinkMacSystemFont,"Inter",sans-serif', WebkitFontSmoothing:'antialiased' }}>
+    <div style={{ display:'flex', height:'calc(100vh - var(--back-bar-h))', overflow:'hidden', background:'#F2F2F7', fontFamily:'-apple-system,BlinkMacSystemFont,"Inter",sans-serif', WebkitFontSmoothing:'antialiased' }}>
       <div className="cf-sidebar-desktop" style={{ flexShrink:0, height:'100%' }}><SidebarContent onClose={() => {}}/></div>
       {mobileOpen && (<div style={{ position:'fixed', inset:0, zIndex:300 }}><div style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0.28)' }} onClick={() => setMobileOpen(false)}/><div style={{ position:'relative', zIndex:1, width:240, height:'100%', animation:'cfSlideIn .22s ease both' }}><SidebarContent onClose={() => setMobileOpen(false)}/></div></div>)}
       <main style={{ flex:1, display:'flex', flexDirection:'column', minWidth:0, overflow:'hidden', background:'#F2F2F7' }}>
-        <header style={{ height:56, background:'rgba(255,255,255,0.90)', backdropFilter:'blur(20px) saturate(180%)', WebkitBackdropFilter:'blur(20px) saturate(180%)', borderBottom:'1px solid rgba(0,0,0,0.07)', display:'flex', alignItems:'center', padding:'0 20px', zIndex:50, gap:12, flexShrink:0 }}>
+        <header className="cf-topbar" style={{ height:56, background:'rgba(255,255,255,0.90)', backdropFilter:'blur(20px) saturate(180%)', WebkitBackdropFilter:'blur(20px) saturate(180%)', borderBottom:'1px solid rgba(0,0,0,0.07)', display:'flex', alignItems:'center', padding:'0 20px', zIndex:50, gap:12, flexShrink:0 }}>
           <button onClick={() => setMobileOpen(true)} className="cf-mob-menu" style={{ display:'none', background:'none', border:'none', cursor:'pointer', padding:6, borderRadius:8, color:'#3C3C43CC', flexShrink:0 }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
           <span style={{ fontSize:16, fontWeight:700, color:'#000', letterSpacing:'-0.02em', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{title}</span>
-          <div style={{ display:'flex', alignItems:'center', gap:5, padding:'4px 10px', background:'rgba(52,199,89,0.08)', border:'1px solid rgba(52,199,89,0.2)', borderRadius:99, flexShrink:0 }}><div style={{ width:6, height:6, borderRadius:'50%', background:'#34C759' }}/><span style={{ fontSize:11.5, fontWeight:600, color:'#248A3D' }}>Secure</span></div>
         </header>
         <div className="cf-content" style={{ flex:1, overflowY:'auto', overflowX:'hidden', padding:'24px 28px 40px' }}><div style={{ maxWidth:1400, margin:'0 auto' }}><Outlet/></div></div>
       </main>
@@ -113,7 +112,7 @@ export default function CFLayout() {
           </div>
         </div>
       )}
-      <style>{`@media (max-width: 768px){.cf-sidebar-desktop{display:none !important;}.cf-mob-menu{display:flex !important;}.cf-bottom-nav{display:block !important;}.cf-content{padding:16px 16px calc(80px + env(safe-area-inset-bottom)) !important;}}@keyframes cfSlideIn{from{transform:translateX(-100%);}to{transform:translateX(0);}}@keyframes cfSlideUp{from{transform:translateY(100%);}to{transform:translateY(0);}}`}</style>
+      <style>{`.cf-topbar{display:none !important;}@media (max-width: 768px){.cf-sidebar-desktop{display:none !important;}.cf-mob-menu{display:flex !important;}.cf-bottom-nav{display:block !important;}.cf-content{padding:16px 16px calc(80px + env(safe-area-inset-bottom)) !important;}.cf-topbar{display:flex !important;}}@keyframes cfSlideIn{from{transform:translateX(-100%);}to{transform:translateX(0);}}@keyframes cfSlideUp{from{transform:translateY(100%);}to{transform:translateY(0);}}`}</style>
     </div>
   );
 }

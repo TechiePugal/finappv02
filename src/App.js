@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -84,18 +84,99 @@ const Spinner = () => (
   </div>
 );
 
-function BackBar({ appName, accent, onBack }) {
+// Screen-privacy lock: a small padlock toggle sitting right beside each app's
+// name pill in the shared back bar. Every app (Real Estate, Chit Fund, Finance
+// Ledger) starts LOCKED on every page — the content below is blurred and
+// can't be scrolled/interacted with — until the person taps this icon to
+// unlock it. It's a plain UI toggle (no password), meant purely so sensitive
+// figures aren't visible/scrollable the instant a page loads or is glanced at.
+function LockToggle({ locked, onToggle }) {
   return (
-    <div className="hub-back-bar">
-      <button onClick={onBack} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg)', cursor: 'pointer', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', transition: 'all .15s' }}
-        onMouseEnter={e => { e.currentTarget.style.borderColor = accent; e.currentTarget.style.color = accent; }}
-        onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
-        Finance Suite
-      </button>
-      <div style={{ padding: '4px 12px', borderRadius: 100, background: accent + '18', color: accent, fontSize: 12, fontWeight: 700 }}>
-        {appName}
+    <button onClick={onToggle} title={locked ? 'Locked — tap to unlock' : 'Unlocked — tap to lock'}
+      style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: '50%',
+        border: `1px solid ${locked ? 'rgba(255,59,48,0.28)' : 'rgba(52,199,89,0.3)'}`,
+        background: locked ? 'rgba(255,59,48,0.1)' : 'rgba(52,199,89,0.1)',
+        color: locked ? '#d70015' : '#248a3d',
+        cursor: 'pointer', flexShrink: 0, transition: 'all .15s',
+      }}>
+      {locked ? (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3">
+          <rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" />
+        </svg>
+      ) : (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3">
+          <rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V7a4 4 0 0 1 7.5-2.5" />
+        </svg>
+      )}
+    </button>
+  );
+}
+
+function BackBar({ appName, accent, onBack, locked, onToggleLock }) {
+  return (
+    <div className="back-bar" style={{ justifyContent: 'space-between' }}>
+      {/* The back button itself is part of what's gated behind the lock — while
+          locked there is no way out of the app except unlocking first. Only once
+          `locked` flips to false does the actual clickable "Finance Suite" button
+          appear; until then this side of the bar just shows a plain, unclickable
+          "Locked" indicator so nothing here can be tapped by accident. */}
+      {locked ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', fontSize: 13, fontWeight: 500, color: 'var(--text-tertiary)' }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3"><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+          Locked
+        </div>
+      ) : (
+        <button onClick={onBack} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg)', cursor: 'pointer', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', transition: 'all .15s' }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = accent; e.currentTarget.style.color = accent; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
+          Finance Suite
+        </button>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ padding: '4px 12px', borderRadius: 100, background: accent + '18', color: accent, fontSize: 12, fontWeight: 700 }}>
+          {appName}
+        </div>
+        <LockToggle locked={locked} onToggle={onToggleLock} />
       </div>
+    </div>
+  );
+}
+
+// Wraps an app's whole content area. While locked: blurred, unclickable and
+// unscrollable, with a centered "tap to unlock" card on top. The parent
+// (AppRouter) re-locks it automatically on every route change, or every
+// internal page change for Real Estate (see REApp's onNavigate callback).
+function PrivacyLock({ locked, onUnlock, accent, children }) {
+  return (
+    <div style={{ position: 'relative' }}>
+      <div style={{
+        filter: locked ? 'blur(16px) saturate(0.7)' : 'none',
+        pointerEvents: locked ? 'none' : 'auto',
+        userSelect: locked ? 'none' : 'auto',
+        overflow: locked ? 'hidden' : 'visible',
+        transition: 'filter .2s ease',
+      }}>
+        {children}
+      </div>
+      {locked && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 80, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.4)' }}>
+          <button onClick={onUnlock} style={{
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '26px 34px', borderRadius: 20,
+            border: '1px solid rgba(0,0,0,0.08)', background: '#fff', boxShadow: '0 16px 44px rgba(0,0,0,0.16)',
+            cursor: 'pointer', fontFamily: 'inherit',
+          }}>
+            <div style={{ width: 46, height: 46, borderRadius: '50%', background: accent + '18', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={accent} strokeWidth="2">
+                <rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" />
+              </svg>
+            </div>
+            <span style={{ fontSize: 14, fontWeight: 700, color: '#111928' }}>Screen Locked</span>
+            <span style={{ fontSize: 12, color: '#6b7280' }}>Tap to unlock and view this page</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -104,14 +185,21 @@ function AppRouter() {
   const { user, loading } = useAuth();
   const [activeApp, setActiveApp] = useState(null);
   const [showAccount, setShowAccount] = useState(false);
+  const [locked, setLocked] = useState(true);
   const navigate = useNavigate();
   const location = useLocation();
+
+  // The screen starts locked when an app is first opened (see launch() below)
+  // and stays exactly as the person left it while they move between pages
+  // inside that app — no re-locking on every internal page-to-page switch.
+  // It only locks again once they leave the app and open one fresh.
 
   if (loading) return <AppLoadingScreen />;
   if (!user) return <AuthPage />;
 
   function launch(app) {
     setActiveApp(app);
+    setLocked(true);
     navigate(`/${app}`);
   }
 
@@ -132,8 +220,10 @@ function AppRouter() {
   if (activeApp === 're' || location.pathname.startsWith('/re')) {
     return (
       <>
-        <BackBar appName="Real Estate ERP" accent="#007aff" onBack={goHub} />
-        <REApp />
+        <BackBar appName="Real Estate ERP" accent="#007aff" onBack={goHub} locked={locked} onToggleLock={() => setLocked(l => !l)} />
+        <PrivacyLock locked={locked} onUnlock={() => setLocked(false)} accent="#007aff">
+          <REApp />
+        </PrivacyLock>
       </>
     );
   }
@@ -142,7 +232,8 @@ function AppRouter() {
   if (activeApp === 'cf' || location.pathname.startsWith('/cf')) {
     return (
       <>
-        <BackBar appName="Chit Fund Manager" accent="#f59e0b" onBack={goHub} />
+        <BackBar appName="Chit Fund Manager" accent="#f59e0b" onBack={goHub} locked={locked} onToggleLock={() => setLocked(l => !l)} />
+        <PrivacyLock locked={locked} onUnlock={() => setLocked(false)} accent="#f59e0b">
         <Routes>
           <Route path="/cf" element={<CFLayout />}>
             <Route index element={<CFDashboard />} />
@@ -168,6 +259,7 @@ function AppRouter() {
           </Route>
           <Route path="*" element={<Navigate to="/cf" replace />} />
         </Routes>
+        </PrivacyLock>
       </>
     );
   }
@@ -176,7 +268,8 @@ function AppRouter() {
   if (activeApp === 'fl' || location.pathname.startsWith('/fl')) {
     return (
       <>
-        <BackBar appName="Finance Ledger" accent="#10b981" onBack={goHub} />
+        <BackBar appName="Finance Ledger" accent="#10b981" onBack={goHub} locked={locked} onToggleLock={() => setLocked(l => !l)} />
+        <PrivacyLock locked={locked} onUnlock={() => setLocked(false)} accent="#10b981">
         <Routes>
           <Route path="/fl" element={<FLLayout user={user} />}>
             <Route index element={<FLDashboard />} />
@@ -208,6 +301,7 @@ function AppRouter() {
           </Route>
           <Route path="*" element={<Navigate to="/fl" replace />} />
         </Routes>
+        </PrivacyLock>
       </>
     );
   }

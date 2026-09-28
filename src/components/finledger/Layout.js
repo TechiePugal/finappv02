@@ -8,7 +8,7 @@ import { getCompanyProfile } from '../../utils/companyProfile';
 
 const NAV_GROUPS = [
   { label:'Overview', items:[
-    { to:'/fl', label:'Overall Dashboard',
+    { to:'/fl', label:'Overall Dashboard', exact:true,
       icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill={a?'#0a84ff':'none'} stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg> },
     { to:'/fl/monthly-receivable', label:'Monthly Dashboard',
       icon:a=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={a?'#0a84ff':'#8e8e93'} strokeWidth="1.8"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> },
@@ -86,7 +86,7 @@ export default function Layout({ user }) {
       width: 240, background:'rgba(255,255,255,0.82)',
       backdropFilter:'blur(24px) saturate(180%)', WebkitBackdropFilter:'blur(24px) saturate(180%)',
       borderRight:'1px solid var(--border)', display:'flex', flexDirection:'column',
-      flexShrink:0, overflowY:'auto', height:'100%',
+      flexShrink:0, overflow:'hidden', height:'100%',
     }}>
       {/* Brand */}
       <div style={{ padding:'16px 14px 12px', borderBottom:'1px solid var(--divider)' }}>
@@ -106,8 +106,9 @@ export default function Layout({ user }) {
         </div>
       </div>
 
-      {/* Nav */}
-      <nav style={{ flex:1, padding:'8px 8px 4px' }}>
+      {/* Nav — the only part of the sidebar that scrolls; the brand header
+          above and the profile footer below stay fixed in place. */}
+      <nav style={{ flex:1, minHeight:0, overflowY:'auto', padding:'8px 8px 4px' }}>
         {NAV_GROUPS.map(group => (
           <div key={group.label} style={{ marginBottom:4 }}>
             <p style={{ fontSize:10, fontWeight:700, color:'var(--text-tertiary)', textTransform:'uppercase',
@@ -171,7 +172,7 @@ export default function Layout({ user }) {
   );
 
   return (
-    <div style={{ display:'flex', height:'100vh', background:'var(--bg)', overflow:'hidden' }}>
+    <div style={{ display:'flex', height:'calc(100vh - var(--back-bar-h))', background:'var(--bg)', overflow:'hidden' }}>
 
       {/* Desktop sidebar */}
       <div style={{ display:'flex' }} className="desktop-sidebar">
@@ -190,8 +191,10 @@ export default function Layout({ user }) {
 
       {/* Main */}
       <main style={{ flex:1, overflowY:'auto', display:'flex', flexDirection:'column', minWidth:0 }}>
-        {/* Topbar */}
-        <header style={{
+        {/* Topbar — mobile only (hosts the hamburger menu that opens the
+            sidebar there); on desktop it just duplicated each page's own
+            title, so it's hidden there via the .fl-topbar rule below. */}
+        <header className="fl-topbar" style={{
           height:56, background:'rgba(255,255,255,0.88)', backdropFilter:'blur(16px)',
           WebkitBackdropFilter:'blur(16px)', borderBottom:'1px solid var(--border)',
           display:'flex', alignItems:'center', padding:'0 22px', position:'sticky', top:0, zIndex:50, gap:12,
@@ -208,15 +211,6 @@ export default function Layout({ user }) {
           <p style={{ fontSize:16, fontWeight:700, color:'var(--text-primary)', letterSpacing:'-0.015em', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
             {currentItem?.label || 'FinLedger Pro'}
           </p>
-
-          <div style={{ display:'flex', alignItems:'center', gap:8, flexShrink:0 }}>
-            <div style={{ padding:'4px 10px', background:'rgba(48,209,88,0.09)', border:'1px solid rgba(48,209,88,0.22)',
-              borderRadius:'var(--r-full)', display:'flex', alignItems:'center', gap:5 }}>
-              <div style={{ width:6, height:6, borderRadius:'50%', background:'var(--green)', boxShadow:'0 0 5px rgba(48,209,88,0.6)' }}/>
-              <span style={{ fontSize:11, fontWeight:600, color:'var(--green-dark)', display:'none' }} className="badge-text">AES-256 Secure</span>
-              <span style={{ fontSize:11, fontWeight:600, color:'var(--green-dark)' }}>Secure</span>
-            </div>
-          </div>
         </header>
 
         {/* Content */}
@@ -226,9 +220,11 @@ export default function Layout({ user }) {
       </main>
 
       <style>{`
+        .fl-topbar { display: none !important; }
         @media (max-width: 768px) {
           .desktop-sidebar { display: none !important; }
           .mobile-menu-btn { display: flex !important; }
+          .fl-topbar { display: flex !important; }
         }
         @media (max-width: 640px) {
           .grid-4 { grid-template-columns: 1fr 1fr !important; }

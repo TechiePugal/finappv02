@@ -19,6 +19,9 @@ export default function REApp() {
     if (key === 'project-detail' && data) setDetailProject(data);
     if (key !== 'project-detail') setDetailProject(null);
     setMobileSidebarOpen(false);
+    // No re-lock here on purpose — moving between pages inside Real Estate
+    // should not touch the screen-privacy lock at all; it only locks again
+    // once the person leaves the app and opens one fresh (see App.js).
   }
 
   function getActivePage() {
@@ -44,7 +47,7 @@ export default function REApp() {
     <div style={{
       display: 'flex',
       height: '100%',
-      minHeight: 'calc(100vh - 50px)',
+      minHeight: 'calc(100vh - var(--back-bar-h))',
       overflow: 'hidden',
       background: '#F2F2F7',
       fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', 'Helvetica Neue', sans-serif",
