@@ -7,8 +7,9 @@ import {BarChart,Bar,XAxis,YAxis,CartesianGrid,Tooltip,ResponsiveContainer,Cell,
 import { PageLoader } from '../../components/Skeleton';
 import {useAuth} from '../../contexts/AuthContext';
 import {scopeToUser} from '../../utils/scopeHelper';
-import {calcLoanInterestForMonth, calcDepositInterestForMonth} from '../../utils/interestCalc';
+import {calcLoanInterestForMonth, calcDepositInterestForMonth, getPrincipalAsOfMonth} from '../../utils/interestCalc';
 import {printMonthDashboardReport} from '../../utils/pdfReport';
+import {getAllStatusHistory, getEffectiveStatus} from '../../utils/statusHistory';
 
 // ─── BUG FIX: recalculate interest on outstanding balance, not stale monthlyInterest field ───
 function calcInterestOnOutstanding(borrower, repaymentsByBorrower, loanAdditionsMap, targetMonth) {
@@ -18,6 +19,21 @@ function calcInterestOnOutstanding(borrower, repaymentsByBorrower, loanAdditions
 }
 function shiftMonth(m, delta) { const [y, mo] = m.split('-').map(Number); const t = y * 12 + (mo - 1) + delta; return `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, '0')}`; }
 function curMonthStr() { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`; }
+// The last calendar date of a "YYYY-MM" month string, e.g. "2026-09" -> "2026-09-30".
+function monthEndOf(monthStr) { const [y, mo] = monthStr.split('-').map(Number); return new Date(y, mo, 0).toISOString().split('T')[0]; }
+// BUG FIX (point-in-time status): a loan/deposit/EMI loan's CURRENT status was
+// being used to decide whether it counts as "active" for a PAST month too — so
+// closing a loan today made it silently vanish from every earlier month's
+// figures on this page, even months when it was very much active and earning
+// real interest. Same class of bug Reports.js already solved with
+// status_history/getEffectiveStatus (see utils/statusHistory.js) — applied
+// here too now, instead of trusting today's status for a report about last
+// September. Falls back to the current status when no history was ever
+// logged for a record (e.g. it was closed before this feature existed).
+function effectiveStatusAsOf(currentStatus, historyMap, id, asOfDate) {
+  const hist = historyMap[id];
+  return (hist && hist.length) ? getEffectiveStatus(currentStatus, hist, asOfDate) : currentStatus;
+}
 
 export default function MonthlyReceivable() {
   const {user}=useAuth();
@@ -35,7 +51,7 @@ export default function MonthlyReceivable() {
     setLoading(true);
     try {
       // Fetch all needed data in parallel
-      const [bSnap, dSnap, bpSnap, dpSnap, repSnap, emiSnap, emiColSnap, fineSnap, depAddSnap, loanAddSnap, expSnap] = await Promise.all([
+      const [bSnap, dSnap, bpSnap, dpSnap, repSnap, emiSnap, emiColSnap, fineSnap, depAddSnap, loanAddSnap, expSnap, loanHistoryMap, depHistoryMap, emiHistoryMap] = await Promise.all([
         getDocs(collection(db, 'borrower_master')),
         getDocs(collection(db, 'deposit_master')),
         getDocs(query(collection(db, 'borrower_interest_payments'), where('month','==',month))),
@@ -47,7 +63,11 @@ export default function MonthlyReceivable() {
         getDocs(collection(db, 'deposit_additions')), // for date-aware interest calc — see utils/interestCalc.js
         getDocs(collection(db, 'loan_additions')),
         getDocs(query(collection(db, 'finance_expenses'), where('month','==',month))), // real costs — net profit must subtract these
+        getAllStatusHistory('loan'), // point-in-time status — see effectiveStatusAsOf above
+        getAllStatusHistory('deposit'),
+        getAllStatusHistory('emi_loan'),
       ]);
+      const monthEndDate = monthEndOf(month);
 
       const borrowers = scopeToUser(bSnap.docs.map(d => ({id:d.id,...d.data()})), user?.uid);
       const deposits  = scopeToUser(dSnap.docs.map(d => ({id:d.id,...d.data()})), user?.uid);
@@ -74,8 +94,19 @@ export default function MonthlyReceivable() {
       const dpMap = {}; // depositId -> payment
       dpSnap.docs.filter(d=>validDepositIds.has(d.data().depositId)).forEach(d => { dpMap[d.data().depositId] = {id:d.id,...d.data()}; });
 
-      const activeBorrowers = borrowers.filter(b => (b.status === 'Active' || b.status === 'Non-Active') && b.loanStartDate && b.loanStartDate.slice(0,7) <= month);
-      const activeDeposits  = deposits.filter(d => d.status === 'Active' && d.startDate && d.startDate.slice(0,7) <= month);
+      // BUG FIX: was `b.status === 'Active'` (TODAY's status) — closing a loan
+      // made it vanish from every past month's "active this month" figures too.
+      // Now asks what the loan's status WAS as of the end of the viewed month.
+      const activeBorrowers = borrowers.filter(b => {
+        if (!b.loanStartDate || b.loanStartDate.slice(0,7) > month) return false;
+        const eff = effectiveStatusAsOf(b.status, loanHistoryMap, b.id, monthEndDate);
+        return eff === 'Active' || eff === 'Non-Active';
+      });
+      const activeDeposits  = deposits.filter(d => {
+        if (!d.startDate || d.startDate.slice(0,7) > month) return false;
+        const eff = effectiveStatusAsOf(d.status, depHistoryMap, d.id, monthEndDate);
+        return eff === 'Active';
+      });
 
       // ─── FIXED: use outstanding-based calculation ───
       const totalReceivable = activeBorrowers.reduce((s,b) => s + calcInterestOnOutstanding(b, repsByBorrower, loanAdditionsMap, month), 0);
@@ -86,14 +117,32 @@ export default function MonthlyReceivable() {
 
       const totalPayable    = activeDeposits.reduce((s,d) => s + calcDepositInterestForMonth(d, depAdditionsMap[d.id], month), 0);
       // Interest Given = cash paid out + amount compounded back into principal (both count as 'given')
+      // — kept as-is for the "Interest Given"/balance display, since compounding
+      // does reduce what's still owed. PROFIT FIX: compounding into a deposit's
+      // principal is not a real cash expense either (symmetric to the loan-side
+      // "Add to Loan Amount" fix below) — no cash actually left the business, so
+      // a separate cash-only figure is used wherever this feeds Net Profit.
       const totalPaidOut    = dpSnap.docs.filter(d=>validDepositIds.has(d.data().depositId))
         .filter(d => d.data().status === 'Paid' || d.data().addedToDeposit)
         .reduce((s,d) => s + (d.data().amountPaid||0) + (d.data().addedAmount||0), 0);
+      const totalPaidOutCash = dpSnap.docs.filter(d=>validDepositIds.has(d.data().depositId))
+        .filter(d => d.data().status === 'Paid' || d.data().addedToDeposit)
+        .reduce((s,d) => s + (d.data().amountPaid||0), 0);
 
       // ── Connect EMI Loans into the Monthly Report ──
       const emiLoans = scopeToUser(emiSnap.docs.map(d => ({id:d.id,...d.data()})), user?.uid);
       const emiCols = scopeToUser(emiColSnap.docs.map(d => ({id:d.id,...d.data()})), user?.uid);
-      const activeEmi = emiLoans.filter(l => l.status === 'Active');
+      // Same point-in-time fix as activeBorrowers/activeDeposits above — was
+      // `l.status === 'Active'` (today's status), so closing your EMI loan made
+      // it (and the whole "EMI Loans — This Month" section, see the render
+      // below) vanish from every past month, including months it was legitimately
+      // due and collected in. Also scoped to loans that had actually started by
+      // this month (emiStartDate), which the old check never did at all.
+      const activeEmi = emiLoans.filter(l => {
+        if (!l.emiStartDate || l.emiStartDate.slice(0,7) > month) return false;
+        const eff = effectiveStatusAsOf(l.status, emiHistoryMap, l.id, monthEndDate);
+        return eff === 'Active' || eff === 'Non-Active';
+      });
       const totalEmiDue = activeEmi.reduce((s,l) => s + (l.emiAmount||0), 0);
       // BUG FIX: was using c.totalCollected (includes fine) — now uses c.amount only (fine excluded)
       const totalEmiCollected = emiCols.filter(c => c.date && c.date.startsWith(month) && c.status === 'Paid')
@@ -109,13 +158,23 @@ export default function MonthlyReceivable() {
       // Subtracting only one period's worth of principal from that lump sum left almost the
       // whole remaining balance wrongly counted as "interest." For an early-closure record,
       // the real interest portion is exactly one period's interest on the loan — nothing more.
+      // BUG FIX #3: an early closure can legitimately charge interest for MANY
+      // periods now (reduced-balance model — see CollectEMI.js's
+      // computeEarlyCloseAmount), so "one period's interest, at most" no longer
+      // holds. CollectEMI.js now persists the exact interestPortion it actually
+      // charged directly on the doc at save time — read that ground truth when
+      // present. Older records saved before this fix have no interestPortion
+      // field, so they fall back to the previous one-period heuristic (still
+      // correct for THEM, since they were never charged more than one period's
+      // interest to begin with).
       const totalEmiInterestCollected = emiCols.filter(c => c.date && c.date.startsWith(month) && c.status === 'Paid')
         .reduce((s,c) => {
           const loan = emiLoans.find(l=>l.id===c.loanId);
           if (!loan) return s;
           if (c.earlyClosure) {
+            if (c.interestPortion != null) return s + (c.interestPortion || 0);
             const onePeriodInterest = (loan.loanAmount||0) * ((loan.interestRate||0)/100);
-            return s + Math.min(onePeriodInterest, c.amount||0); // never more than what was actually collected
+            return s + Math.min(onePeriodInterest, c.amount||0); // legacy fallback — never more than what was actually collected
           }
           const perPeriodPrincipal = (loan.loanAmount||0)/(loan.totalPeriods||1);
           return s + Math.max(0, (c.amount||0) - perPeriodPrincipal);
@@ -134,18 +193,32 @@ export default function MonthlyReceivable() {
 
       // ── Total Loan Amount / Balance — same structure as the Overall Dashboard,
       // scoped to loans and deposits active during THIS month ──
-      const monthlyLoanPrincipal = activeBorrowers.reduce((s,b)=>s+(b.loanAmount||0),0);
+      // BUG FIX (round 2): the BALANCE and the INTEREST are two different
+      // questions and need two different date rules — see getPrincipalAsOfMonth's
+      // own comment in utils/interestCalc.js for the full explanation. In short:
+      // an addition raises the actual balance starting the month it was dated
+      // (₹13,500 compounded on Sep 29 makes the deposit ₹1,13,500 for the rest of
+      // September itself), but it only starts EARNING interest from the month
+      // after. The first version of this fix (v174) wrongly used the interest
+      // engine's lagged rule for the balance figures too, so September showed the
+      // OLD ₹1,00,000 instead of what the deposit actually was that month.
+      // getPrincipalAsOfMonth is the correct, same-month-inclusive rule for a
+      // plain balance; correctInterest below still correctly uses the lagged
+      // getEffectiveOutstanding via calcLoanInterestForMonth/calcDepositInterestForMonth.
+      const monthlyLoanPrincipal = activeBorrowers.reduce((s,b)=>s+getPrincipalAsOfMonth(b.loanAmount||0, loanAdditionsMap[b.id], 0, month),0);
       const loanBalanceMonth = Math.max(0, totalReceivable - totalCollected);
       const loanNetProfitMonth = totalCollected + loanFineIncomeMonth;
-      const monthlyDepositPrincipal = activeDeposits.reduce((s,d)=>s+(d.depositAmount||0),0);
+      const monthlyDepositPrincipal = activeDeposits.reduce((s,d)=>s+getPrincipalAsOfMonth(d.depositAmount||0, depAdditionsMap[d.id], 0, month),0);
       const depositBalanceMonth = Math.max(0, totalPayable - totalPaidOut);
       const emiNetProfitMonth = totalEmiInterestCollected + emiFineIncomeMonth;
       const monthlyEmiPrincipal = activeEmi.reduce((s,l)=>s+(l.loanAmount||0),0);
       const emiBalanceMonth = Math.max(0, totalEmiDue - totalEmiCollected);
 
       // Net = collected from borrowers + EMI collected, minus paid to depositors, PLUS fine income
-      // Uses interest-only EMI collection — repaid principal is never counted as profit
-      const netRevenue = totalCollected + totalEmiInterestCollected - totalPaidOut + curMonthFineIncome - totalExpensesMonth;
+      // Uses interest-only EMI collection — repaid principal is never counted as profit.
+      // Uses totalPaidOutCash (not totalPaidOut) — compounded-into-deposit interest
+      // isn't a real cash expense yet, same reasoning as the loan-side profit fix.
+      const netRevenue = totalCollected + totalEmiInterestCollected - totalPaidOutCash + curMonthFineIncome - totalExpensesMonth;
 
       // ══ MONTH FINANCIAL SUMMARY (top of page) — same formula as the Overall
       // Dashboard, scoped to just this month: Total Income = interest collected
@@ -157,10 +230,16 @@ export default function MonthlyReceivable() {
       // than approximated with a misleading number. ══
       const monthTotalIncome = totalCollected + totalEmiInterestCollected + loanFineIncomeMonth + emiFineIncomeMonth;
       const monthTotalExpense = totalExpensesMonth;
-      const monthNetProfit = monthTotalIncome - (monthTotalExpense + totalPaidOut);
-      const monthCashFlow = monthTotalIncome - monthTotalExpense - totalPaidOut;
+      const monthNetProfit = monthTotalIncome - (monthTotalExpense + totalPaidOutCash);
+      const monthCashFlow = monthTotalIncome - monthTotalExpense - totalPaidOutCash;
 
       // Per-borrower rows with correct interest
+      // BUG FIX (round 2): `outstanding` is a BALANCE figure, not an interest
+      // figure — it must show the loan as it actually stood that month, which
+      // includes an addition from that same month onward (getPrincipalAsOfMonth),
+      // not lagged by a further month the way the interest-due figure correctly
+      // is. `correctInterest` right above keeps using the lagged calculation —
+      // only the balance display changes here.
       const borrowerRows = activeBorrowers.map(b => {
         const interest = calcInterestOnOutstanding(b, repsByBorrower, loanAdditionsMap, month);
         const reps = repsByBorrower[b.id] || [];
@@ -168,7 +247,7 @@ export default function MonthlyReceivable() {
         return {
           ...b,
           correctInterest: interest,
-          outstanding: Math.max(0, (b.loanAmount||0) - repaid),
+          outstanding: getPrincipalAsOfMonth(b.loanAmount||0, loanAdditionsMap[b.id], repaid, month),
           payment: bpMap[b.id] || null,
         };
       });
@@ -176,6 +255,10 @@ export default function MonthlyReceivable() {
       const depositRows = activeDeposits.map(d => ({
         ...d,
         correctInterest: calcDepositInterestForMonth(d, depAdditionsMap[d.id], month),
+        // Same fix as monthlyDepositPrincipal above — show what the deposit's
+        // balance actually was during the viewed month (same-month-inclusive),
+        // not the interest-lagged figure.
+        effectivePrincipal: getPrincipalAsOfMonth(d.depositAmount||0, depAdditionsMap[d.id], 0, month),
         payment: dpMap[d.id] || null,
       }));
 
@@ -194,7 +277,7 @@ export default function MonthlyReceivable() {
       trend[5] = { ...trend[5], receivable:Math.round(totalCollected)||Math.round(totalReceivable), payable:Math.round(totalPaidOut)||Math.round(totalPayable) };
 
       setTrendData(trend);
-      setData({ totalReceivable, totalCollected, totalPayable, totalPaidOut, netRevenue, borrowerRows, depositRows,
+      setData({ totalReceivable, totalCollected, totalPayable, totalPaidOut, totalPaidOutCash, netRevenue, borrowerRows, depositRows,
         collectionRate: totalReceivable>0 ? Math.min(100,(totalCollected/totalReceivable)*100) : 0,
         payoutRate: totalPayable>0 ? Math.min(100,(totalPaidOut/totalPayable)*100) : 0,
         totalEmiDue, totalEmiCollected, totalEmiInterestCollected, activeEmiCount: activeEmi.length,
@@ -203,7 +286,7 @@ export default function MonthlyReceivable() {
         curMonthFineIncome,
         loanBalance: Math.max(0,totalReceivable-totalCollected),
         emiBalance: Math.max(0,totalEmiDue-totalEmiCollected),
-        combinedNetProfitMonth: totalCollected + totalEmiInterestCollected - totalPaidOut + curMonthFineIncome - totalExpensesMonth,
+        combinedNetProfitMonth: totalCollected + totalEmiInterestCollected - totalPaidOutCash + curMonthFineIncome - totalExpensesMonth,
         monthlyLoanPrincipal, loanBalanceMonth, loanNetProfitMonth,
         monthlyDepositPrincipal, depositBalanceMonth,
         monthlyEmiPrincipal, emiBalanceMonth, emiNetProfitMonth,
@@ -253,10 +336,16 @@ export default function MonthlyReceivable() {
         <StatCard label="Net Profit" value={`${(d.monthNetProfit||0)>=0?'+':'-'}${formatCurrency(Math.round(Math.abs(d.monthNetProfit||0)))}`} sub="Income − (Expense + Interest Given), this month" color={(d.monthNetProfit||0)>=0?'#30d158':'#ff453a'}/>
       </div>
 
-      {/* Loans — Overview (this month) — same structure as the Overall Dashboard */}
+      {/* Loans — Overview (this month) — same structure as the Overall Dashboard.
+          "Total Interest Receivable" added alongside the rest — the interest
+          actually due this month (before anything's collected against it),
+          which is the number "Balance to Collect" and "Total Collected" are
+          both measured against, so it belongs right here next to them instead
+          of only appearing lower down in the generic KPI row. */}
       <SectionHeader title="📋 Loans — This Month"/>
-      <div className="grid-4" style={{ marginBottom:20 }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))', gap:14, marginBottom:20 }}>
         <StatCard label="Total Loan Amount" value={formatCurrency(Math.round(d.monthlyLoanPrincipal||0))} sub={`${d.activeBorrowersCount||0} active loans this month`} color="#ff9500"/>
+        <StatCard label="Total Interest Receivable" value={formatCurrency(Math.round(d.totalReceivable||0))} sub="Interest due this month, before collection" color="#5e5ce6"/>
         <StatCard label="Total Collected" value={formatCurrency(Math.round(d.totalCollected||0))} sub="Interest only — fine excluded" color="#0a84ff"/>
         <StatCard label="Balance to Collect" value={formatCurrency(Math.round(d.loanBalanceMonth||0))} sub="Still due this month" color="#ff453a"/>
         <StatCard label="Net Profit (Loans)" value={formatCurrency(Math.round(d.loanNetProfitMonth||0))} sub="Interest + Fine — never principal repaid" color="#30d158"/>
@@ -271,17 +360,19 @@ export default function MonthlyReceivable() {
         <StatCard label="Interest Remaining" value={formatCurrency(Math.round(d.depositBalanceMonth||0))} sub="Still owed to depositors" color="#ff453a"/>
       </div>
 
-      {(d.activeEmiCount||0) > 0 && (
-        <>
-          <SectionHeader title="📆 EMI Loans — This Month"/>
-          <div className="grid-4" style={{ marginBottom:20 }}>
-            <StatCard label="Total Loan Amount" value={formatCurrency(Math.round(d.monthlyEmiPrincipal||0))} sub={`${d.activeEmiCount||0} active EMI loans`} color="#ff9500"/>
-            <StatCard label="Total Collected" value={formatCurrency(Math.round(d.totalEmiCollected||0))} sub="Fine excluded" color="#0a84ff"/>
-            <StatCard label="Balance to Collect" value={formatCurrency(Math.round(d.emiBalanceMonth||0))} sub="Still due this month" color="#ff453a"/>
-            <StatCard label="Net Profit (EMI)" value={formatCurrency(Math.round(d.emiNetProfitMonth||0))} sub="Interest + Fine — never principal recovered" color="#30d158"/>
-          </div>
-        </>
-      )}
+      {/* BUG FIX: this used to be gated on `d.activeEmiCount>0` — the moment
+          every EMI loan you have was closed, this ENTIRE section (including
+          Net Profit (EMI) for past months) vanished from the page, even for
+          months when it was legitimately active and profitable. Loans and
+          Deposits above are never gated like this — always shown, even at
+          ₹0 — so EMI now matches that exactly. */}
+      <SectionHeader title="📆 EMI Loans — This Month"/>
+      <div className="grid-4" style={{ marginBottom:20 }}>
+        <StatCard label="Total Loan Amount" value={formatCurrency(Math.round(d.monthlyEmiPrincipal||0))} sub={`${d.activeEmiCount||0} active EMI loan${(d.activeEmiCount||0)!==1?'s':''} this month`} color="#ff9500"/>
+        <StatCard label="Total Collected" value={formatCurrency(Math.round(d.totalEmiCollected||0))} sub="Fine excluded" color="#0a84ff"/>
+        <StatCard label="Balance to Collect" value={formatCurrency(Math.round(d.emiBalanceMonth||0))} sub="Still due this month" color="#ff453a"/>
+        <StatCard label="Net Profit (EMI)" value={formatCurrency(Math.round(d.emiNetProfitMonth||0))} sub="Interest + Fine — never principal recovered" color="#30d158"/>
+      </div>
 
       {/* KPI Row */}
       <div className="grid-4" style={{ marginBottom:20 }}>
@@ -335,20 +426,18 @@ export default function MonthlyReceivable() {
         </div>
       </Card>
 
-      {/* EMI Loans — connected into the Monthly Report */}
-      {(d.activeEmiCount||0)>0 && (
-        <>
-          <SectionHeader title="📆 EMI Loans — This Month"/>
-          <div className="grid-4" style={{ marginBottom:20 }}>
-            <StatCard label="EMI Due This Month" value={formatCurrency(Math.round(d.totalEmiDue||0))} sub={`${d.activeEmiCount||0} active EMI loan${(d.activeEmiCount||0)!==1?'s':''}`} color="#5e5ce6"
-              icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M12 10v4M10 12h4"/></svg>}/>
-            <StatCard label="EMI Collected" value={formatCurrency(Math.round(d.totalEmiCollected||0))} sub={`${(d.emiCollectionRate||0).toFixed(0)}% of this month's EMI due`} color="#34c759"
-              icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="20 6 9 17 4 12"/></svg>}/>
-            <StatCard label="EMI Pending" value={formatCurrency(Math.round(Math.max(0,(d.totalEmiDue||0)-(d.totalEmiCollected||0))))} sub="Still to be collected this month" color="#ff9500"
-              icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>}/>
-          </div>
-        </>
-      )}
+      {/* EMI Loans — connected into the Monthly Report. Same fix as the section
+          above — no longer gated on activeEmiCount>0, so a past month with a
+          now-closed EMI loan still shows what was actually due/collected then. */}
+      <SectionHeader title="📆 EMI Loans — Due / Collected"/>
+      <div className="grid-4" style={{ marginBottom:20 }}>
+        <StatCard label="EMI Due This Month" value={formatCurrency(Math.round(d.totalEmiDue||0))} sub={`${d.activeEmiCount||0} active EMI loan${(d.activeEmiCount||0)!==1?'s':''}`} color="#5e5ce6"
+          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M12 10v4M10 12h4"/></svg>}/>
+        <StatCard label="EMI Collected" value={formatCurrency(Math.round(d.totalEmiCollected||0))} sub={`${(d.emiCollectionRate||0).toFixed(0)}% of this month's EMI due`} color="#34c759"
+          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="20 6 9 17 4 12"/></svg>}/>
+        <StatCard label="EMI Pending" value={formatCurrency(Math.round(Math.max(0,(d.totalEmiDue||0)-(d.totalEmiCollected||0))))} sub="Still to be collected this month" color="#ff9500"
+          icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>}/>
+      </div>
 
       {/* Progress bars */}
       <div className="grid-2" style={{ marginBottom:20 }}>
@@ -468,7 +557,7 @@ export default function MonthlyReceivable() {
                         <p style={{fontSize:13,fontWeight:600,color:'var(--text-primary)'}}>{dep.name}</p>
                         <p style={{fontSize:11,color:'var(--text-tertiary)',marginTop:2}}>{dep.interestRate}% p.a.</p>
                       </td>
-                      <td style={{padding:'11px 14px',fontSize:13,fontWeight:600}} className="num">{formatCurrency(dep.depositAmount)}</td>
+                      <td style={{padding:'11px 14px',fontSize:13,fontWeight:600}} className="num">{formatCurrency(Math.round(dep.effectivePrincipal!=null?dep.effectivePrincipal:dep.depositAmount))}</td>
                       <td style={{padding:'11px 14px',fontSize:13,fontWeight:700,color:'var(--orange)'}} className="num">{formatCurrency(Math.round(dep.correctInterest||0))}</td>
                       <td style={{padding:'11px 14px',fontSize:13,color:'var(--text-secondary)'}} className="num">{(dep.payment?.status==='Paid'||dep.payment?.addedToDeposit) ? formatCurrency(dep.payment.addedToDeposit?(dep.payment.addedAmount||0):(dep.payment.amountPaid||0)) : '—'}</td>
                       <td style={{padding:'11px 14px'}}><Badge label={dep.payment?.status||'Pending'} type={(dep.payment?.status||'pending').toLowerCase()}/></td>

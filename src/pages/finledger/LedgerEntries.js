@@ -10,9 +10,12 @@ import {scopeToUser} from '../../utils/scopeHelper';
 export default function LedgerEntries(){
   const {user}=useAuth();
   const [entries,setEntries]=useState([]);
+  const [expenses,setExpenses]=useState([]); // finance_expenses — needed so Net Profit can match the Overall Dashboard exactly
   const [loading,setLoading]=useState(true);
   const [search,setSearch]=useState('');
   const [amtRange,setAmtRange]=useState('all');
+  const [dateFrom,setDateFrom]=useState('');
+  const [dateTo,setDateTo]=useState('');
   const AMT_RANGES=[
     {value:'all',label:'All Amounts'},
     {value:'0-10000',label:'₹0 – ₹10K'},
@@ -49,7 +52,14 @@ export default function LedgerEntries(){
       },
       ()=>{toast.error('Failed to load');setLoading(false);}
     );
-    return unsub;
+    // Net Profit must match the Overall Dashboard's formula exactly, which subtracts
+    // real operational expenses (finance_expenses) — not just ledger debit entries —
+    // so this needs its own live subscription alongside the ledger entries above.
+    const unsubExp=onSnapshot(collection(db,'finance_expenses'),
+      snap=>setExpenses(scopeToUser(snap.docs.map(d=>({id:d.id,...d.data()})),user?.uid)),
+      ()=>{}
+    );
+    return ()=>{unsub();unsubExp();};
   },[]);
   async function load(){}// kept for compat
 
@@ -354,7 +364,30 @@ export default function LedgerEntries(){
   }
 
   const CATS=['All','Loan Interest','Deposit Interest','Loan Repayment','Deposit Received','Deposit Settlement','Expense','Other'];
-  const filtered=entries.filter(e=>{
+
+  // ── Calendar / date-range filter ────────────────────────────────────────
+  // Scopes everything below — the stat tiles, the module split AND the table —
+  // to the selected range, not just the visible rows, so "Net Profit this
+  // quarter" etc. actually means what it says rather than only hiding rows.
+  function inRange(e){
+    if(!dateFrom&&!dateTo) return true;
+    const d=e.date||'';
+    if(!d) return false;
+    if(dateFrom&&d<dateFrom) return false;
+    if(dateTo&&d>dateTo) return false;
+    return true;
+  }
+  const scoped=entries.filter(inRange);
+  const scopedExpenses=expenses.filter(x=>{
+    if(!dateFrom&&!dateTo) return true;
+    const d=x.date||'';
+    if(!d) return false;
+    if(dateFrom&&d<dateFrom) return false;
+    if(dateTo&&d>dateTo) return false;
+    return true;
+  });
+
+  const filtered=scoped.filter(e=>{
     const q=search.toLowerCase();
     return(
       (!q||e.description?.toLowerCase().includes(q)||e.category?.toLowerCase().includes(q)||e.borrowerName?.toLowerCase().includes(q)||(e.loanId||'').toLowerCase().includes(q))
@@ -363,9 +396,35 @@ export default function LedgerEntries(){
       &&matchAmt(e)
     );
   });
-  const totalC=entries.filter(e=>e.type==='Credit').reduce((s,e)=>s+(e.amount||0),0);
-  const totalD=entries.filter(e=>e.type==='Debit').reduce((s,e)=>s+(e.amount||0),0);
+  const totalC=scoped.filter(e=>e.type==='Credit').reduce((s,e)=>s+(e.amount||0),0);
+  const totalD=scoped.filter(e=>e.type==='Debit').reduce((s,e)=>s+(e.amount||0),0);
   const net=totalC-totalD;
+
+  // ── Net Profit — must match the Overall Dashboard's "Net Profit" StatCard
+  // EXACTLY (Dashboard.js: overallNetProfit), not the unrelated "Net Balance"
+  // above (which is just all-credits minus all-debits and means something
+  // different). Dashboard's formula, expressed in terms of ledger categories:
+  //   overallTotalIncome  = loanInterestCash + emiTotalCollected + loanFineIncome + emiFineIncome
+  //   overallNetProfit    = overallTotalIncome − (operational expenses + interest given to depositors, cash only)
+  // PROFIT FIX: 'Interest Added to Loan' (compounded into the loan, no cash in)
+  // is NOT profit yet, so it's excluded — only the 'Loan Interest' category
+  // (Interest Collection's "Cash Collected") counts as income. Symmetrically,
+  // 'Interest Compounded' (folded into a deposit's principal, no cash out) is
+  // excluded from interest given to depositors too — it isn't a real cash
+  // expense yet either. emiTotalCollected ⇒ Credit entries category 'EMI
+  // Collection' (full installment, as the dashboard's own emiColDocs.amount
+  // already is — EMI has no compounding concept). Fine income is split
+  // loan-vs-EMI by whether the entry carries a borrowerId or a loanId.
+  // Operational expenses come from finance_expenses, same as the Dashboard —
+  // ledger debit entries alone don't capture that collection.
+  const loanInterestCredit=scoped.filter(e=>e.type==='Credit'&&e.category==='Loan Interest').reduce((s,e)=>s+(e.amount||0),0);
+  const emiCollectionCredit=scoped.filter(e=>e.type==='Credit'&&e.category==='EMI Collection').reduce((s,e)=>s+(e.amount||0),0);
+  const loanFineIncome=scoped.filter(e=>e.category==='Fine Income'&&!!e.borrowerId).reduce((s,e)=>s+(e.amount||0),0);
+  const emiFineIncome=scoped.filter(e=>e.category==='Fine Income'&&!!e.loanId).reduce((s,e)=>s+(e.amount||0),0);
+  const depInterestGiven=scoped.filter(e=>e.type==='Debit'&&e.category==='Deposit Settlement').reduce((s,e)=>s+(e.amount||0),0);
+  const totalExpenses=scopedExpenses.reduce((s,x)=>s+(x.amount||0),0);
+  const overallTotalIncome=loanInterestCredit+emiCollectionCredit+loanFineIncome+emiFineIncome;
+  const overallNetProfit=overallTotalIncome-(totalExpenses+depInterestGiven);
 
   // Split by module — same grouping logic as the Overall Dashboard (borrowerId =
   // Loan, depositId = Deposit, loanId = EMI, Finance Expense category = Expense)
@@ -376,11 +435,33 @@ export default function LedgerEntries(){
     {key:'emi',label:'📆 EMI',match:e=>!!e.loanId,color:'#5e5ce6'},
     {key:'expense',label:'💸 Expense',match:e=>e.category==='Finance Expense',color:'#ff453a'},
   ].map(g=>{
-    const rows=entries.filter(g.match);
+    const rows=scoped.filter(g.match);
     const c=rows.filter(e=>e.type==='Credit').reduce((s,e)=>s+(e.amount||0),0);
     const dd=rows.filter(e=>e.type==='Debit').reduce((s,e)=>s+(e.amount||0),0);
     return {...g,count:rows.length,credit:c,debit:dd};
   });
+
+  // ── Category colors — clear, meaningful color-coding instead of one flat
+  // purple for every category. Reuses the same palette as "Split by Module"
+  // above so the two sections agree with each other, plus its own colors for
+  // categories that don't belong to a single module (fine income, repayments,
+  // milestones).
+  function categoryColor(e){
+    const cat=e.category||'';
+    if(cat==='Fine Income') return '#ff375f'; // penalty/fine income — its own distinct color
+    if(cat==='Loan Repayment') return '#30d158'; // principal coming back — green, distinct from interest
+    if(['Loan Interest','Interest Added to Loan'].includes(cat)) return '#ff9500'; // loan module orange
+    if(['Deposit Received','Deposit Settlement','Interest Compounded','Deposit Closed','Deposit Created','Deposit Amount Increased'].includes(cat)) return '#bf5af2'; // deposit module purple
+    if(['EMI Collection','EMI Loan Closed'].includes(cat)) return '#5e5ce6'; // EMI module indigo
+    if(['Expense','Finance Expense'].includes(cat)) return '#ff453a'; // expense red
+    if(cat==='Loan Created') return '#ff9500';
+    if(cat==='Milestone') return '#8e8e93';
+    // Fall back to whichever module the entry actually belongs to, by its linked ids
+    if(e.borrowerId) return '#ff9500';
+    if(e.depositId) return '#bf5af2';
+    if(e.loanId) return '#5e5ce6';
+    return '#8e8e93'; // neutral gray for anything uncategorized
+  }
 
   if(loading)return <PageLoader stats={4}/>;
   return(
@@ -393,13 +474,15 @@ export default function LedgerEntries(){
           <Button onClick={openAdd}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Entry</Button>
         </div>}/>
 
-      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14,marginBottom:20}}>
-        <StatCard label="Total Credits" value={formatCurrency(Math.round(totalC))} sub={`${entries.filter(e=>e.type==='Credit').length} entries`} color="#34c759"
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>
+        <StatCard label="Total Credits" value={formatCurrency(Math.round(totalC))} sub={`${scoped.filter(e=>e.type==='Credit').length} entries`} color="#34c759"
           icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/></svg>}/>
-        <StatCard label="Total Debits" value={formatCurrency(Math.round(totalD))} sub={`${entries.filter(e=>e.type==='Debit').length} entries`} color="#ff3b30"
+        <StatCard label="Total Debits" value={formatCurrency(Math.round(totalD))} sub={`${scoped.filter(e=>e.type==='Debit').length} entries`} color="#ff3b30"
           icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/></svg>}/>
         <StatCard label="Net Balance" value={formatCurrency(Math.round(Math.abs(net)))} sub={net>=0?'↑ Surplus':'↓ Deficit'} color={net>=0?'#34c759':'#ff3b30'}
           icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>}/>
+        <StatCard label="Net Profit" value={`${overallNetProfit>=0?'+':'-'}${formatCurrency(Math.round(Math.abs(overallNetProfit)))}`} sub="Same formula as Overall Dashboard" color={overallNetProfit>=0?'#30d158':'#ff453a'}
+          icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>}/>
       </div>
 
       {/* Split by module — mirrors the Overall Dashboard's Loan/Deposit/EMI/Expense cut */}
@@ -458,6 +541,26 @@ export default function LedgerEntries(){
           <SearchBar value={search} onChange={setSearch} placeholder="Search description, category, name…"/>
           <FilterTabs options={['All','Credit','Debit']} value={tf} onChange={setTf}/>
         </div>
+        <div style={{display:'flex',gap:10,marginBottom:14,flexWrap:'wrap',alignItems:'center',padding:'10px 12px',background:'rgba(118,118,128,0.06)',borderRadius:10}}>
+          <span style={{fontSize:12,fontWeight:600,color:'var(--text-secondary)'}}>📅 Date Range</span>
+          <div style={{display:'flex',alignItems:'center',gap:6}}>
+            <label style={{fontSize:11.5,color:'var(--text-tertiary)'}}>From</label>
+            <input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)}
+              style={{padding:'6px 10px',borderRadius:8,border:'1.5px solid var(--border-strong)',fontSize:13,fontFamily:'inherit',background:'var(--bg-input)',color:'var(--text-primary)'}}/>
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:6}}>
+            <label style={{fontSize:11.5,color:'var(--text-tertiary)'}}>To</label>
+            <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)}
+              style={{padding:'6px 10px',borderRadius:8,border:'1.5px solid var(--border-strong)',fontSize:13,fontFamily:'inherit',background:'var(--bg-input)',color:'var(--text-primary)'}}/>
+          </div>
+          {(dateFrom||dateTo)&&(
+            <button onClick={()=>{setDateFrom('');setDateTo('');}}
+              style={{padding:'5px 12px',borderRadius:20,border:'1px solid rgba(255,59,48,0.25)',background:'rgba(255,59,48,0.06)',color:'#ff3b30',fontSize:12,cursor:'pointer',fontFamily:'inherit'}}>
+              ✕ Clear
+            </button>
+          )}
+          {(dateFrom||dateTo)&&<span style={{fontSize:11.5,color:'var(--text-tertiary)'}}>Figures above are scoped to this range</span>}
+        </div>
         <div style={{display:'flex',gap:6,marginBottom:14,flexWrap:'wrap'}}>
           {CATS.map(c=>(
             <button key={c} onClick={()=>setCatFilter(c)}
@@ -477,13 +580,15 @@ export default function LedgerEntries(){
               {filtered.length===0?<tr><td colSpan={10} style={{padding:48,textAlign:'center',color:'var(--text-tertiary)'}}><div style={{fontSize:32,marginBottom:8}}>📒</div><p style={{fontSize:14}}>No ledger entries found</p></td></tr>
               :(() => {
                 let rb=0;
-                return [...filtered].reverse().map(e=>{rb+=e.type==='Credit'?(e.amount||0):-(e.amount||0);return {...e,rb};}).reverse().map(e=>(
-                  <tr key={e.id} style={{borderBottom:'1px solid var(--divider)',opacity:deleting===e.id?0.4:1,transition:'opacity 0.2s'}}
+                return [...filtered].reverse().map(e=>{rb+=e.type==='Credit'?(e.amount||0):-(e.amount||0);return {...e,rb};}).reverse().map(e=>{
+                  const cc=categoryColor(e);
+                  return (
+                  <tr key={e.id} style={{borderBottom:'1px solid var(--divider)',borderLeft:`3px solid ${cc}`,opacity:deleting===e.id?0.4:1,transition:'opacity 0.2s'}}
                     onMouseEnter={ev=>ev.currentTarget.style.background='rgba(0,122,255,0.02)'}
                     onMouseLeave={ev=>ev.currentTarget.style.background='transparent'}>
                     <td style={{padding:'11px 14px',fontSize:13,color:'var(--text-secondary)',whiteSpace:'nowrap'}}>{e.date||formatDate(e.createdAt)}</td>
                     <td style={{padding:'11px 14px'}}><span style={{padding:'3px 10px',borderRadius:20,fontSize:12,fontWeight:600,background:e.type==='Credit'?'rgba(52,199,89,0.1)':'rgba(255,59,48,0.1)',color:e.type==='Credit'?'#1a7a34':'#c0392b'}}>{e.type}</span></td>
-                    <td style={{padding:'11px 14px',fontSize:12,color:'#5856d6',maxWidth:120}}><span style={{display:'block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{e.category}</span></td>
+                    <td style={{padding:'11px 14px',fontSize:12,maxWidth:140}}><span style={{display:'inline-block',padding:'3px 9px',borderRadius:20,fontWeight:600,background:`${cc}1a`,color:cc,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:130}}>{e.category}</span></td>
                     <td style={{padding:'11px 14px',fontSize:13,color:'var(--text-primary)',maxWidth:180}}><p style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{e.description}</p></td>
                     <td style={{padding:'11px 14px',fontSize:12,color:'var(--text-secondary)',maxWidth:150}}><p style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={e.remarks||''}>{e.remarks||'—'}</p></td>
                     <td style={{padding:'11px 14px',fontSize:12,color:'var(--text-secondary)',whiteSpace:'nowrap'}}>{e.borrowerName||e.depositorName||e.partyName||'—'}</td>
@@ -507,12 +612,13 @@ export default function LedgerEntries(){
                       </div>
                     </td>
                   </tr>
-                ));
+                  );
+                });
               })()}
             </tbody>
           </table>
         </div>
-        <p style={{fontSize:12,color:'var(--text-tertiary)',marginTop:12,textAlign:'right'}}>{filtered.length} of {entries.length} entries</p>
+        <p style={{fontSize:12,color:'var(--text-tertiary)',marginTop:12,textAlign:'right'}}>{filtered.length} of {scoped.length} entries{(dateFrom||dateTo)?` (date-filtered from ${entries.length} total)`:''}</p>
       </Card>
       )}
 

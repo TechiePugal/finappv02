@@ -5,6 +5,7 @@ import {db} from '../../firebase/config';
 import {uploadDocumentFile,openDocument} from '../../utils/fileStore';
 import {saveDepositorDocs,getDepositorDocs} from '../../utils/depositorFiles';
 import {logStatusChange} from '../../utils/statusHistory';
+import {syncGuardianAsUser} from '../../utils/guardianSync';
 import toast from 'react-hot-toast';
 import {Button,FormField,Input,Select,Card,PageHeader,Toggle,formatCurrency,SectionHeader,InfoRow,Divider} from '../../components/finledger/UI';
 import {useAuth} from '../../contexts/AuthContext';
@@ -53,6 +54,10 @@ export default function DepositorForm(){
   const {id}=useParams(); const nav=useNavigate(); const isEdit=!!id;
   const [form,setForm]=useState({
     depositId:genId(), name:'', phone:'', email:'', address:'',
+    // Guardian details — same pattern as the Borrower/EMI loan forms (a real,
+    // searchable/reusable User, kept separate from the Nominee below).
+    guardianName:'', guardianPhone:'', guardianAddress:'',
+    nomineeName:'', nomineePhone:'',
     depositAmount:'', interestRate:'', interestTenure:'1',
     compounding:false, startDate:'', maturityDate:'', status:'Active', notes:''
   });
@@ -76,7 +81,10 @@ export default function DepositorForm(){
       setOrigStatus(d.status||'Active');
       setForm({
         depositId:d.depositId||id, name:d.name||'', phone:d.phone||'', email:d.email||'',
-        address:d.address||'', depositAmount:d.depositAmount||'', interestRate:d.interestRate||'',
+        address:d.address||'',
+        guardianName:d.guardianName||'', guardianPhone:d.guardianPhone||'', guardianAddress:d.guardianAddress||'',
+        nomineeName:d.nomineeName||'', nomineePhone:d.nomineePhone||'',
+        depositAmount:d.depositAmount||'', interestRate:d.interestRate||'',
         interestTenure:String(d.interestTenure||'1'), compounding:d.compounding||false,
         startDate:d.startDate||'', maturityDate:d.maturityDate||'', status:d.status||'Active', notes:d.notes||''
       });
@@ -87,6 +95,7 @@ export default function DepositorForm(){
 
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
   const[custs,setCusts]=useState([]);const[custQ,setCustQ]=useState('');const[linkedUser,setLinkedUser]=useState(null);
+  const[guardianQ,setGuardianQ]=useState('');const[guardianLinked,setGuardianLinked]=useState(null);
   useEffect(()=>{getDocs(collection(db,'customer_master')).then(s=>setCusts(scopeToUser(s.docs.map(d=>({id:d.id,...d.data()})),user?.uid))).catch(()=>{});},[]);
 
 
@@ -101,6 +110,8 @@ export default function DepositorForm(){
   async function submit(e){
     e.preventDefault();
     if(!isEdit&&!linkedUser) return toast.error('Select an existing User first — deposits can only be created for a linked User.');
+    if(form.guardianPhone && form.phone && form.guardianPhone.trim()===form.phone.trim())
+      return toast.error('The Guardian must be a different person from the depositor — they cannot share the same phone number.');
     if(!form.name||!form.phone||!form.depositAmount||!form.interestRate||!form.startDate)
       return toast.error('Fill all required fields');
     setLoading(true);
@@ -157,6 +168,9 @@ export default function DepositorForm(){
         toast.success('Depositor added!');
       }
       await saveDepositorDocs(depId,{check:checkUrl,bond:bondUrl});
+      // Guardian → also register as a User, if name+phone were entered (same
+      // pattern as the Borrower/EMI loan forms).
+      await syncGuardianAsUser(form.guardianName, form.guardianPhone, form.guardianAddress, user?.uid);
       nav('/fl/depositors');
     }catch(e){toast.error('Failed: '+e.message);}finally{setLoading(false);}
   }
@@ -227,6 +241,8 @@ export default function DepositorForm(){
               <FormField label="Phone Number" required><Input value={form.phone} onChange={e=>set('phone',e.target.value)} placeholder="9876543210" type="tel" disabled={!!linkedUser}/></FormField>
               <FormField label="Email"><Input value={form.email} onChange={e=>set('email',e.target.value)} placeholder="email@example.com" type="email"/></FormField>
               <FormField label="Address"><Input value={form.address} onChange={e=>set('address',e.target.value)} placeholder="Full address"/></FormField>
+              <FormField label="Nominee Name"><Input value={form.nomineeName} onChange={e=>set('nomineeName',e.target.value)} placeholder="Nominee full name"/></FormField>
+              <FormField label="Nominee Mobile Number"><Input value={form.nomineePhone} onChange={e=>set('nomineePhone',e.target.value)} placeholder="9876543210" type="tel"/></FormField>
               <FormField label="Deposit Amount (₹)" required><Input value={form.depositAmount} onChange={e=>set('depositAmount',e.target.value)} placeholder="500000" type="number" min="1"/></FormField>
               <FormField label="Monthly Interest Rate (%)" required><Input value={form.interestRate} onChange={e=>set('interestRate',e.target.value)} placeholder="1.5" type="number" step="any" min="0"/></FormField>
               <FormField label="Interest Payout Tenure (months)" required
@@ -250,6 +266,60 @@ export default function DepositorForm(){
               </FormField>
             </div>
           </Card>
+
+          {/* Guardian Details — same searchable picker as the Borrower/EMI loan
+              forms; a guardian is a real User in the system, and must be a
+              DIFFERENT person from the depositor themselves. */}
+          <Card>
+            <SectionHeader title="Guardian Details" action={<span style={{fontSize:11,color:'var(--text-secondary)'}}>Optional</span>}/>
+            <div style={{padding:'14px 16px',background:guardianLinked?'rgba(88,86,214,0.06)':'rgba(118,118,128,0.05)',border:guardianLinked?'1.5px solid rgba(88,86,214,0.3)':'1.5px dashed rgba(0,0,0,0.15)',borderRadius:12,marginBottom:form.guardianName?12:0}}>
+              <div style={{fontSize:11,fontWeight:700,color:guardianLinked?'#5856d6':'var(--text-secondary)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:8}}>
+                {guardianLinked ? '✓ Linked to User' : 'Search or add a Guardian'}
+              </div>
+              {guardianLinked ? (
+                <div style={{display:'flex',alignItems:'center',gap:10}}>
+                  <div style={{width:36,height:36,borderRadius:'50%',background:'linear-gradient(135deg,#5856d6,#af52de)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:800,flexShrink:0}}>{(guardianLinked.name||'?')[0].toUpperCase()}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:700,fontSize:14}}>{guardianLinked.name}</div>
+                    <div style={{fontSize:12,color:'var(--text-secondary)'}}>{guardianLinked.phone}{guardianLinked.customerId?' · '+guardianLinked.customerId:''}</div>
+                  </div>
+                  <button type="button" onClick={()=>{setGuardianLinked(null);set('guardianName','');set('guardianPhone','');}} style={{fontSize:12,color:'#ff3b30',background:'none',border:'1px solid rgba(255,59,48,0.3)',borderRadius:8,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',flexShrink:0}}>Change</button>
+                </div>
+              ) : (
+                <>
+                  <input value={guardianQ} onChange={e=>{setGuardianQ(e.target.value);set('guardianName',e.target.value);}} placeholder="Search existing user, or type a new name…" style={{width:'100%',boxSizing:'border-box',height:36,padding:'0 12px',borderRadius:9,border:'1px solid rgba(0,0,0,0.12)',fontSize:13,fontFamily:'inherit',outline:'none'}}/>
+                  {guardianQ.trim()&&(()=>{
+                    const matches=custs.filter(cc=>cc.id!==form.customerId && [cc.name,cc.phone,cc.customerId].some(v=>String(v||'').toLowerCase().includes(guardianQ.trim().toLowerCase())));
+                    return(
+                    <div style={{marginTop:8,display:'grid',gap:4,maxHeight:180,overflowY:'auto'}}>
+                      {matches.slice(0,6).map(cc=>{
+                        const isSamePerson = cc.phone && form.phone && cc.phone===form.phone;
+                        return(
+                        <div key={cc.id} onClick={()=>{
+                          if(isSamePerson){toast.error('The Guardian must be a different person from the depositor.');return;}
+                          setGuardianLinked(cc);set('guardianName',cc.name||'');set('guardianPhone',cc.phone||'');setGuardianQ('');
+                        }} style={{padding:'8px 10px',borderRadius:8,background:isSamePerson?'rgba(255,59,48,0.04)':'#fff',border:`1px solid ${isSamePerson?'rgba(255,59,48,0.25)':'rgba(0,0,0,0.08)'}`,cursor:isSamePerson?'not-allowed':'pointer',fontSize:13,opacity:isSamePerson?0.6:1}}>
+                          <strong>{cc.name}</strong> <span style={{color:'var(--text-secondary)',fontSize:11.5}}>· {cc.phone}{cc.customerId?' · '+cc.customerId:''}</span>
+                          {isSamePerson && <span style={{marginLeft:6,fontSize:11,color:'#ff3b30',fontWeight:600}}>Same as depositor — can't select</span>}
+                        </div>);
+                      })}
+                      {matches.length===0 && (
+                        <div style={{fontSize:12.5,color:'var(--text-secondary)',padding:'8px 2px'}}>No matching user. Keep typing the full name and phone below to add them as a new Guardian.</div>
+                      )}
+                    </div>
+                    );
+                  })()}
+                </>
+              )}
+            </div>
+            {form.guardianName && (
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+                <FormField label="Guardian Mobile"><Input value={form.guardianPhone} onChange={e=>set('guardianPhone',e.target.value)} placeholder="9876543210" type="tel"/></FormField>
+                <FormField label="Guardian Address"><Input value={form.guardianAddress} onChange={e=>set('guardianAddress',e.target.value)} placeholder="Guardian's full address"/></FormField>
+              </div>
+            )}
+          </Card>
+
           <Card>
             <SectionHeader title="Documents"/>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
@@ -271,6 +341,8 @@ export default function DepositorForm(){
             <InfoRow label="Annual Rate" value={form.interestRate?`${form.interestRate}% p.a.`:'—'}/>
             <InfoRow label="Type" value={form.compounding?'Compound':'Simple'}/>
             <InfoRow label="Payout Every" value={form.interestTenure?tenureLabel:'—'}/>
+            {form.guardianName && <InfoRow label="Guardian" value={form.guardianName}/>}
+            {form.nomineeName && <InfoRow label="Nominee" value={form.nomineePhone?`${form.nomineeName} · ${form.nomineePhone}`:form.nomineeName}/>}
             <Divider/>
             <div style={{padding:'14px',background:'rgba(0,122,255,0.06)',borderRadius:12,textAlign:'center',marginTop:4}}>
               <p style={{fontSize:12,color:'var(--accent)',fontWeight:500,marginBottom:4}}>Each Payout Amount</p>

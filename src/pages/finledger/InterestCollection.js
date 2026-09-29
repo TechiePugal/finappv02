@@ -86,10 +86,22 @@ export default function InterestCollection(){
     return()=>{b();p();r();a();};
   },[]);
 
+  // The plain, right-now balance — NO date lag. b.loanAmount already includes
+  // every addition made to date (compounding updates it immediately via
+  // savePay), so "current outstanding" is simply that minus whatever's been
+  // repaid. This is what the card headers show — never a lagged "preview" of
+  // what a future month's own interest calculation will use.
+  function getCurrentOutstanding(b){
+    const reps=repayments[b.id]||[];
+    const repaid=reps.reduce((s,r)=>s+(r.repaidAmount||r.amount||0),0);
+    return Math.max(0,(b.loanAmount||0)-repaid);
+  }
   function getOutstanding(b,forMonth){
     // An addition made THIS month (or later) should only start counting toward
     // interest from NEXT month onward — the period already in progress when the
-    // extra amount was added keeps using the old, smaller principal.
+    // extra amount was added keeps using the old, smaller principal. This is
+    // ONLY for INTEREST math (calcInterest below) — never for a plain balance
+    // display, which should show the true current amount (getCurrentOutstanding).
     const targetMonth = forMonth || month;
     const reps=repayments[b.id]||[];
     const repaid=reps.reduce((s,r)=>s+(r.repaidAmount||r.amount||0),0);
@@ -217,6 +229,7 @@ export default function InterestCollection(){
             status:'Paid',addedToLoan:period.add>0,addedAmount:period.add,
             paymentDate:pf.date,paymentMode:pf.mode,settlementBatchId:batchId,
             remarks:pf.remarks,month:period.month,
+            wasUndone:false, // fresh Settle clears any earlier Undo marker
             updatedAt:serverTimestamp()
           };
           let payId=existing?.id;
@@ -238,6 +251,7 @@ export default function InterestCollection(){
             paymentDate:pf.date,paymentMode:pf.mode,settlementBatchId:batchId,
             remarks:pf.remarks?`${pf.remarks} (partial from bulk settlement)`:'Partial from bulk settlement',
             month:partialPeriod.month,
+            wasUndone:false, // fresh Settle clears any earlier Undo marker
             updatedAt:serverTimestamp()
           };
           let partialPayId=existingPartial?.id;
@@ -339,7 +353,9 @@ export default function InterestCollection(){
         status:newStatus,addedToLoan:addVal>0,addedAmount:addVal,
         paymentDate:collected?pf.date:null,paymentMode:collected?pf.mode:null,
         settlementBatchId:batchId,
-        remarks:pf.remarks,month,updatedAt:serverTimestamp()
+        remarks:pf.remarks,month,
+        wasUndone:false, // any save here (Settle or manual Mark Unpaid) clears the Undo marker
+        updatedAt:serverTimestamp()
       };
 
       let payId=existing?.id;
@@ -443,12 +459,23 @@ export default function InterestCollection(){
     try{
       const bPays=payments[borrower.id]||{};
       const touchedPayments=Object.values(bPays).filter(p=>p.settlementBatchId===batchId);
+      // BUG FIX: this used to bake "(undone)" / "Undone" straight into the shared
+      // `remarks` field. That field is also what pre-fills the Collect Interest
+      // popup's Remarks box (and what a fresh Settle writes straight back out) —
+      // so once a period was undone, "Undone" stuck around as its remark FOREVER,
+      // including after the person went and actually collected the payment again,
+      // making an already-paid period look permanently stuck on "Undone". Undo is
+      // a status change (Paid → Unpaid), not a note the person wrote, so it no
+      // longer touches `remarks` at all — any real remark the person typed stays
+      // exactly as it was, and a fresh Settle now correctly shows Paid with nothing
+      // left over. `wasUndone`/`undoneAt` record that this period was reversed, for
+      // its own sake, without hijacking the remarks the person actually owns.
       for(const p of touchedPayments){
         await updateDoc(doc(db,'borrower_interest_payments',p.id),{
           amountPaid:0,addedAmount:0,fine:0,totalCollected:0,
           status:'Unpaid',addedToLoan:false,
           paymentDate:null,paymentMode:null,addAdditionId:null,addLedgerEntryId:null,
-          remarks:p.remarks?`${p.remarks} (undone)`:'Undone',
+          wasUndone:true,undoneAt:serverTimestamp(),
           updatedAt:serverTimestamp()
         });
       }
@@ -613,7 +640,8 @@ export default function InterestCollection(){
                 {filtBorrowers.length===0&&<tr><td colSpan={9} style={{padding:48,textAlign:'center',color:'var(--text-secondary)'}}>No borrowers match filters</td></tr>}
                 {filtBorrowers.map(b=>{
                   const p=payments[b.id]?.[month];
-                  const outstanding=getOutstanding(b);
+                  const outstanding=getOutstanding(b); // lagged — for THIS month's own interest calc only
+                  const currentOutstanding=getCurrentOutstanding(b); // true right-now balance — for display
                   const interest=calcInterest(b,outstanding);
                   // Uncollected interest for THIS month: 0 if fully paid, remaining if partial, full amount if pending
                   const uncollected = p?.status==='Paid' ? 0 : p?.status==='Partial' ? Math.max(0, interest-(p.amountPaid||0)) : interest;
@@ -627,7 +655,7 @@ export default function InterestCollection(){
                         <div style={{fontWeight:600,fontSize:13}}>{b.borrowerName}</div>
                         <div style={{fontSize:11,color:'var(--text-secondary)'}}>{b.loanId}</div>
                       </td>
-                      <td style={{padding:'12px 14px',fontWeight:700,fontSize:13,color:outstanding<b.loanAmount?'#ff9500':'var(--text-primary)'}}>{formatCurrency(Math.round(outstanding))}</td>
+                      <td style={{padding:'12px 14px',fontWeight:700,fontSize:13,color:currentOutstanding<b.loanAmount?'#ff9500':'var(--text-primary)'}}>{formatCurrency(Math.round(currentOutstanding))}</td>
                       <td style={{padding:'12px 14px',fontWeight:700,fontSize:13,color:uncollected>0?'#ff3b30':'#34c759'}}>{formatCurrency(Math.round(uncollected))}</td>
                       <td style={{padding:'12px 14px',color:'#ff9500',fontWeight:500}}>{b.interestRate}%</td>
                       <td style={{padding:'12px 14px',fontWeight:700,color:'#007aff',fontSize:14}}>{formatCurrency(Math.round(interest))}</td>
@@ -655,7 +683,9 @@ export default function InterestCollection(){
             {filtBorrowers.map((b,bIdx)=>{
               const slots=getMonths(b.loanStartDate);
               const isOpen=selected===b.id;
-              const outstanding=getOutstanding(b);
+              // Card header shows the true CURRENT balance — not a lagged "preview"
+              // of what next month's interest calculation will use.
+              const outstanding=getCurrentOutstanding(b);
               // A month settled by adding to the loan (compounding) is JUST AS
               // SETTLED as one collected in cash — count it here too, matching the
               // same fix on the deposit side.
@@ -768,6 +798,10 @@ export default function InterestCollection(){
                                 <div style={{fontSize:13,fontWeight:700,color:isPaid?'#34c759':isPartial?'#ff9500':isAdded?'#5856d6':'var(--text-secondary)'}}>{(isPaid||isPartial)?formatCurrency((p.amountPaid||0)+(p.addedAmount||0)):isAdded?'+ Principal':formatCurrency(Math.round(monthInt))}</div>
                                 {isPartial&&<div style={{fontSize:9.5,color:'#ff9500',marginTop:2}}>{formatCurrency(Math.max(0,(p.amountDue||0)-(p.amountPaid||0)-(p.addedAmount||0)))} remaining</div>}
                                 {isFuture&&!isPaid&&!isPartial&&<div style={{fontSize:9.5,color:'var(--text-tertiary)',marginTop:2}}>advance allowed</div>}
+                                {/* Undo history is its own small tag, separate from the person's own
+                                    remarks — it clears itself the moment this period is settled again
+                                    (wasUndone is reset to false on every fresh Settle/Mark Unpaid). */}
+                                {p?.wasUndone&&!isPaid&&!isPartial&&<div style={{fontSize:9,color:'#8e8e93',marginTop:2}}>↺ previously undone</div>}
                                 {p?.remarks&&<div style={{fontSize:10,color:'var(--text-tertiary)',marginTop:3,fontStyle:'italic',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={p.remarks}>📝 {p.remarks}</div>}
                               </div>
                             );

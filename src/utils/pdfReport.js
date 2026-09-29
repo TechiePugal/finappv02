@@ -163,7 +163,7 @@ export function printBorrowerReport(borrower, repayments, interestPayments, addi
         <div class="logo">EC Fin 360 · Borrower Report</div>
         <div class="meta" style="text-align:left;margin-top:4px;">Generated: ${now()}</div>
       </div>
-      <div class="meta">CONFIDENTIAL<br/>Borrower ID: ${borrower.loanId||borrower.id?.slice(-8)||'—'}</div>
+      <div class="meta">CONFIDENTIAL<br/>Borrower ID: ${borrower.loanId||borrower.id?.slice(-8)||'—'}${borrower.guardianName?`<br/>Guardian: ${borrower.guardianName}${borrower.guardianPhone?' · '+borrower.guardianPhone:''}`:''}${borrower.nomineeName?`<br/>Nominee: ${borrower.nomineeName}${borrower.nomineePhone?' · '+borrower.nomineePhone:''}`:''}</div>
     </div>
 
     <!-- Photo + basic info -->
@@ -177,6 +177,7 @@ export function printBorrowerReport(borrower, repayments, interestPayments, addi
           ${borrower.phone||''}${borrower.email?' · '+borrower.email:''} ${badgeSt(borrower.status)}
         </div>
         ${borrower.address?`<div style="font-size:11px;color:#9ca3af;margin-top:2px;">${borrower.address}</div>`:''}
+        ${borrower.nomineeName?`<div style="font-size:11px;color:#0369a1;margin-top:2px;">👤 Nominee: ${borrower.nomineeName}${borrower.nomineePhone?' · '+borrower.nomineePhone:''}</div>`:''}
       </div>
     </div>
 
@@ -233,6 +234,17 @@ export function printBorrowerReport(borrower, repayments, interestPayments, addi
       </div>
       <div>
         <div class="info-row"><span class="info-lbl">Guardian Address</span><span class="info-val">${borrower.guardianAddress||'—'}</span></div>
+      </div>
+    </div>`:''}
+
+    ${borrower.nomineeName?`
+    <h2>Nominee Details</h2>
+    <div class="info-grid">
+      <div>
+        <div class="info-row"><span class="info-lbl">Nominee Name</span><span class="info-val">${borrower.nomineeName}</span></div>
+      </div>
+      <div>
+        <div class="info-row"><span class="info-lbl">Nominee Mobile Number</span><span class="info-val">${borrower.nomineePhone||'—'}</span></div>
       </div>
     </div>`:''}
 
@@ -384,7 +396,7 @@ export function printDepositorReport(depositor, payments, history){
         <div class="logo">EC Fin 360 · Depositor Report</div>
         <div class="meta" style="text-align:left;margin-top:4px;">Generated: ${now()}</div>
       </div>
-      <div class="meta">CONFIDENTIAL<br/>Deposit ID: ${depositor.depositId||depositor.id?.slice(-8)||'—'}</div>
+      <div class="meta">CONFIDENTIAL<br/>Deposit ID: ${depositor.depositId||depositor.id?.slice(-8)||'—'}${depositor.guardianName?`<br/>Guardian: ${depositor.guardianName}${depositor.guardianPhone?' · '+depositor.guardianPhone:''}`:''}${depositor.nomineeName?`<br/>Nominee: ${depositor.nomineeName}${depositor.nomineePhone?' · '+depositor.nomineePhone:''}`:''}</div>
     </div>
 
     <div class="section-photo">
@@ -398,6 +410,8 @@ export function printDepositorReport(depositor, payments, history){
           <span class="badge ${depositor.status==='Active'?'badge-green':'badge-gray'}" style="margin-left:6px;">${depositor.status||'—'}</span>
         </div>
         ${depositor.address?`<div style="font-size:11px;color:#9ca3af;margin-top:2px;">${depositor.address}</div>`:''}
+        ${depositor.guardianName?`<div style="font-size:11px;color:#7c3aed;margin-top:2px;">🛡️ Guardian: ${depositor.guardianName}${depositor.guardianPhone?' · '+depositor.guardianPhone:''}</div>`:''}
+        ${depositor.nomineeName?`<div style="font-size:11px;color:#0369a1;margin-top:2px;">👤 Nominee: ${depositor.nomineeName}${depositor.nomineePhone?' · '+depositor.nomineePhone:''}</div>`:''}
       </div>
     </div>
 
@@ -442,6 +456,29 @@ export function printDepositorReport(depositor, payments, history){
         <div class="info-row"><span class="info-lbl">Taken in Hand / Added to Deposit</span><span class="info-val">${INR(totalInHand)} / ${INR(totalReinvested)}</span></div>
       </div>
     </div>
+
+    ${depositor.guardianName?`
+    <h2>Guardian Details</h2>
+    <div class="info-grid">
+      <div>
+        <div class="info-row"><span class="info-lbl">Guardian Name</span><span class="info-val">${depositor.guardianName}</span></div>
+        <div class="info-row"><span class="info-lbl">Guardian Phone</span><span class="info-val">${depositor.guardianPhone||'—'}</span></div>
+      </div>
+      <div>
+        <div class="info-row"><span class="info-lbl">Guardian Address</span><span class="info-val">${depositor.guardianAddress||'—'}</span></div>
+      </div>
+    </div>`:''}
+
+    ${depositor.nomineeName?`
+    <h2>Nominee Details</h2>
+    <div class="info-grid">
+      <div>
+        <div class="info-row"><span class="info-lbl">Nominee Name</span><span class="info-val">${depositor.nomineeName}</span></div>
+      </div>
+      <div>
+        <div class="info-row"><span class="info-lbl">Nominee Mobile Number</span><span class="info-val">${depositor.nomineePhone||'—'}</span></div>
+      </div>
+    </div>`:''}
 
     <h2>Interest Payout History (${pays.length} periods)</h2>
     <p style="font-size:11px;color:#6b7280;margin:-6px 0 10px;">"Settlement" shows exactly how each period was handled — cash paid in hand, added back to the deposit, or split between both. Periods paid together in one bulk settlement are shown as a single combined entry.</p>
@@ -840,13 +877,14 @@ export function printCollectEMISummary(loans, collections, filterLabel){
     </div>
     <h2>EMI Collection Progress — ${filterLabel||'All'}</h2>
     <table>
-      <thead><tr><th>S.No</th><th>EMI ID</th><th>Customer Details</th><th>Guardian Details</th><th class="text-right">Loan Amount</th><th class="text-right">EMI Amount</th><th>Periods</th><th class="text-right">Collected</th><th class="text-right">Fine</th><th class="text-right">Pending</th><th>Status</th></tr></thead>
+      <thead><tr><th>S.No</th><th>EMI ID</th><th>Customer Details</th><th>Guardian Details</th><th>Nominee Details</th><th class="text-right">Loan Amount</th><th class="text-right">EMI Amount</th><th>Periods</th><th class="text-right">Collected</th><th class="text-right">Fine</th><th class="text-right">Pending</th><th>Status</th></tr></thead>
       <tbody>
         ${rows.map(r=>`<tr>
           <td>${r.sn}</td>
           <td style="font-family:monospace;font-size:11px;">${r.l.emiId||r.l.id?.slice(-8)||'—'}</td>
           <td><div style="font-weight:600;">${r.l.borrowerName||'—'}</div><div style="font-size:10px;color:#6b7280;">${r.l.phone||'—'}</div></td>
           <td><div>${r.l.guardianName||'—'}</div><div style="font-size:10px;color:#6b7280;">${r.l.guardianPhone||'—'}</div></td>
+          <td><div>${r.l.nomineeName||'—'}</div><div style="font-size:10px;color:#6b7280;">${r.l.nomineePhone||'—'}</div></td>
           <td class="text-right">${INR(r.l.loanAmount)}</td>
           <td class="text-right">${INR(r.l.emiAmount)}</td>
           <td>${r.paidPeriods}/${r.l.totalPeriods||'?'}</td>
@@ -855,7 +893,7 @@ export function printCollectEMISummary(loans, collections, filterLabel){
           <td class="text-right ${r.pending>0?'text-red':'text-green'}">${INR(r.pending)}</td>
           <td><span class="badge ${r.l.status==='Closed'?'badge-green':'badge-amber'}">${r.l.status||'—'}</span></td>
         </tr>`).join('')}
-        <tr class="total-row"><td colspan="4">TOTAL</td><td class="text-right">${INR(totalMainAmount)}</td><td></td><td></td><td class="text-right">${INR(grandCollected)}</td><td class="text-right">${INR(grandFine)}</td><td class="text-right">${INR(grandPending)}</td><td></td></tr>
+        <tr class="total-row"><td colspan="5">TOTAL</td><td class="text-right">${INR(totalMainAmount)}</td><td></td><td></td><td class="text-right">${INR(grandCollected)}</td><td class="text-right">${INR(grandFine)}</td><td class="text-right">${INR(grandPending)}</td><td></td></tr>
       </tbody>
     </table>
     <div class="footer"><span>EC Fin 360 Finance Ledger</span><span>Collect EMI Summary — ${filterLabel||'All'}</span></div>
@@ -940,7 +978,20 @@ export function printSettleInterestSummary(depositors, payments, month, addition
       return s;
     },0);
     const overallBalance = Math.max(0, overallDue-overallCollected);
-    return { d, p, interest, status: p?.status || 'Pending', overallDue, overallCollected, overallBalance };
+    // Overall cash-vs-compounded split, mirroring the individual Depositor Report —
+    // a flat "Total Collected" figure hides whether the money was actually paid out
+    // or just reinvested back into the deposit.
+    const overallCash = allKeysForDep.reduce((s,k)=>{
+      const pp=payments[k];
+      if(pp?.status==='Paid'||pp?.status==='Partial'||pp?.addedToDeposit) return s+(pp.amountPaid||0);
+      return s;
+    },0);
+    const overallAdded = allKeysForDep.reduce((s,k)=>{
+      const pp=payments[k];
+      if(pp?.status==='Paid'||pp?.status==='Partial'||pp?.addedToDeposit) return s+(pp.addedAmount||0);
+      return s;
+    },0);
+    return { d, p, interest, status: p?.status || 'Pending', overallDue, overallCollected, overallCash, overallAdded, overallBalance };
   });
   const paid = rows.filter(r=>r.status==='Paid'||r.status==='Partial'||r.p?.addedToDeposit);
   const totalMainAmount = list.reduce((s,d)=>s+(d.depositAmount||0),0);
@@ -948,9 +999,15 @@ export function printSettleInterestSummary(depositors, payments, month, addition
   // Includes BOTH the cash portion and whatever was compounded back into the deposit —
   // a split settlement (part cash, part compound) counts fully as settled either way.
   const monthCollected = paid.reduce((s,r)=>s+(r.p?.amountPaid||0)+(r.p?.addedAmount||0),0);
+  const monthCash = paid.reduce((s,r)=>s+(r.p?.amountPaid||0),0);
+  const monthAdded = paid.reduce((s,r)=>s+(r.p?.addedAmount||0),0);
   const totalOverallDue = rows.reduce((s,r)=>s+r.overallDue,0);
   const totalOverallCollected = rows.reduce((s,r)=>s+r.overallCollected,0);
+  const totalOverallCash = rows.reduce((s,r)=>s+r.overallCash,0);
+  const totalOverallAdded = rows.reduce((s,r)=>s+r.overallAdded,0);
   const totalOverallBalance = rows.reduce((s,r)=>s+r.overallBalance,0);
+  const dispCash = isMonthScope?monthCash:totalOverallCash;
+  const dispAdded = isMonthScope?monthAdded:totalOverallAdded;
 
   // Everything below is scope-driven: "This Month" shows just the selected
   // month's due/collected (with an up-to-date balance for context); "Overall"
@@ -973,12 +1030,28 @@ export function printSettleInterestSummary(depositors, payments, month, addition
       <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${INR(dispCollected)}</div><div class="kpi-lbl">${collLbl}</div></div>
       <div class="kpi" style="border-left-color:#f59e0b;"><div class="kpi-val" style="color:#b45309;">${INR(dispBalance)}</div><div class="kpi-lbl">Total Balance to Pay${isMonthScope?' (Up to Date)':''}</div></div>
     </div>
+    <div class="kpi-grid" style="margin-top:-14px;">
+      <div class="kpi" style="border-left-color:#0ea5e9;"><div class="kpi-val" style="color:#0369a1;">${INR(dispCash)}</div><div class="kpi-lbl">💰 Taken in Cash</div></div>
+      <div class="kpi" style="border-left-color:#8b5cf6;"><div class="kpi-val" style="color:#7c3aed;">${INR(dispAdded)}</div><div class="kpi-lbl">🔄 Added to Deposit</div></div>
+    </div>
     <h2>${isMonthScope?`Settlement Status — ${monthLabel}`:'Settlement Status — Full History'}</h2>
     <table>
-      <thead><tr><th>#</th><th>Customer Details</th><th>Guardian Details</th><th>Deposit ID</th><th class="text-right">Main Amount</th><th class="text-right">${dueLbl}</th>${isMonthScope?'<th>Status</th>':''}<th class="text-right">${isMonthScope?'Overall Balance':'Total Collected'}</th><th>Date Paid</th><th>Mode</th></tr></thead>
+      <thead><tr><th>#</th><th>Customer Details</th><th>Deposit ID</th><th>Guardian Details</th><th>Nominee Details</th><th class="text-right">Main Amount</th><th class="text-right">${dueLbl}</th><th class="text-right">💰 Cash</th><th class="text-right">🔄 Added</th><th class="text-right">${isMonthScope?'Overall Balance':'Balance'}</th><th>Status</th></tr></thead>
       <tbody>
-        ${rows.map((r,i)=>`<tr><td>${i+1}</td><td><div style="font-weight:600;">${r.d.name||'—'}</div><div style="font-size:10px;color:#6b7280;">${r.d.phone||'—'}</div></td><td><div>${r.d.guardianName||'—'}</div><div style="font-size:10px;color:#6b7280;">${r.d.guardianPhone||'—'}</div></td><td>${r.d.depositId||'—'}</td><td class="text-right">${INR(r.d.depositAmount)}</td><td class="text-right">${INR(isMonthScope?r.interest:r.overallDue)}</td>${isMonthScope?`<td><span class="badge ${r.status==='Paid'?'badge-green':r.status==='Partial'?'badge-amber':'badge-red'}">${r.status}</span></td>`:''}<td class="text-right ${isMonthScope?(r.overallBalance>0?'text-red':'text-green'):'text-green'}">${INR(isMonthScope?r.overallBalance:r.overallCollected)}</td><td>${r.p?.paymentDate?fmtDate(r.p.paymentDate):'—'}</td><td>${r.p?.mode||'—'}</td></tr>`).join('')}
-        <tr class="total-row"><td colspan="4">TOTAL</td><td class="text-right">${INR(totalMainAmount)}</td><td class="text-right">${INR(dispDue)}</td>${isMonthScope?'<td></td>':''}<td class="text-right">${INR(isMonthScope?dispBalance:dispCollected)}</td><td colspan="2"></td></tr>
+        ${rows.map((r,i)=>`<tr>
+          <td>${i+1}</td>
+          <td><div style="font-weight:600;">${r.d.name||'—'}</div><div style="font-size:10px;color:#6b7280;">${r.d.phone||'—'}</div></td>
+          <td style="font-family:monospace;font-size:10.5px;">${r.d.depositId||'—'}</td>
+          <td><div>${r.d.guardianName||'—'}</div><div style="font-size:10px;color:#6b7280;">${r.d.guardianPhone||'—'}</div></td>
+          <td><div>${r.d.nomineeName||'—'}</div><div style="font-size:10px;color:#6b7280;">${r.d.nomineePhone||'—'}</div></td>
+          <td class="text-right">${INR(r.d.depositAmount)}</td>
+          <td class="text-right">${INR(isMonthScope?r.interest:r.overallDue)}</td>
+          <td class="text-right text-green">${(isMonthScope?(r.p?.amountPaid||0):r.overallCash)>0?INR(isMonthScope?(r.p?.amountPaid||0):r.overallCash):'—'}</td>
+          <td class="text-right text-blue">${(isMonthScope?(r.p?.addedAmount||0):r.overallAdded)>0?INR(isMonthScope?(r.p?.addedAmount||0):r.overallAdded):'—'}</td>
+          <td class="text-right ${(isMonthScope?r.overallBalance:r.overallBalance)>0?'text-red':'text-green'}">${INR(r.overallBalance)}</td>
+          <td><span class="badge ${r.status==='Paid'?'badge-green':r.status==='Partial'?'badge-amber':'badge-red'}">${isMonthScope?r.status:(r.overallBalance>0?'Pending':'Settled')}</span></td>
+        </tr>`).join('')}
+        <tr class="total-row"><td colspan="5">TOTAL</td><td class="text-right">${INR(totalMainAmount)}</td><td class="text-right">${INR(dispDue)}</td><td class="text-right">${INR(dispCash)}</td><td class="text-right">${INR(dispAdded)}</td><td class="text-right">${INR(totalOverallBalance)}</td><td></td></tr>
       </tbody>
     </table>
     <div class="footer"><span>EC Fin 360 Finance Ledger</span><span>Settle Interest Summary — ${isMonthScope?monthLabel:'All Time'}</span></div>
@@ -1084,16 +1157,28 @@ export function printCollectInterestSummary(borrowers, payments, month, getOutst
       // both contributions, and include Partial/addedToLoan periods as collected.
       totalPaid = sortedPays.filter(p=>p.status==='Paid'||p.status==='Partial'||p.addedToLoan).reduce((s,p)=>s+(p.amountPaid||0)+(p.addedAmount||0),0);
     }
+    // Split the collected total into cash-in-hand vs. added-back-to-loan, the
+    // same breakdown the individual Borrower Report already shows — a flat
+    // "Collected" figure hides whether the money actually came in or was just
+    // compounded back into the loan.
+    const settledForSplit = isMonthScope
+      ? (payByMonth[month] ? [payByMonth[month]] : [])
+      : sortedPays.filter(p=>p.status==='Paid'||p.status==='Partial'||p.addedToLoan);
+    const cashPart = settledForSplit.reduce((s,p)=>s+(p.amountPaid||0),0);
+    const addedPart = settledForSplit.reduce((s,p)=>s+(p.addedAmount||0),0);
     const pendingToCollect = Math.max(0,totalInterestDue-totalPaid);
     const out = getOutstanding ? getOutstanding(b) : Math.max(0,(b.loanAmount||0));
     const remarksList = isMonthScope
       ? (payByMonth[month]?.remarks||'')
       : sortedPays.filter(p=>p.remarks).map(p=>`${p.month}: ${p.remarks}`).join(' · ');
-    return { b, sn:i+1, out, totalInterestDue, totalPaid, pendingToCollect, remarksList };
+    return { b, sn:i+1, out, totalInterestDue, totalPaid, cashPart, addedPart, pendingToCollect, remarksList };
   });
   const totalMainAmount = list.reduce((s,b)=>s+(b.loanAmount||0),0);
+  const totalOutstanding = rows.reduce((s,r)=>s+r.out,0);
   const grandDue = rows.reduce((s,r)=>s+r.totalInterestDue,0);
   const grandPaid = rows.reduce((s,r)=>s+r.totalPaid,0);
+  const grandCash = rows.reduce((s,r)=>s+r.cashPart,0);
+  const grandAdded = rows.reduce((s,r)=>s+r.addedPart,0);
   const grandPending = rows.reduce((s,r)=>s+r.pendingToCollect,0);
   const monthLabel = month ? new Date(month+'-01').toLocaleDateString('en-IN',{month:'long',year:'numeric'}) : '—';
   // Labels stay plain ("Interest Due", "Collected") — the month is already stated
@@ -1109,16 +1194,35 @@ export function printCollectInterestSummary(borrowers, payments, month, getOutst
     </div>
     <div class="kpi-grid">
       <div class="kpi"><div class="kpi-val">${INR(totalMainAmount)}</div><div class="kpi-lbl">Total Main Amount</div></div>
+      <div class="kpi" style="border-left-color:#f59e0b;"><div class="kpi-val" style="color:#b45309;">${INR(totalOutstanding)}</div><div class="kpi-lbl">Total Outstanding</div></div>
       <div class="kpi" style="border-left-color:#0ea5e9;"><div class="kpi-val" style="color:#0369a1;">${INR(grandDue)}</div><div class="kpi-lbl">${dueLbl}</div></div>
-      <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${INR(grandPaid)}</div><div class="kpi-lbl">${paidLbl}</div></div>
       <div class="kpi" style="border-left-color:#ef4444;"><div class="kpi-val" style="color:#b91c1c;">${INR(grandPending)}</div><div class="kpi-lbl">Total Balance to Pay</div></div>
+    </div>
+    <div class="kpi-grid" style="margin-top:-14px;">
+      <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${INR(grandPaid)}</div><div class="kpi-lbl">${paidLbl}</div></div>
+      <div class="kpi" style="border-left-color:#0ea5e9;"><div class="kpi-val" style="color:#0369a1;">${INR(grandCash)}</div><div class="kpi-lbl">💰 Collected in Cash</div></div>
+      <div class="kpi" style="border-left-color:#8b5cf6;"><div class="kpi-val" style="color:#7c3aed;">${INR(grandAdded)}</div><div class="kpi-lbl">🔄 Added to Loan</div></div>
     </div>
     <h2>${isMonthScope?`Interest Collection — ${monthLabel}`:'Full Interest History — All Borrowers'}</h2>
     <table>
-      <thead><tr><th>S.No</th><th>Customer Details</th><th>Guardian Details</th><th class="text-right">Current Loan Amount</th><th class="text-right">${dueLbl}</th><th class="text-right">${paidLbl}</th><th class="text-right">Pending</th><th>Remarks</th></tr></thead>
+      <thead><tr><th>S.No</th><th>Customer Details</th><th>Loan ID</th><th>Guardian Details</th><th>Nominee Details</th><th class="text-right">Loan Amount</th><th class="text-right">Outstanding</th><th class="text-right">Rate</th><th class="text-right">${dueLbl}</th><th class="text-right">💰 Cash</th><th class="text-right">🔄 Added</th><th class="text-right">Pending</th><th>Status</th></tr></thead>
       <tbody>
-        ${rows.map(r=>`<tr><td>${r.sn}</td><td><div style="font-weight:600;">${r.b.borrowerName||'—'}</div><div style="font-size:10px;color:#6b7280;">${r.b.phone||'—'}</div></td><td><div>${r.b.guardianName||'—'}</div><div style="font-size:10px;color:#6b7280;">${r.b.guardianPhone||'—'}</div></td><td class="text-right">${INR(r.b.loanAmount)}</td><td class="text-right">${INR(r.totalInterestDue)}</td><td class="text-right text-green">${INR(r.totalPaid)}</td><td class="text-right ${r.pendingToCollect>0?'text-red':'text-green'}">${INR(r.pendingToCollect)}</td><td style="font-size:10px;">${r.remarksList||'—'}</td></tr>`).join('')}
-        <tr class="total-row"><td colspan="3">TOTAL</td><td class="text-right">${INR(totalMainAmount)}</td><td class="text-right">${INR(grandDue)}</td><td class="text-right">${INR(grandPaid)}</td><td class="text-right">${INR(grandPending)}</td><td></td></tr>
+        ${rows.map(r=>`<tr>
+          <td>${r.sn}</td>
+          <td><div style="font-weight:600;">${r.b.borrowerName||'—'}</div><div style="font-size:10px;color:#6b7280;">${r.b.phone||'—'}</div></td>
+          <td style="font-family:monospace;font-size:10.5px;">${r.b.loanId||'—'}</td>
+          <td><div>${r.b.guardianName||'—'}</div><div style="font-size:10px;color:#6b7280;">${r.b.guardianPhone||'—'}</div></td>
+          <td><div>${r.b.nomineeName||'—'}</div><div style="font-size:10px;color:#6b7280;">${r.b.nomineePhone||'—'}</div></td>
+          <td class="text-right">${INR(r.b.loanAmount)}</td>
+          <td class="text-right ${r.out>0?'text-amber':'text-green'}">${INR(r.out)}</td>
+          <td class="text-right">${r.b.interestRate||0}%/mo</td>
+          <td class="text-right">${INR(r.totalInterestDue)}</td>
+          <td class="text-right text-green">${r.cashPart>0?INR(r.cashPart):'—'}</td>
+          <td class="text-right text-blue">${r.addedPart>0?INR(r.addedPart):'—'}</td>
+          <td class="text-right ${r.pendingToCollect>0?'text-red':'text-green'}">${INR(r.pendingToCollect)}</td>
+          <td><span class="badge ${r.b.status==='Active'?'badge-green':'badge-gray'}">${r.b.status||'—'}</span></td>
+        </tr>`).join('')}
+        <tr class="total-row"><td colspan="5">TOTAL</td><td class="text-right">${INR(totalMainAmount)}</td><td class="text-right">${INR(totalOutstanding)}</td><td></td><td class="text-right">${INR(grandDue)}</td><td class="text-right">${INR(grandCash)}</td><td class="text-right">${INR(grandAdded)}</td><td class="text-right">${INR(grandPending)}</td><td></td></tr>
       </tbody>
     </table>
     <div class="footer"><span>EC Fin 360 Finance Ledger</span><span>Collect Interest Summary — ${isMonthScope?monthLabel:'All Time'}</span></div>
@@ -1275,7 +1379,7 @@ export function printEMILoanReport(loan, sched){
         <div class="logo">EC Fin 360 · EMI Loan Report</div>
         <div class="meta" style="text-align:left;margin-top:4px;">Generated: ${now()}</div>
       </div>
-      <div class="meta">CONFIDENTIAL<br/>EMI ID: ${loan.emiId||loan.id?.slice(-8)||'—'}</div>
+      <div class="meta">CONFIDENTIAL<br/>EMI ID: ${loan.emiId||loan.id?.slice(-8)||'—'}${loan.guardianName?`<br/>Guardian: ${loan.guardianName}${loan.guardianPhone?' · '+loan.guardianPhone:''}`:''}${loan.nomineeName?`<br/>Nominee: ${loan.nomineeName}${loan.nomineePhone?' · '+loan.nomineePhone:''}`:''}</div>
     </div>
 
     <div class="section-photo">
@@ -1287,6 +1391,9 @@ export function printEMILoanReport(loan, sched){
         <div style="font-size:12px;color:#6b7280;margin-top:3px;">
           ${loan.phone||''} ${badgeSt(loan.status)}
         </div>
+        ${loan.address?`<div style="font-size:11px;color:#9ca3af;margin-top:2px;">${loan.address}</div>`:''}
+        ${loan.guardianName?`<div style="font-size:11px;color:#7c3aed;margin-top:2px;">🛡️ Guardian: ${loan.guardianName}${loan.guardianPhone?' · '+loan.guardianPhone:''}</div>`:''}
+        ${loan.nomineeName?`<div style="font-size:11px;color:#0369a1;margin-top:2px;">👤 Nominee: ${loan.nomineeName}${loan.nomineePhone?' · '+loan.nomineePhone:''}</div>`:''}
       </div>
     </div>
 
@@ -1314,6 +1421,29 @@ export function printEMILoanReport(loan, sched){
         <div class="info-row"><span class="info-lbl">Outstanding Balance</span><span class="info-val ${outstanding>0?'text-amber':'text-green'}">${INR(outstanding)}</span></div>
       </div>
     </div>
+
+    ${loan.guardianName?`
+    <h2>Guardian Details</h2>
+    <div class="info-grid">
+      <div>
+        <div class="info-row"><span class="info-lbl">Guardian Name</span><span class="info-val">${loan.guardianName}</span></div>
+        <div class="info-row"><span class="info-lbl">Guardian Phone</span><span class="info-val">${loan.guardianPhone||'—'}</span></div>
+      </div>
+      <div>
+        <div class="info-row"><span class="info-lbl">Guardian Address</span><span class="info-val">${loan.guardianAddress||'—'}</span></div>
+      </div>
+    </div>`:''}
+
+    ${loan.nomineeName?`
+    <h2>Nominee Details</h2>
+    <div class="info-grid">
+      <div>
+        <div class="info-row"><span class="info-lbl">Nominee Name</span><span class="info-val">${loan.nomineeName}</span></div>
+      </div>
+      <div>
+        <div class="info-row"><span class="info-lbl">Nominee Mobile Number</span><span class="info-val">${loan.nomineePhone||'—'}</span></div>
+      </div>
+    </div>`:''}
 
     <h2>EMI Collection History (${rows.length} periods)</h2>
     <p style="font-size:11px;color:#6b7280;margin:-6px 0 10px;">Each row shows the period's due date, how many days late it was paid (delay), the amount actually paid, and the exact payment date — a clear before/after view of every instalment.</p>
@@ -1439,26 +1569,29 @@ export function printUserFullHistory(customer, linkedData, txns){
     </div>
 
     ${section('💰', 'Deposits', '#bf5af2', deposits, d => `
-      <table style="margin-bottom:16px;">
+      <table style="margin-bottom:${(d.guardianName||d.nomineeName)?0:16}px;">
         <thead><tr><th>Deposit ID</th><th class="text-right">Principal</th><th class="text-right">Rate</th><th>Start Date</th><th>Status</th></tr></thead>
         <tbody><tr><td style="font-family:monospace;">${d.depositId||d.id}</td><td class="text-right">${INR(d.depositAmount)}</td><td class="text-right">${d.interestRate||0}%/mo</td><td>${fmtDate(d.startDate)}</td><td><span class="badge ${d.status==='Active'?'badge-green':'badge-gray'}">${d.status||'—'}</span></td></tr></tbody>
       </table>
+      ${(d.guardianName||d.nomineeName)?`<p style="font-size:10.5px;color:#6b7280;margin:0 0 16px;">${d.guardianName?`🛡️ <strong>Guardian:</strong> ${d.guardianName}${d.guardianPhone?' · '+d.guardianPhone:''}`:''}${d.guardianName&&d.nomineeName?'&nbsp;&nbsp;·&nbsp;&nbsp;':''}${d.nomineeName?`👤 <strong>Nominee:</strong> ${d.nomineeName}${d.nomineePhone?' · '+d.nomineePhone:''}`:''}</p>`:''}
       ${byParent(d.id).length>0?`<table style="margin-bottom:16px;"><thead><tr><th>Date</th><th>Transaction</th><th class="text-right">Amount</th><th>Remarks</th></tr></thead><tbody>${byParent(d.id).map(txnRow).join('')}</tbody></table>`:''}
     `)}
 
     ${section('📋', 'Loans', '#0a84ff', loans, l => `
-      <table style="margin-bottom:16px;">
+      <table style="margin-bottom:${(l.guardianName||l.nomineeName)?0:16}px;">
         <thead><tr><th>Loan ID</th><th class="text-right">Amount</th><th class="text-right">Rate</th><th>Start Date</th><th>Status</th></tr></thead>
         <tbody><tr><td style="font-family:monospace;">${l.loanId||l.id}</td><td class="text-right">${INR(l.loanAmount)}</td><td class="text-right">${l.interestRate||0}%/mo</td><td>${fmtDate(l.loanStartDate)}</td><td><span class="badge ${l.status==='Active'?'badge-green':'badge-gray'}">${l.status||'—'}</span></td></tr></tbody>
       </table>
+      ${(l.guardianName||l.nomineeName)?`<p style="font-size:10.5px;color:#6b7280;margin:0 0 16px;">${l.guardianName?`🛡️ <strong>Guardian:</strong> ${l.guardianName}${l.guardianPhone?' · '+l.guardianPhone:''}`:''}${l.guardianName&&l.nomineeName?'&nbsp;&nbsp;·&nbsp;&nbsp;':''}${l.nomineeName?`👤 <strong>Nominee:</strong> ${l.nomineeName}${l.nomineePhone?' · '+l.nomineePhone:''}`:''}</p>`:''}
       ${byParent(l.id).length>0?`<table style="margin-bottom:16px;"><thead><tr><th>Date</th><th>Transaction</th><th class="text-right">Amount</th><th>Remarks</th></tr></thead><tbody>${byParent(l.id).map(txnRow).join('')}</tbody></table>`:''}
     `)}
 
     ${section('📆', 'EMI Loans', '#5e5ce6', emis, e => `
-      <table style="margin-bottom:16px;">
+      <table style="margin-bottom:${(e.guardianName||e.nomineeName)?0:16}px;">
         <thead><tr><th>EMI ID</th><th class="text-right">Loan Amount</th><th class="text-right">EMI/Period</th><th>Progress</th><th>Status</th></tr></thead>
         <tbody><tr><td style="font-family:monospace;">${e.emiId||e.id}</td><td class="text-right">${INR(e.loanAmount)}</td><td class="text-right">${INR(e.emiAmount)}</td><td>${e.paidPeriods||0}/${e.totalPeriods||0}</td><td><span class="badge ${e.status==='Active'?'badge-green':'badge-gray'}">${e.status||'—'}</span></td></tr></tbody>
       </table>
+      ${(e.guardianName||e.nomineeName)?`<p style="font-size:10.5px;color:#6b7280;margin:0 0 16px;">${e.guardianName?`🛡️ <strong>Guardian:</strong> ${e.guardianName}${e.guardianPhone?' · '+e.guardianPhone:''}`:''}${e.guardianName&&e.nomineeName?'&nbsp;&nbsp;·&nbsp;&nbsp;':''}${e.nomineeName?`👤 <strong>Nominee:</strong> ${e.nomineeName}${e.nomineePhone?' · '+e.nomineePhone:''}`:''}</p>`:''}
       ${byParent(e.id).length>0?`<table style="margin-bottom:16px;"><thead><tr><th>Date</th><th>Transaction</th><th class="text-right">Amount</th><th>Remarks</th></tr></thead><tbody>${byParent(e.id).map(txnRow).join('')}</tbody></table>`:''}
     `)}
 
@@ -1523,7 +1656,7 @@ export function printOverallDashboardReport(d){
         <div class="info-row"><span class="info-lbl">+ Deposit Fine</span><span class="info-val text-blue">${INR(d.depositFineIncome)}</span></div>
       </div>
       <div>
-        <div class="info-row"><span class="info-lbl">− Interest Paid to Depositors</span><span class="info-val text-red">${INR(d.depInterestGiven)}</span></div>
+        <div class="info-row"><span class="info-lbl">− Interest Paid to Depositors (cash)</span><span class="info-val text-red">${INR(d.depInterestCashGiven!=null?d.depInterestCashGiven:d.depInterestGiven)}</span></div>
         <div class="info-row"><span class="info-lbl">− Expenses</span><span class="info-val text-red">${INR(d.totalExpenses)}</span></div>
         <div class="info-row"><span class="info-lbl">Combined Net Profit</span><span class="info-val ${(d.combinedNetProfit||0)>=0?'text-green':'text-red'}">${(d.combinedNetProfit||0)>=0?'+':'-'}${INR(Math.abs(d.combinedNetProfit||0))}</span></div>
       </div>
@@ -1554,14 +1687,18 @@ export function printOverallDashboardReport(d){
 // same data object the page already built for its own render, and `label` is
 // the human month label shown in the page header (e.g. "September 2026"). ─────
 export function printMonthDashboardReport(d, label){
-  const emiSection = (d.activeEmiCount||0)>0 ? `
+  // BUG FIX: was gated on `(d.activeEmiCount||0)>0` — a closed EMI loan made
+  // this whole section (including that month's real Net Profit (EMI)) vanish
+  // from the exported PDF too, same as the on-screen page. Loans/Deposits
+  // sections are never gated like this, so EMI now matches — always printed.
+  const emiSection = `
     <h2>📆 EMI Loans — This Month</h2>
     <div class="kpi-grid">
-      <div class="kpi"><div class="kpi-val">${INR(d.monthlyEmiPrincipal)}</div><div class="kpi-lbl">Total Loan Amount</div><div class="kpi-sub">${d.activeEmiCount||0} active EMI loans</div></div>
+      <div class="kpi"><div class="kpi-val">${INR(d.monthlyEmiPrincipal)}</div><div class="kpi-lbl">Total Loan Amount</div><div class="kpi-sub">${d.activeEmiCount||0} active EMI loan${(d.activeEmiCount||0)!==1?'s':''}</div></div>
       <div class="kpi" style="border-left-color:#0ea5e9;"><div class="kpi-val" style="color:#0369a1;">${INR(d.totalEmiCollected)}</div><div class="kpi-lbl">Total Collected</div><div class="kpi-sub">Fine excluded</div></div>
       <div class="kpi" style="border-left-color:#ef4444;"><div class="kpi-val" style="color:#b91c1c;">${INR(d.emiBalanceMonth)}</div><div class="kpi-lbl">Balance to Collect</div></div>
       <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${INR(d.emiNetProfitMonth)}</div><div class="kpi-lbl">Net Profit (EMI)</div></div>
-    </div>` : '';
+    </div>`;
 
   const body = `
     <div class="header">
@@ -1578,8 +1715,9 @@ export function printMonthDashboardReport(d, label){
     </div>
 
     <h2>📋 Loans — This Month</h2>
-    <div class="kpi-grid">
+    <div class="kpi-grid" style="grid-template-columns:repeat(5,1fr);">
       <div class="kpi"><div class="kpi-val">${INR(d.monthlyLoanPrincipal)}</div><div class="kpi-lbl">Total Loan Amount</div><div class="kpi-sub">${d.activeBorrowersCount||0} active loans</div></div>
+      <div class="kpi" style="border-left-color:#5e5ce6;"><div class="kpi-val" style="color:#4338ca;">${INR(d.totalReceivable)}</div><div class="kpi-lbl">Total Interest Receivable</div><div class="kpi-sub">Due this month, before collection</div></div>
       <div class="kpi" style="border-left-color:#0ea5e9;"><div class="kpi-val" style="color:#0369a1;">${INR(d.totalCollected)}</div><div class="kpi-lbl">Total Collected</div></div>
       <div class="kpi" style="border-left-color:#ef4444;"><div class="kpi-val" style="color:#b91c1c;">${INR(d.loanBalanceMonth)}</div><div class="kpi-lbl">Balance to Collect</div></div>
       <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${INR(d.loanNetProfitMonth)}</div><div class="kpi-lbl">Net Profit (Loans)</div></div>
@@ -1603,7 +1741,7 @@ export function printMonthDashboardReport(d, label){
         <div class="info-row"><span class="info-lbl">+ Fine Income</span><span class="info-val text-blue">${INR(d.curMonthFineIncome)}</span></div>
       </div>
       <div>
-        <div class="info-row"><span class="info-lbl">− Interest Paid to Depositors</span><span class="info-val text-red">${INR(d.totalPaidOut)}</span></div>
+        <div class="info-row"><span class="info-lbl">− Interest Paid to Depositors (cash)</span><span class="info-val text-red">${INR(d.totalPaidOutCash!=null?d.totalPaidOutCash:d.totalPaidOut)}</span></div>
         <div class="info-row"><span class="info-lbl">− Expenses</span><span class="info-val text-red">${INR(d.totalExpensesMonth)}</span></div>
         <div class="info-row"><span class="info-lbl">Net Profit — ${label}</span><span class="info-val ${(d.combinedNetProfitMonth||0)>=0?'text-green':'text-red'}">${(d.combinedNetProfitMonth||0)>=0?'+':'-'}${INR(Math.abs(d.combinedNetProfitMonth||0))}</span></div>
       </div>

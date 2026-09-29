@@ -10,7 +10,7 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, Edit2, Trash2, Building2 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import {
-  getOtherCompanies, addOtherCompany, updateOtherCompany, deleteOtherCompany, getOtherChits,
+  getOtherCompanies, addOtherCompany, updateOtherCompany, deleteOtherCompany, getOtherChits, getOtherChitPayments,
 } from '../../utils/cf_firestore';
 import { formatCurrency } from '../../utils/cf_format';
 import { tokens, Card, PageHeader, StatCard, Button, Modal, FormField, Input } from '../../components/chitfund/UI';
@@ -23,6 +23,7 @@ export default function OtherChitCompanies() {
   const nav = useNavigate();
   const [companies, setCompanies] = useState([]);
   const [chits, setChits] = useState([]);
+  const [payMap, setPayMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
@@ -33,7 +34,16 @@ export default function OtherChitCompanies() {
   useEffect(() => {
     if (!user) return;
     Promise.all([getOtherCompanies(user.uid), getOtherChits(user.uid)])
-      .then(([co, ch]) => { setCompanies(co); setChits(ch); setLoading(false); })
+      .then(async ([co, ch]) => {
+        setCompanies(co); setChits(ch);
+        // Needed to tell "cashed but still owes" apart from "actually fully paid
+        // off" (see chitCountFor/valueFor below) — same distinction every other
+        // Joined-Chits screen makes.
+        const pm = {};
+        await Promise.all(ch.map(async c => { pm[c.id] = await getOtherChitPayments(c.id); }));
+        setPayMap(pm);
+        setLoading(false);
+      })
       .catch(() => setLoading(false));
   }, [user]);
 
@@ -70,9 +80,14 @@ export default function OtherChitCompanies() {
 
   if (loading) return <div style={{ padding: 60, textAlign: 'center', color: tokens.textSub }}>Loading…</div>;
 
-  // Closed/cashed chits excluded from these counts — matches every other page.
-  const chitCountFor = (companyName) => chits.filter(c => c.companyName === companyName && c.myStatus !== 'Cashed').length;
-  const valueFor = (companyName) => chits.filter(c => c.companyName === companyName && c.myStatus !== 'Cashed').reduce((s, c) => s + (c.totalChitValue || 0), 0);
+  // BUG FIX: this used to exclude every "Cashed" chit outright — the same
+  // mistaken assumption fixed everywhere else — so a chit you'd already cashed
+  // but that still owes several more rounds disappeared from a company's count
+  // and value entirely. Now only a chit that's actually fully paid off drops
+  // out, matching every other Joined-Chits screen for real this time.
+  const isFullyPaidOff = c => (payMap[c.id] || []).filter(p => p.status === 'Paid').length >= (c.totalMembers || 0);
+  const chitCountFor = (companyName) => chits.filter(c => c.companyName === companyName && !isFullyPaidOff(c)).length;
+  const valueFor = (companyName) => chits.filter(c => c.companyName === companyName && !isFullyPaidOff(c)).reduce((s, c) => s + (c.totalChitValue || 0), 0);
 
   return (
     <div>
@@ -81,7 +96,7 @@ export default function OtherChitCompanies() {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 13, marginBottom: 20 }}>
         <StatCard label="Total Companies" value={companies.length} icon={Building2} accent={tokens.blue} />
-        <StatCard label="Total Chits Joined" value={chits.filter(c => c.myStatus !== 'Cashed').length} sub="across all companies (active)" icon={Building2} accent="#5521B5" />
+        <StatCard label="Total Chits Joined" value={chits.filter(c => !isFullyPaidOff(c)).length} sub="across all companies (still owe something)" icon={Building2} accent="#5521B5" />
       </div>
 
       {companies.length === 0 ? (

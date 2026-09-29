@@ -239,7 +239,9 @@ export default function DepositorSettlement(){
             fine:0,totalPayout:periodCash,
             status:'Paid',addedToDeposit:periodCompound>0,addedAmount:periodCompound,
             paymentDate:pf.date,paymentMode:pf.mode,settlementBatchId:batchId,
-            remarks:pf.remarks,month:period.month,updatedAt:serverTimestamp()
+            remarks:pf.remarks,month:period.month,
+            wasUndone:false, // fresh Settle clears any earlier Undo marker
+            updatedAt:serverTimestamp()
           };
           let payDocId=existingP?.id;
           if(existingP){await updateDoc(doc(db,'deposit_payments',existingP.id),data);}
@@ -260,7 +262,9 @@ export default function DepositorSettlement(){
             status:'Partial',addedToDeposit:periodPartialCompound>0,addedAmount:periodPartialCompound,
             paymentDate:pf.date,paymentMode:pf.mode,settlementBatchId:batchId,
             remarks:pf.remarks?`${pf.remarks} (partial from bulk settlement)`:'Partial from bulk settlement',
-            month:partialPeriod.month,updatedAt:serverTimestamp()
+            month:partialPeriod.month,
+            wasUndone:false, // fresh Settle clears any earlier Undo marker
+            updatedAt:serverTimestamp()
           };
           let partialPayDocId=existingPartial?.id;
           if(existingPartial){await updateDoc(doc(db,'deposit_payments',existingPartial.id),partialData);}
@@ -363,7 +367,9 @@ export default function DepositorSettlement(){
         status:newStatus,addedToDeposit:compoundVal>0,addedAmount:compoundVal,
         paymentDate:paid?pf.date:null,paymentMode:paid?pf.mode:null,
         settlementBatchId:batchId,
-        remarks:pf.remarks,month:slot.month,updatedAt:serverTimestamp()
+        remarks:pf.remarks,month:slot.month,
+        wasUndone:false, // any save here (Settle or Mark Unpaid) clears the Undo marker
+        updatedAt:serverTimestamp()
       };
 
       let payDocId=existing?.id;
@@ -466,13 +472,23 @@ export default function DepositorSettlement(){
     setUndoingKey(batchId);
     try{
       // 1) Every period this action settled goes back to Pending.
+      // BUG FIX: this used to bake "(undone)" / "Undone" straight into the shared
+      // `remarks` field — the same field that pre-fills the Accept Payment popup's
+      // Remarks box and that a fresh Settle writes straight back out. So once a
+      // period was undone, "Undone" stuck to it FOREVER, including after the
+      // person actually went and collected the payment again — an already-repaid
+      // period looked permanently stuck on "Undone". Undo is a status change
+      // (Paid → Pending), not a note the person wrote, so it no longer touches
+      // `remarks` — any real remark the person typed is left exactly as it was,
+      // and a fresh Settle now correctly shows Paid with nothing left over.
+      // `wasUndone`/`undoneAt` record the reversal for its own sake instead.
       const touchedPayments=Object.values(payments).filter(p=>p.settlementBatchId===batchId);
       for(const p of touchedPayments){
         await updateDoc(doc(db,'deposit_payments',p.id),{
           amountPaid:0,addedAmount:0,fine:0,totalPayout:0,
           status:'Unpaid',addedToDeposit:false,
           paymentDate:null,paymentMode:null,compoundAdditionId:null,compoundLedgerEntryId:null,
-          remarks:p.remarks?`${p.remarks} (undone)`:'Undone',
+          wasUndone:true,undoneAt:serverTimestamp(),
           updatedAt:serverTimestamp()
         });
       }
@@ -701,9 +717,12 @@ export default function DepositorSettlement(){
                   {pendingSlots.length>0&&(
                     <div style={{padding:'4px 10px',borderRadius:99,background:'rgba(255,59,48,0.08)',border:'1px solid rgba(255,59,48,0.2)',fontSize:12,fontWeight:700,color:'#ff3b30'}}>{pendingSlots.length} pending</div>
                   )}
-                  {/* Axis (⋮) button — the ONLY way to accept a payment or undo one. The
-                      monthly cards below are now a pure read-only status view; nothing there
-                      is clickable, so nothing gets triggered by accidentally tapping a card. */}
+                  {/* Axis (⋮) button — a shortcut straight to the latest pending period (or
+                      the last period if everything's settled) plus this depositor's undo
+                      ledger. The monthly cards below are ALSO clickable now — any card, paid
+                      or pending — exactly like Interest Collection's month grid, so a
+                      specific settled period can be reopened (to review, edit the split, or
+                      Mark Unpaid) without having to hunt for it in the ledger list first. */}
                   {slots.length>0&&(
                     <button title="Accept Payment / Undo" onClick={e=>{
                       e.stopPropagation();
@@ -750,13 +769,16 @@ export default function DepositorSettlement(){
                         const isCur=slot.month===curMo;
                         const isFut=slot.isFuture;
                         const dOD=isFut?0:getDaysOverdue(slot.dueDate);
-                        // Click a card to pay through it — same calendar-picker logic as inside
-                        // the Accept Payment popup, just started from here: clicking, say, August
-                        // opens the popup already scoped to settle everything from the earliest
-                        // pending month cumulatively up through August, and this card turns blue
-                        // to show it's the one selected. Only pending/overdue/partial cards are
-                        // clickable — a fully Paid or fully-compounded month has nothing to do.
-                        const isClickable=!isFut&&!isPaid&&!isAdded;
+                        // Click a card to open it — pending/overdue/partial cards open the
+                        // calendar-picker "pay through" flow inside Accept Payment (clicking,
+                        // say, August scopes settlement from the earliest pending month
+                        // cumulatively up through August, card turns blue to show it's picked).
+                        // A Paid/compounded card, or a future "advance allowed" card, is
+                        // clickable too now — matching Interest Collection's month grid exactly
+                        // — opening straight to that single period's own details so it can be
+                        // reviewed, its cash/compound split edited, paid in advance, or Mark
+                        // Unpaid used, without going through the ⋮ ledger list first.
+                        const isClickable=true;
                         const isPayTarget=modal&&modal.depositor?.id===dep.id&&(payThroughMonth?payThroughMonth===slot.month:modal.slot?.month===slot.month);
                         const bg=isPayTarget?'rgba(0,122,255,0.14)':isPaid?'rgba(52,199,89,0.08)':isPartial?'rgba(255,149,0,0.08)':isAdded?'rgba(88,86,214,0.08)':isFut?'rgba(0,0,0,0.02)':isCur?'rgba(0,122,255,0.08)':dOD>2?'rgba(255,59,48,0.06)':'rgba(0,0,0,0.02)';
                         const border=isPayTarget?'2px solid #007aff':isPaid?'1.5px solid rgba(52,199,89,0.3)':isPartial?'1.5px solid rgba(255,149,0,0.3)':isAdded?'1.5px solid rgba(88,86,214,0.3)':isFut?'1px dashed rgba(0,0,0,0.12)':isCur?'2px solid rgba(0,122,255,0.4)':dOD>2?'1.5px solid rgba(255,59,48,0.25)':'1px solid rgba(0,0,0,0.08)';
@@ -779,6 +801,10 @@ export default function DepositorSettlement(){
                             {isPartial&&<div style={{fontSize:9.5,color:'#ff9500',marginTop:2}}>{formatCurrency(Math.max(0,(p.amountDue||0)-(p.amountPaid||0)-(p.addedAmount||0)))} remaining</div>}
                             {isFut&&!isPaid&&<div style={{fontSize:9.5,color:'var(--text-secondary)',marginTop:2}}>advance allowed</div>}
                             {!isFut&&!isPaid&&!isPartial&&dOD>2&&!isAdded&&<div style={{fontSize:9.5,color:'#ff3b30',fontWeight:600,marginTop:2}}>{dOD}d late</div>}
+                            {/* Undo history is its own small tag, separate from the person's own
+                                remarks — it clears itself the moment this period is settled again
+                                (wasUndone resets to false on every fresh Settle/Mark Unpaid). */}
+                            {p?.wasUndone&&!isPaid&&!isPartial&&<div style={{fontSize:9,color:'#8e8e93',marginTop:2}}>↺ previously undone</div>}
                             {p?.remarks&&<div style={{fontSize:9,color:'var(--text-tertiary)',marginTop:3,fontStyle:'italic',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={p.remarks}>📝 {p.remarks}</div>}
                           </div>
                         );

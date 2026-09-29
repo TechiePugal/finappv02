@@ -38,6 +38,35 @@ export function getEffectiveOutstanding(liveAmount, additions, repaidTotal, targ
   return Math.max(0, outstanding - notYetEffective);
 }
 
+// ── "As of" balance vs. "earning interest for" balance — these are two
+// DIFFERENT questions with two DIFFERENT correct answers, and this is the
+// single logic mistake that was showing up on both the deposit and the loan
+// side: an addition made in September was being excluded from September
+// everywhere, INCLUDING the plain "what's the balance now" figure. But the
+// balance itself changes the moment money is added — if ₹13,500 interest got
+// compounded into a deposit on Sep 29, the deposit genuinely IS ₹1,13,500 for
+// the rest of September; there's no sense in which it was still ₹1,00,000 that
+// day. What legitimately waits until October is INTEREST — money added during
+// September hasn't been held for a full month yet, so it doesn't EARN anything
+// for September, only from October onward. Same rule for a loan: interest
+// compounded into the principal in September raises the loan's actual balance
+// starting September itself; only the INTEREST CALCULATION on that raised
+// balance waits until October.
+//
+// getEffectiveOutstanding (above) answers the interest question — an addition
+// only counts once the month has fully turned over (`>=` excludes the addition's
+// own month too). getPrincipalAsOfMonth answers the balance question — an
+// addition counts starting the very month it was dated (`>` excludes only
+// months strictly BEFORE it), so the month it was added in already shows the
+// new total, and only the months before it still show the old, smaller one.
+export function getPrincipalAsOfMonth(liveAmount, additions, repaidTotal, targetMonth) {
+  let balance = Math.max(0, (liveAmount||0) - (repaidTotal||0));
+  const notYetHappened = (additions||[])
+    .filter(a => a.date && a.date.slice(0,7) > targetMonth)
+    .reduce((s,a) => s + (a.amount||0), 0);
+  return Math.max(0, balance - notYetHappened);
+}
+
 /** Interest due for a LOAN in a specific month (borrower_master + loan_additions). */
 export function calcLoanInterestForMonth(borrower, additions, repaidTotal, targetMonth) {
   const outstanding = getEffectiveOutstanding(borrower.loanAmount||0, additions, repaidTotal, targetMonth);

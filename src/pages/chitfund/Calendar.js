@@ -235,7 +235,13 @@ export default function CalendarPage() {
       chitName: e.chitName, round: e.auctionNumber, date: e.auctionDate,
       taken: e.status === 'Completed', amountNeeded: e.status === 'Completed' ? 0 : (e.perHeadValue || 0),
     }));
-    const joinedRows = joinedChits.filter(c => c.myStatus !== 'Cashed').map(c => {
+    // BUG FIX: excluded every cashed joined chit from this export outright — a
+    // chit that's cashed but still owes future rounds needs to appear here just
+    // as much as an active one; only a fully paid-off chit has nothing left.
+    const joinedRows = joinedChits.filter(c => {
+      const paidCount = (joinedPays[c.id] || []).filter(p => p.status === 'Paid').length;
+      return paidCount < (c.totalMembers || 0);
+    }).map(c => {
       const pays = joinedPays[c.id] || [];
       const thisMoPay = pays.find(p => p.month === moKey);
       const taken = thisMoPay && thisMoPay.status === 'Paid';

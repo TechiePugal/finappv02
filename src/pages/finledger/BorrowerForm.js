@@ -13,6 +13,33 @@ import {scopeToUser} from '../../utils/scopeHelper';
 
 function genId(){return 'LOAN-'+Date.now().toString(36).toUpperCase();}
 
+// ── Loan Schedule preview — same idea as the Depositor form's "Payout
+// Schedule": a month-by-month look-ahead of what interest will be due, purely
+// for planning while filling out the form. A loan has no fixed maturity like a
+// deposit, so this previews a flat 36 months from the start date, at the
+// CURRENT amount/rate with no compounding — it's a plan, not a live ledger;
+// the actual monthly due figure (and any date-aware compounding effect from a
+// later top-up) is computed for real by utils/interestCalc.js once the loan
+// exists and money moves through Interest Collection.
+function genLoanSchedule(amt,rate,start,months=36){
+  if(!amt||!rate||!start) return [];
+  const p=parseFloat(amt), r=parseFloat(rate);
+  if(!p||!r) return [];
+  const slots=[];
+  let cur=new Date(start);
+  for(let i=0;i<months;i++){
+    const next=new Date(cur); next.setMonth(next.getMonth()+1);
+    slots.push({
+      idx:i+1,
+      dueDate: next.toISOString().split('T')[0],
+      interest: Math.round(p*(r/100)),
+      principal: Math.round(p),
+    });
+    cur=next;
+  }
+  return slots;
+}
+
 export default function BorrowerForm(){
   const {user}=useAuth();
   const{id}=useParams();const nav=useNavigate();const isEdit=!!id;
@@ -22,14 +49,21 @@ export default function BorrowerForm(){
     loanAmount:'', interestRate:'', loanStartDate:'', agreementDate:'', agreementExpiryDate:'',
     securityType:'Documents Collected', securityTypeOther:'', securityValue:'', status:'Active', notes:'',
     // Guardian details
-    guardianName:'', guardianPhone:'', guardianAddress:''
+    guardianName:'', guardianPhone:'', guardianAddress:'',
+    // Nominee details (simple, independent of the Guardian — just a name + mobile for reports)
+    nomineeName:'', nomineePhone:''
   });
   const[files,setFiles]=useState({check:null,bond:null,agreement:null,land:null});
   const[existing,setExisting]=useState({});
   const[origStatus,setOrigStatus]=useState(null);
   const[loading,setLoading]=useState(false);
+  const[schedule,setSchedule]=useState([]);
+  const[showAllPayouts,setShowAllPayouts]=useState(false);
 
   useEffect(()=>{if(isEdit)loadData();},[]);// eslint-disable-line
+  useEffect(()=>{
+    setSchedule(genLoanSchedule(form.loanAmount,form.interestRate,form.loanStartDate));
+  },[form.loanAmount,form.interestRate,form.loanStartDate]);
 
   async function loadData(){
     const s=await getDoc(doc(db,'borrower_master',id));
@@ -43,7 +77,8 @@ export default function BorrowerForm(){
         agreementExpiryDate:d.agreementExpiryDate||'',
         securityType:d.securityType||'Documents Collected', securityTypeOther:d.securityTypeOther||'',
         securityValue:d.securityValue||'', status:d.status||'Active', notes:d.notes||'',
-        guardianName:d.guardianName||'', guardianPhone:d.guardianPhone||'', guardianAddress:d.guardianAddress||''
+        guardianName:d.guardianName||'', guardianPhone:d.guardianPhone||'', guardianAddress:d.guardianAddress||'',
+        nomineeName:d.nomineeName||'', nomineePhone:d.nomineePhone||''
       });
       setOrigStatus(d.status||'Active');
       const bd=await getBorrowerDocs(id);
@@ -122,6 +157,7 @@ export default function BorrowerForm(){
   const monthly=(parseFloat(form.loanAmount)||0)*(parseFloat(form.interestRate)||0)/100;
   const coverage=form.securityValue&&form.loanAmount?((parseFloat(form.securityValue)/parseFloat(form.loanAmount))*100).toFixed(0):null;
   const adequate=coverage&&parseFloat(coverage)>=100;
+  const displayPayouts=showAllPayouts?schedule:schedule.slice(0,6);
 
   return(
     <div className="page-enter">
@@ -199,6 +235,10 @@ export default function BorrowerForm(){
             </div>
             <div style={{marginTop:12}}>
               <FormField label="Address"><Input value={form.address} onChange={e=>set('address',e.target.value)} placeholder="Full address"/></FormField>
+            </div>
+            <div style={{marginTop:12,display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+              <FormField label="Nominee Name"><Input value={form.nomineeName} onChange={e=>set('nomineeName',e.target.value)} placeholder="Nominee full name"/></FormField>
+              <FormField label="Nominee Mobile Number"><Input value={form.nomineePhone} onChange={e=>set('nomineePhone',e.target.value)} placeholder="9876543210" type="tel"/></FormField>
             </div>
             <div style={{marginTop:12}}>
               <FormField label="Notes">
@@ -323,12 +363,40 @@ export default function BorrowerForm(){
             {form.agreementDate&&<InfoRow label="Agreement Date" value={form.agreementDate}/>}
             {form.agreementExpiryDate&&<InfoRow label="Agreement Expiry" value={form.agreementExpiryDate}/>}
             {form.guardianName&&<InfoRow label="Guardian" value={form.guardianName}/>}
+            {form.nomineeName&&<InfoRow label="Nominee" value={form.nomineePhone?`${form.nomineeName} · ${form.nomineePhone}`:form.nomineeName}/>}
             <Divider/>
             <div style={{marginTop:4,padding:'14px',background:'rgba(52,199,89,0.06)',borderRadius:12,textAlign:'center'}}>
               <p style={{fontSize:12,color:'var(--green)',fontWeight:500,marginBottom:4}}>Monthly Interest</p>
               <p style={{fontSize:28,fontWeight:700,color:'var(--green)',letterSpacing:'-0.02em'}}>{monthly>0?formatCurrency(Math.round(monthly)):'₹0'}</p>
             </div>
           </Card>
+
+          {/* Loan Schedule — same idea as the Depositor form's Payout Schedule,
+              a month-by-month preview of interest due at the current amount/rate. */}
+          {schedule.length>0&&(
+            <Card>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+                <p style={{fontSize:14,fontWeight:700,color:'var(--text-primary)'}}>Loan Schedule</p>
+                <p style={{fontSize:11,color:'var(--text-secondary)'}}>{schedule.length} months (preview)</p>
+              </div>
+              {displayPayouts.map((p,i)=>(
+                <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'9px 10px',borderRadius:9,background:i%2===0?'rgba(118,118,128,0.04)':'transparent',marginBottom:2}}>
+                  <div>
+                    <p style={{fontSize:12.5,fontWeight:500,color:'var(--text-primary)'}}>{p.dueDate}</p>
+                    <p style={{fontSize:10.5,color:'var(--text-secondary)'}}>Month #{p.idx}</p>
+                  </div>
+                  <span style={{fontSize:14,fontWeight:700,color:'var(--green)'}}>{formatCurrency(p.interest)}</span>
+                </div>
+              ))}
+              {schedule.length>6&&(
+                <button type="button" onClick={()=>setShowAllPayouts(s=>!s)}
+                  style={{width:'100%',padding:'8px',background:'none',border:'1px solid rgba(0,122,255,0.2)',borderRadius:8,color:'var(--accent)',fontSize:12,cursor:'pointer',marginTop:6,fontFamily:'inherit'}}>
+                  {showAllPayouts?'Show Less':'Show All '+schedule.length+' Months'}
+                </button>
+              )}
+              <p style={{fontSize:10.5,color:'var(--text-tertiary)',marginTop:8}}>Preview only, at today's amount/rate — actual monthly interest is computed live from Interest Collection once the loan is active.</p>
+            </Card>
+          )}
         </div>
       </div>
     </div>

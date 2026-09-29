@@ -7,7 +7,7 @@ import {StatCard,Card,Badge,Button,formatCurrency,Loader,SectionHeader,ProgressB
 import { PageLoader } from '../../components/Skeleton';
 import {useAuth} from '../../contexts/AuthContext';
 import {scopeToUser} from '../../utils/scopeHelper';
-import {calcLoanInterestForMonth, calcDepositInterestForMonth} from '../../utils/interestCalc';
+import {calcLoanInterestForMonth, calcDepositInterestForMonth, isDepositDueMonth} from '../../utils/interestCalc';
 import {printOverallDashboardReport} from '../../utils/pdfReport';
 
 const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -115,23 +115,72 @@ export default function Dashboard(){
       // Interest + Fine, since both are real income from this loan, never the repaid
       // principal (principal recovery isn't profit, it's just capital coming back).
       const loanTotalPrincipal = activeBors.reduce((s,b)=>s+(b.loanAmount||0),0); // sum of all active loan principal issued
-      const loanTotalDue = payDocs.reduce((s,p)=>s+(p.amountDue||0),0);
+      // BUG FIX (₹0 balance on a brand-new loan/deposit): this used to sum ONLY the
+      // `amountDue` stored on borrower_interest_payments docs — but a doc for a
+      // given month only gets created the first time that month is opened and
+      // saved in Collect Interest (even just an Undo). A loan that had NEVER been
+      // touched there had ZERO payment docs at all, so its real accrued interest —
+      // however many months of it — was completely invisible to "Balance to
+      // Collect", showing ₹0 for a loan that plainly owes interest. Interest
+      // Collection's and Settle Interest's own "Total Due" figures already handle
+      // this correctly: use the stored amountDue when a doc exists (historically
+      // accurate), else fall back to the same calcLoanInterestForMonth /
+      // calcDepositInterestForMonth estimate. Same fallback now applied here, walking
+      // every month from the loan/deposit's start up to the current month.
+      const payDocByBorrowerMonth = {};
+      payDocs.forEach(p=>{ payDocByBorrowerMonth[`${p.borrowerId}_${p.month}`]=p; });
+      const setDocByDepositMonth = {};
+      setDocs.forEach(p=>{ setDocByDepositMonth[`${p.depositId}_${p.month}`]=p; });
+      function monthsUpToNow(startDate){
+        if(!startDate) return [];
+        const out=[]; let cur=new Date(startDate);
+        while(cur<=now){ out.push(`${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,'0')}`); cur.setMonth(cur.getMonth()+1); }
+        return out;
+      }
+      const loanTotalDue = bors.reduce((s,b)=>{
+        const repaid=(repsByBorrower[b.id]||[]).reduce((r,p)=>r+(p.repaidAmount||p.amount||0),0);
+        return s+monthsUpToNow(b.loanStartDate).reduce((ss,mo)=>{
+          const pp=payDocByBorrowerMonth[`${b.id}_${mo}`];
+          return ss+(pp&&pp.amountDue!=null?pp.amountDue:calcLoanInterestForMonth(b,loanAdditionsMap[b.id],repaid,mo));
+        },0);
+      },0);
       // BUG FIX: Interest Collection's new "add to loan principal" split (mirroring
       // the deposit side) records the compounded portion as addedAmount, separate
       // from amountPaid — a period settled entirely by adding to principal has
       // amountPaid:0 and would otherwise vanish from "Collected" here.
       const loanTotalCollected = payDocs.filter(p=>p.status==='Paid'||p.status==='Partial'||p.addedToLoan).reduce((s,p)=>s+(p.amountPaid||0)+(p.addedAmount||0),0);
       const loanBalance = Math.max(0,loanTotalDue-loanTotalCollected);
-      const loanNetProfit = loanTotalCollected + loanFineIncome; // interest + fine — never principal repaid
+      // PROFIT FIX: "Add to Loan Amount" (compounded interest) is NOT profit — no cash
+      // actually came in, it was just folded back into the loan's outstanding principal
+      // (to be collected later, in cash, when that larger balance is eventually repaid).
+      // loanTotalCollected above (cash+compounded) stays as-is for "Total Collected" /
+      // "Balance to Collect" displays, since compounding does reduce what's still due —
+      // but Net Profit must count ONLY the cash portion actually received.
+      const loanInterestCash = payDocs.filter(p=>p.status==='Paid'||p.status==='Partial'||p.addedToLoan).reduce((s,p)=>s+(p.amountPaid||0),0);
+      const loanNetProfit = loanInterestCash + loanFineIncome; // CASH interest + fine — never principal repaid, never compounded-not-yet-collected interest
 
       // ══ DEPOSITOR — Total Deposit / Interest to Give / Interest Given / Remaining ══
       const depTotalDeposit = totalDeposits;
-      const depInterestToGive = setDocs.reduce((s,p)=>s+(p.amountDue||0),0);
+      // Same fallback fix as loanTotalDue above — a deposit's due months only had a
+      // doc once Settle Interest had been opened and saved for that period at least
+      // once; a brand-new deposit with no doc yet showed ₹0 "Interest to Give"
+      // regardless of how much had actually accrued.
+      const depInterestToGive = deps.reduce((s,d)=>{
+        return s+monthsUpToNow(d.startDate).filter(mo=>isDepositDueMonth(d,mo)).reduce((ss,mo)=>{
+          const pp=setDocByDepositMonth[`${d.id}_${mo}`];
+          return ss+(pp&&pp.amountDue!=null?pp.amountDue:calcDepositInterestForMonth(d,depAdditionsMap[d.id],mo));
+        },0);
+      },0);
       // BUG FIX: same 'Partial' omission as curMonthSettled above — a partially
       // settled period's cash/compounded amount was dropped from "Interest Given"
       // entirely instead of counting what was actually collected so far.
       const depInterestGiven = setDocs.filter(p=>['Paid','Partial'].includes(p.status)||p.addedToDeposit).reduce((s,p)=>s+(p.amountPaid||0)+(p.addedAmount||0),0);
       const depInterestRemaining = Math.max(0,depInterestToGive-depInterestGiven);
+      // Symmetric to loanInterestCash above: interest compounded INTO a deposit (never
+      // paid out in cash) isn't a real cash expense either — it's just a bigger balance
+      // owed later. depInterestGiven (cash+compounded) stays for the "Interest Given" /
+      // "Interest Remaining" displays; profit math below uses cash-only.
+      const depInterestCashGiven = setDocs.filter(p=>['Paid','Partial'].includes(p.status)||p.addedToDeposit).reduce((s,p)=>s+(p.amountPaid||0),0);
 
       // 6-month chart data (use actual totals for current month)
       const chartData = Array.from({length:6},(_,i)=>{
@@ -187,7 +236,7 @@ export default function Dashboard(){
       // fine income above) minus interest paid to depositors, PLUS deposit-side fine
       // income (which has nowhere else to live, since deposits don't have their own
       // Net Profit card). Loan/EMI fine is NOT added again here — that would double-count it. ══
-      const combinedNetProfit = loanNetProfit + emiNetProfit - depInterestGiven + depositFineIncome - totalExpenses;
+      const combinedNetProfit = loanNetProfit + emiNetProfit - depInterestCashGiven + depositFineIncome - totalExpenses;
 
       // ══ OVERALL FINANCIAL SUMMARY (top of page) — exactly the formula requested:
       // Total Income = interest collected (loan + EMI) + fine (loan + EMI only —
@@ -196,10 +245,10 @@ export default function Dashboard(){
       // Total Cash Flow is a broader picture that ALSO nets principal movements —
       // deposits received (cash in) and loans/EMI issued (cash out) — not just
       // revenue, so it can differ from Net Profit even when both are "healthy". ══
-      const overallTotalIncome = loanTotalCollected + emiTotalCollected + loanFineIncome + emiFineIncome;
+      const overallTotalIncome = loanInterestCash + emiTotalCollected + loanFineIncome + emiFineIncome;
       const overallTotalExpense = totalExpenses; // operational expenses only — interest paid to depositors is shown as its own line
-      const overallNetProfit = overallTotalIncome - (overallTotalExpense + depInterestGiven);
-      const overallCashFlow = (overallTotalIncome + totalRepaid + totalDeposits) - (loanTotalPrincipal + emiTotalPrincipal + depInterestGiven + overallTotalExpense);
+      const overallNetProfit = overallTotalIncome - (overallTotalExpense + depInterestCashGiven);
+      const overallCashFlow = (overallTotalIncome + totalRepaid + totalDeposits) - (loanTotalPrincipal + emiTotalPrincipal + depInterestCashGiven + overallTotalExpense);
 
       const recent=[...bors].sort((a,b)=>(b.createdAt?.toMillis?.()??0)-(a.createdAt?.toMillis?.()??0)).slice(0,5);
 
@@ -214,8 +263,8 @@ export default function Dashboard(){
         coverage:totalOutstanding>0?((secVal/totalOutstanding)*100).toFixed(0):100,
         chartData, recent, emiProjData, emiMonthlyTotal, emiLoanCount:activeEmi.length,
         emiClosedCount:closedEmi.length, emiTotalIssued, emiTotalOutstanding,
-        loanTotalDue, loanTotalCollected, loanBalance, loanNetProfit, loanTotalPrincipal,
-        depTotalDeposit, depInterestToGive, depInterestGiven, depInterestRemaining,
+        loanTotalDue, loanTotalCollected, loanBalance, loanNetProfit, loanTotalPrincipal, loanInterestCash,
+        depTotalDeposit, depInterestToGive, depInterestGiven, depInterestRemaining, depInterestCashGiven,
         emiTotalToCollect, emiTotalCollected, emiBalance, emiNetProfit, emiTotalPrincipal,
         totalFineIncomeAllTime, curMonthFineIncome, combinedNetProfit,
         loanFineIncome, emiFineIncome, depositFineIncome, totalExpenses,

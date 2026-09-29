@@ -194,9 +194,14 @@ function analyseJoinedChit(chit, payments) {
   }
 
   // Check last month
+  // BUG FIX: this used to go silent the instant a chit was marked Cashed, even
+  // if it still owes 6 more rounds — so a missed payment on an already-cashed
+  // chit never raised an overdue alert at all. Only a chit that's actually
+  // fully paid off has nothing left to be overdue on.
+  const isFullyPaidOff = paidCount >= (chit.totalMembers || 0);
   const lastMo = addMonths(cur, -1);
   const lastMonthPay = payments.find(p => p.month === lastMo);
-  if (chit.myStatus !== 'Cashed' && (!lastMonthPay || lastMonthPay.status !== 'Paid')) {
+  if (!isFullyPaidOff && (!lastMonthPay || lastMonthPay.status !== 'Paid')) {
     alerts.push({ type:'overdue', severity:'error', msg:`Payment overdue: ${fmtMo(lastMo)} not marked paid` });
   }
 
@@ -855,7 +860,15 @@ export default function OtherChits() {
   }
 
   // Derived
-  const activeChits = chits.filter(c => c.myStatus !== 'Cashed');
+  // BUG FIX: this drove both "Active Joined Chits" and "Monthly Outflow" —
+  // excluding every cashed chit outright made a chit that's cashed but still
+  // paying 6 more rounds vanish from the active count AND drop its ₹10,000/mo
+  // out of Monthly Outflow entirely, even though that money is still due every
+  // month. Now "active" means still owes something, same as everywhere else.
+  const activeChits = chits.filter(c => {
+    const paidCount = (paymentsMap[c.id] || []).filter(p => p.status === 'Paid').length;
+    return paidCount < (c.totalMembers || 0);
+  });
   const totalMonthly = activeChits.reduce((s,c) => s + (c.totalChitValue/(c.totalMembers||1)), 0);
   const totalPaidAll = Object.values(paymentsMap).flat().filter(p=>p.status==='Paid').reduce((s,p)=>s+(p.amount||0),0);
 
@@ -1058,7 +1071,13 @@ export default function OtherChits() {
             }, {})
           ).sort((a, b) => a[0].localeCompare(b[0])).map(([companyName, groupChits]) => {
             const groupTotal = groupChits.reduce((s, c) => s + (c.totalChitValue || 0), 0);
-            const activeCount = groupChits.filter(c => c.myStatus !== 'Cashed').length;
+            // "Active" here means the same thing as the Active/Closed tabs above:
+            // still owes something, not just "never cashed" — a cashed chit still
+            // paying its remaining rounds counts as active.
+            const activeCount = groupChits.filter(c => {
+              const paidCount = (paymentsMap[c.id] || []).filter(p => p.status === 'Paid').length;
+              return paidCount < (c.totalMembers || 0);
+            }).length;
             return (
               <div key={companyName} onClick={() => setSelectedCompany(companyName)}
                 style={{ display:'flex', alignItems:'center', gap:12, padding:'16px 18px', background:'#fff', border:`1px solid ${tokens.border}`, borderRadius:12, cursor:'pointer' }}

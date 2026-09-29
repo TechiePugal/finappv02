@@ -355,7 +355,11 @@ export function printJoinedFundProjection(rows, viewMonthLabel, realizedPL) {
 
 export function printCompanyChitReport(companyName, chits, paymentsMap) {
   const totalValue = chits.reduce((s, c) => s + (c.totalChitValue || 0), 0);
-  const activeChits = chits.filter(c => c.myStatus !== 'Cashed');
+  // "Active" here means what it means everywhere else in the app now: still
+  // owes something. A cashed chit that still has rounds left to pay counts as
+  // Active, not just chits that were never cashed at all.
+  const isFullyPaidOff = c => (paymentsMap[c.id] || []).filter(p => p.status === 'Paid').length >= (c.totalMembers || 0);
+  const activeChits = chits.filter(c => !isFullyPaidOff(c));
   const cashedChits = chits.filter(c => c.myStatus === 'Cashed');
   const totalPaidAcrossAll = chits.reduce((s, c) => {
     const pays = paymentsMap[c.id] || [];
