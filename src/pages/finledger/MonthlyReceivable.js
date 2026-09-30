@@ -30,6 +30,19 @@ function monthEndOf(monthStr) { const [y, mo] = monthStr.split('-').map(Number);
 // here too now, instead of trusting today's status for a report about last
 // September. Falls back to the current status when no history was ever
 // logged for a record (e.g. it was closed before this feature existed).
+//
+// asOfDate is the END of the viewed month — so the moment a loan is closed
+// (any day in September), September itself already stops counting it as
+// "active" (Total Loan Amount / active-count drop for September, not just for
+// October onward), while August and every earlier month are untouched (as of
+// Aug 31 it was still Active, so August still shows it in full). This is
+// deliberately a DIFFERENT question from "did this record generate real
+// income this month" — Total Collected / fine income / Net Profit are read
+// straight off each month's actual dated payment/ledger records (see
+// totalCollected, curMonthFineIncome, etc. below), completely independent of
+// this active/closed check, so real interest genuinely collected in September
+// before the loan closed still correctly counts as September's profit even
+// though the loan itself no longer counts as "active this month."
 function effectiveStatusAsOf(currentStatus, historyMap, id, asOfDate) {
   const hist = historyMap[id];
   return (hist && hist.length) ? getEffectiveStatus(currentStatus, hist, asOfDate) : currentStatus;
@@ -95,8 +108,10 @@ export default function MonthlyReceivable() {
       dpSnap.docs.filter(d=>validDepositIds.has(d.data().depositId)).forEach(d => { dpMap[d.data().depositId] = {id:d.id,...d.data()}; });
 
       // BUG FIX: was `b.status === 'Active'` (TODAY's status) — closing a loan
-      // made it vanish from every past month's "active this month" figures too.
-      // Now asks what the loan's status WAS as of the end of the viewed month.
+      // made it vanish from every past month's "active this month" figures too,
+      // including months well before it closed. Now asks what the loan's
+      // status actually was as of the END of the viewed month (see
+      // effectiveStatusAsOf's comment above for the full reasoning).
       const activeBorrowers = borrowers.filter(b => {
         if (!b.loanStartDate || b.loanStartDate.slice(0,7) > month) return false;
         const eff = effectiveStatusAsOf(b.status, loanHistoryMap, b.id, monthEndDate);
