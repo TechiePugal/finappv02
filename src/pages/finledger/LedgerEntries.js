@@ -41,6 +41,91 @@ export default function LedgerEntries(){
   const [deleting,setDeleting]=useState(null);
   const [trashedEntries,setTrashedEntries]=useState([]);
   const [showTrash,setShowTrash]=useState(false);
+  const [reconciling,setReconciling]=useState(false);
+
+  // ── One-time repair for data already affected by the "Collected total
+  // doesn't match the Ledger" bug (fixed going forward in InterestCollection.js
+  // / DepositorSettlement.js — see those files' DEEP FIX comments). Old
+  // versions could leave a STALE ledger row behind when an already-settled
+  // period got re-settled (hitting "Update", fixing a Partial, re-doing an
+  // overlapping bulk range) — the payment record itself always held the
+  // correct latest amount, but its FIRST ledger row never got cleaned up, so
+  // the Ledger (and everything that totals it — Journal, every Dashboard)
+  // double-counted that period forever.
+  //
+  // This never touches `borrower_interest_payments` / `deposit_payments` —
+  // those are always overwritten, never summed, so they're the one number
+  // that's never been wrong. It compares each loan/deposit's REAL total
+  // (summed fresh from those records) against what its OWN ledger rows add up
+  // to, and if the ledger is overstated, trims the OLDEST rows for that
+  // account first (most likely to be the stale leftover) — reducing an
+  // entry's amount, or soft-deleting it (Trash-recoverable) if trimmed to ₹0.
+  // Never increases anything, never touches an account whose ledger already
+  // matches its true total.
+  async function reconcileInterestLedger(){
+    if(!window.confirm('Checks every loan & deposit\'s REAL collected total (from its own payment records, which this never changes) against what the Ledger currently adds up to for it, and trims any old duplicate interest rows back down to match.\n\nFixes gaps like "Collected shows ₹52,500 but the Ledger adds up to ₹63,000", caused by a bug in older versions where re-settling an already-paid period could leave a stale extra row behind.\n\nAll changes are soft and Trash-recoverable. Safe to run anytime — accounts that already match are left untouched. Continue?'))return;
+    setReconciling(true);
+    try{
+      const [paySnap,depPaySnap]=await Promise.all([
+        getDocs(collection(db,'borrower_interest_payments')),
+        getDocs(collection(db,'deposit_payments')),
+      ]);
+      const payDocs=scopeToUser(paySnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid);
+      const depPayDocs=scopeToUser(depPaySnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid);
+
+      const trueCashByBorrower={},trueAddByBorrower={};
+      payDocs.forEach(p=>{
+        if(p.status==='Paid'||p.status==='Partial'||p.addedToLoan){
+          trueCashByBorrower[p.borrowerId]=(trueCashByBorrower[p.borrowerId]||0)+(p.amountPaid||0);
+          trueAddByBorrower[p.borrowerId]=(trueAddByBorrower[p.borrowerId]||0)+(p.addedAmount||0);
+        }
+      });
+      const trueCashByDepositor={},trueCompByDepositor={};
+      depPayDocs.forEach(p=>{
+        if(p.status==='Paid'||p.status==='Partial'||p.addedToDeposit){
+          trueCashByDepositor[p.depositId]=(trueCashByDepositor[p.depositId]||0)+(p.amountPaid||0);
+          trueCompByDepositor[p.depositId]=(trueCompByDepositor[p.depositId]||0)+(p.addedAmount||0);
+        }
+      });
+
+      const byBorrowerCash={},byBorrowerAdd={},byDepositorCash={},byDepositorComp={};
+      entries.forEach(e=>{
+        if(e.category==='Loan Interest'&&e.borrowerId)(byBorrowerCash[e.borrowerId]=byBorrowerCash[e.borrowerId]||[]).push(e);
+        else if(e.category==='Interest Added to Loan'&&e.borrowerId)(byBorrowerAdd[e.borrowerId]=byBorrowerAdd[e.borrowerId]||[]).push(e);
+        else if(e.category==='Deposit Settlement'&&e.depositId)(byDepositorCash[e.depositId]=byDepositorCash[e.depositId]||[]).push(e);
+        else if(e.category==='Interest Compounded'&&e.depositId)(byDepositorComp[e.depositId]=byDepositorComp[e.depositId]||[]).push(e);
+      });
+
+      let fixedCount=0,trimmedTotal=0;
+      async function trimGroup(group,trueTotal){
+        const ledgerTotal=group.reduce((s,e)=>s+(e.amount||0),0);
+        let overshoot=Math.round(ledgerTotal-(trueTotal||0));
+        if(overshoot<=1)return; // already matches, within rounding
+        fixedCount++;
+        const sorted=[...group].sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||((a.createdAt?.seconds||0)-(b.createdAt?.seconds||0)));
+        for(const e of sorted){
+          if(overshoot<=0)break;
+          const take=Math.min(overshoot,e.amount||0);
+          const newAmt=Math.round((e.amount||0)-take);
+          overshoot-=take;trimmedTotal+=take;
+          if(newAmt<=0){
+            await updateDoc(doc(db,'finance_ledger_entries',e.id),{deleted:true,deletedAt:serverTimestamp(),deletedBy:user?.uid||null,
+              reconcileNote:`Removed by Reconcile — ₹${(e.amount||0).toLocaleString('en-IN')} was already counted by another entry for the same period(s)`});
+          }else{
+            await updateDoc(doc(db,'finance_ledger_entries',e.id),{amount:newAmt,originalAmount:e.originalAmount!=null?e.originalAmount:e.amount,reconciledAt:serverTimestamp(),
+              reconcileNote:`Trimmed by Reconcile from ₹${(e.amount||0).toLocaleString('en-IN')} — ₹${take.toLocaleString('en-IN')} was double-counted with another entry for the same period(s)`});
+          }
+        }
+      }
+      for(const bId of Object.keys(byBorrowerCash))await trimGroup(byBorrowerCash[bId],trueCashByBorrower[bId]);
+      for(const bId of Object.keys(byBorrowerAdd))await trimGroup(byBorrowerAdd[bId],trueAddByBorrower[bId]);
+      for(const dId of Object.keys(byDepositorCash))await trimGroup(byDepositorCash[dId],trueCashByDepositor[dId]);
+      for(const dId of Object.keys(byDepositorComp))await trimGroup(byDepositorComp[dId],trueCompByDepositor[dId]);
+
+      if(fixedCount===0)toast.success('✓ Checked every loan & deposit — the Ledger already matches. Nothing to fix.');
+      else toast.success(`✓ Fixed ${fixedCount} account${fixedCount!==1?'s':''} — removed ₹${Math.round(trimmedTotal).toLocaleString('en-IN')} of duplicate interest entries.`);
+    }catch(e){toast.error('Reconcile failed: '+e.message);}finally{setReconciling(false);}
+  }
 
   useEffect(()=>{
     const unsub=onSnapshot(query(collection(db,'finance_ledger_entries'),orderBy('createdAt','desc')),
@@ -468,6 +553,9 @@ export default function LedgerEntries(){
     <div className="page-enter">
       <PageHeader title="Ledger" subtitle="Complete financial audit trail with full edit & delete"
         action={<div style={{display:'flex',gap:8}}>
+          <Button variant="secondary" onClick={reconcileInterestLedger} disabled={reconciling} title="Fix any old duplicate interest entries so the Ledger matches each loan/deposit's real collected total">
+            {reconciling?'Checking…':'🔧 Reconcile Interest'}
+          </Button>
           <Button variant="secondary" onClick={()=>setShowTrash(s=>!s)}>
             🗑 {showTrash?'Back to Ledger':`Trash${trashedEntries.length>0?` (${trashedEntries.length})`:''}`}
           </Button>

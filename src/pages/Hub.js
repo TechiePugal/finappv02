@@ -376,6 +376,23 @@ export default function Hub({ onLaunch }) {
   const bizMax = Math.max(totalRevenue, totalChitValue, totalDeposited, 1);
   const moneyInMotion = totalChitValue + totalDeposited + outstanding + totalRevenue;
 
+  // Extra detail for the per-business breakdown section below — same source
+  // data as the KPIs above, just sliced a few more ways so each business gets
+  // a real summary instead of one headline figure.
+  const totalProjectsCount = (projects||[]).length;
+  const closedProjects     = (projects||[]).filter(p=>p.status==='Closed'||p.status==='Completed').length;
+  const avgRevenuePerProj  = activeProjects>0 ? totalRevenue/activeProjects : 0;
+
+  const totalChitsCount    = (chits||[]).length;
+  const closedChits        = (chits||[]).filter(c=>c.status==='Closed'||c.status==='Completed').length;
+  const avgChitValue       = activeChits>0 ? totalChitValue/activeChits : 0;
+
+  const totalDepositsCount = (deposits||[]).length;
+  const totalBorrowersCount= (borrowers||[]).length;
+  const closedLoansCount   = (borrowers||[]).filter(b=>b.status==='Closed').length;
+  const recoveryRate       = totalLoans>0 ? Math.round((totalRepaid/totalLoans)*100) : 0;
+  const avgLoanSize        = activeBorr>0 ? totalLoans/activeBorr : 0;
+
   const now   = new Date();
   const hour  = now.getHours();
   const greet = hour<12?'Good morning':hour<17?'Good afternoon':'Good evening';
@@ -554,6 +571,61 @@ export default function Hub({ onLaunch }) {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+
+        {/* ── DETAILED BUSINESS BREAKDOWN — one real summary card per business,
+            several metrics each, instead of the single headline figure the
+            Business Overview list above shows. */}
+        <div style={{ marginBottom:28 }}>
+          <h2 style={{ margin:'0 0 4px', fontSize:18, fontWeight:800, color:'#111928', letterSpacing:'-.3px' }}>Detailed Business Summary</h2>
+          <p style={{ margin:'0 0 16px', fontSize:12.5, color:'#9ca3af' }}>Full breakdown of all three businesses, side by side.</p>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))', gap:16 }}>
+            {[
+              { name:'Real Estate', icon:'🏢', color:'#14b8a6', key:'re', rows:[
+                  ['Active Projects', ready?activeProjects:'—'],
+                  ['Total Projects', ready?totalProjectsCount:'—'],
+                  ['Closed/Completed', ready?closedProjects:'—'],
+                  ['Total Revenue', ready?fmtCr(totalRevenue):'—'],
+                  ['Avg Revenue / Active Project', ready?fmtCr(avgRevenuePerProj):'—'],
+                ]},
+              { name:'Chit Fund', icon:'💰', color:'#6366f1', key:'cf', rows:[
+                  ['Active Chits', ready?activeChits:'—'],
+                  ['Total Chits', ready?totalChitsCount:'—'],
+                  ['Closed/Completed', ready?closedChits:'—'],
+                  ['Portfolio Value', ready?fmtCr(totalChitValue):'—'],
+                  ['Avg Value / Active Chit', ready?fmtCr(avgChitValue):'—'],
+                  ['Commission Earned', ready?fmtCr(chitComm):'—'],
+                ]},
+              { name:'Finance Ledger', icon:'📊', color:'#10b981', key:'fl', rows:[
+                  ['Active Deposits', ready?activeDeposits:'—'],
+                  ['Total Deposits', ready?totalDepositsCount:'—'],
+                  ['Deposits Held', ready?fmtCr(totalDeposited):'—'],
+                  ['Active Loans', ready?activeBorr:'—'],
+                  ['Total Borrowers', ready?totalBorrowersCount:'—'],
+                  ['Loans Closed', ready?closedLoansCount:'—'],
+                  ['Total Loan Amount', ready?fmtCr(totalLoans):'—'],
+                  ['Repaid So Far', ready?fmtCr(totalRepaid):'—'],
+                  ['Outstanding', ready?fmtCr(outstanding):'—'],
+                  ['Recovery Rate', ready?`${recoveryRate}%`:'—'],
+                  ['Avg Loan / Active Borrower', ready?fmtCr(avgLoanSize):'—'],
+                ]},
+            ].map((b,i)=>(
+              <div key={i} onClick={()=>onLaunch(b.key)} style={{ background:'#fff', borderRadius:18, border:'1px solid rgba(0,0,0,.07)', boxShadow:'0 1px 2px rgba(0,0,0,.03), 0 4px 14px rgba(0,0,0,.035)', overflow:'hidden', cursor:'pointer' }}>
+                <div style={{ padding:'14px 18px', display:'flex', alignItems:'center', gap:10, borderBottom:'1px solid rgba(0,0,0,.06)', background:b.color+'0d' }}>
+                  <div style={{ width:34, height:34, borderRadius:10, background:b.color+'22', display:'flex', alignItems:'center', justifyContent:'center', fontSize:17 }}>{b.icon}</div>
+                  <span style={{ fontSize:14.5, fontWeight:800, color:'#111928' }}>{b.name}</span>
+                </div>
+                <div style={{ padding:'6px 18px 14px' }}>
+                  {b.rows.map(([label,val],ri)=>(
+                    <div key={ri} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 0', borderBottom: ri<b.rows.length-1?'1px dashed rgba(0,0,0,.06)':'none' }}>
+                      <span style={{ fontSize:12.5, color:'#6b7280' }}>{label}</span>
+                      <span style={{ fontSize:13.5, fontWeight:700, color:'#111928' }}>{val}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 

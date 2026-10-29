@@ -163,6 +163,45 @@ export default function DepositorSettlement(){
     });
   }
 
+  // Mirrors InterestCollection's settlePeriodLedgerRows() for the deposit
+  // side — writes (or updates IN PLACE) the per-period 'Deposit Settlement' /
+  // 'Interest Compounded' ledger rows for ONE period of a bulk settlement,
+  // reusing the row that period already had instead of stacking a fresh one
+  // on top whenever it gets re-settled (same double-counting bug, same fix).
+  async function settlePeriodLedgerRowsDep(depositor,existingPayment,payDocId,monthLabel,cashAmt,compoundAmt,batchId,noteSuffix){
+    let ledgerEntryId=existingPayment?.ledgerEntryId||null;
+    if(cashAmt>0){
+      const lData={
+        type:'Debit',category:'Deposit Settlement',
+        description:`Interest payout to ${depositor.name} — ${monthLabel} (${noteSuffix})`,
+        amount:cashAmt,paymentMode:pf.mode,date:pf.date,remarks:pf.remarks||'',
+        depositorName:depositor.name,depositId:depositor.id,settlementBatchId:batchId,
+        linkedDepositPaymentId:payDocId,createdAt:serverTimestamp(),createdBy:user?.uid||null
+      };
+      if(ledgerEntryId){await updateDoc(doc(db,'finance_ledger_entries',ledgerEntryId),{...lData,createdAt:undefined,updatedAt:serverTimestamp()});}
+      else{const r=await addDoc(collection(db,'finance_ledger_entries'),lData);ledgerEntryId=r.id;}
+    } else if(ledgerEntryId){
+      await updateDoc(doc(db,'finance_ledger_entries',ledgerEntryId),{deleted:true,deletedAt:serverTimestamp(),deletedBy:user?.uid||null});
+      ledgerEntryId=null;
+    }
+    let compoundLedgerEntryId=existingPayment?.compoundLedgerEntryId||null;
+    if(compoundAmt>0){
+      const cData={
+        type:'Debit',category:'Interest Compounded',
+        description:`Interest added to ${depositor.name}'s deposit — ${monthLabel} (${noteSuffix}, reinvested not paid out)`,
+        amount:compoundAmt,paymentMode:'Compound',date:pf.date,remarks:pf.remarks||'',
+        depositorName:depositor.name,depositId:depositor.id,settlementBatchId:batchId,
+        linkedDepositPaymentId:payDocId,createdAt:serverTimestamp(),createdBy:user?.uid||null
+      };
+      if(compoundLedgerEntryId){await updateDoc(doc(db,'finance_ledger_entries',compoundLedgerEntryId),{...cData,createdAt:undefined,updatedAt:serverTimestamp()});}
+      else{const r=await addDoc(collection(db,'finance_ledger_entries'),cData);compoundLedgerEntryId=r.id;}
+    } else if(compoundLedgerEntryId){
+      await updateDoc(doc(db,'finance_ledger_entries',compoundLedgerEntryId),{deleted:true,deletedAt:serverTimestamp(),deletedBy:user?.uid||null});
+      compoundLedgerEntryId=null;
+    }
+    return {ledgerEntryId,compoundLedgerEntryId};
+  }
+
   async function savePay(paid){
     if(!modal)return;setSaving(true);
     const{depositor,slot}=modal;
@@ -247,6 +286,8 @@ export default function DepositorSettlement(){
           if(existingP){await updateDoc(doc(db,'deposit_payments',existingP.id),data);}
           else{data.createdAt=serverTimestamp();data.createdBy=user?.uid||null;const r=await addDoc(collection(db,'deposit_payments'),data);payDocId=r.id;}
           touchedPayDocIds.push(payDocId);
+          const linkedDep=await settlePeriodLedgerRowsDep(depositor,existingP,payDocId,period.month,periodCash,periodCompound,batchId,'bulk settlement');
+          await updateDoc(doc(db,'deposit_payments',payDocId),linkedDep);
         }
         if(partialPeriod){
           const periodPartialCash=partialCash, periodPartialCompound=partialCompound;
@@ -270,19 +311,16 @@ export default function DepositorSettlement(){
           if(existingPartial){await updateDoc(doc(db,'deposit_payments',existingPartial.id),partialData);}
           else{partialData.createdAt=serverTimestamp();partialData.createdBy=user?.uid||null;const r=await addDoc(collection(db,'deposit_payments'),partialData);partialPayDocId=r.id;}
           touchedPayDocIds.push(partialPayDocId);
+          const linkedPartialDep=await settlePeriodLedgerRowsDep(depositor,existingPartial,partialPayDocId,partialPeriod.month,partialCash,partialCompound,batchId,'partial from bulk settlement');
+          await updateDoc(doc(db,'deposit_payments',partialPayDocId),linkedPartialDep);
         }
         const periodCount=settledPeriods.length+(partialPeriod?1:0);
         const rangeLabel=periodCount>0?(periodCount===1?(settledPeriods[0]||partialPeriod).label:`${bulkPendingDep[0].label} – ${(partialPeriod||settledPeriods[settledPeriods.length-1]).label}`):'';
-        // ONE combined ledger row for the whole cash payout, whatever it covers.
-        if(totalCashSettled>0){
-          await addDoc(collection(db,'finance_ledger_entries'),{
-            type:'Debit',category:'Deposit Settlement',
-            description:`Interest payout to ${depositor.name} — ${periodCount} period${periodCount!==1?'s':''} (${rangeLabel}) settled today${totalCompoundSettled>0?` + ₹${totalCompoundSettled.toLocaleString('en-IN')} compounded`:''}`,
-            amount:totalCashSettled,paymentMode:pf.mode,date:pf.date,remarks:pf.remarks||'',
-            depositorName:depositor.name,depositId:depositor.id,settlementBatchId:batchId,
-            createdAt:serverTimestamp(),createdBy:user?.uid||null
-          });
-        }
+        // Per-period ledger rows are written above (settlePeriodLedgerRowsDep) —
+        // see InterestCollection.js's identical fix for why the old single
+        // combined row per bulk action was replaced: re-settling an
+        // already-paid period used to leave its first row in place AND add a
+        // new combined row on top, double-counting it forever.
         // Apply the actual principal change, AND record it as one dated addition
         // (like a manual top-up) so calcPeriodInt correctly excludes it from THIS
         // settlement month's own interest and only counts it starting next month —
@@ -302,15 +340,8 @@ export default function DepositorSettlement(){
               settlementBatchId:batchId,createdAt:serverTimestamp(),createdBy:user?.uid||null
             });
           }
-          if(totalCompoundSettled>0){
-            await addDoc(collection(db,'finance_ledger_entries'),{
-              type:'Debit',category:'Interest Compounded',
-              description:`Interest added to ${depositor.name}'s deposit — ${periodCount} period${periodCount!==1?'s':''} (${rangeLabel}), reinvested not paid out`,
-              amount:totalCompoundSettled,paymentMode:'Compound',date:pf.date,remarks:pf.remarks||'',
-              depositorName:depositor.name,depositId:depositor.id,settlementBatchId:batchId,
-              createdAt:serverTimestamp(),createdBy:user?.uid||null
-            });
-          }
+          // 'Interest Compounded' ledger rows are now written PER PERIOD inside
+          // settlePeriodLedgerRowsDep() above — no combined row needed here.
         }
         if(fine>0){
           await addDoc(collection(db,'finance_ledger_entries'),{
@@ -376,6 +407,14 @@ export default function DepositorSettlement(){
       if(existing){await updateDoc(doc(db,'deposit_payments',existing.id),data);}
       else{data.createdAt=serverTimestamp();data.createdBy=user?.uid||null;const r=await addDoc(collection(db,'deposit_payments'),data);payDocId=r.id;}
 
+      // DEEP FIX — same root cause as the loan side's "Collected total doesn't
+      // match the Ledger" bug: `existing?.ledgerEntryId` was checked here to
+      // decide update-in-place vs a fresh row, but the new row's id was NEVER
+      // saved back onto the payment record, so the check always failed and
+      // every re-save of an already-settled period (hitting "Update") kept
+      // stacking a brand-new payout row on top of the old one — permanently
+      // double-counting that period's cash in the Ledger/Journal/Dashboards.
+      let ledgerEntryId=existing?.ledgerEntryId||null;
       if(paid&&cashVal>0){
         const lData={
           type:'Debit',category:'Deposit Settlement',
@@ -385,8 +424,11 @@ export default function DepositorSettlement(){
           settlementBatchId:batchId,
           linkedDepositPaymentId:payDocId,createdAt:serverTimestamp(),createdBy:user?.uid||null
         };
-        if(existing?.ledgerEntryId){await updateDoc(doc(db,'finance_ledger_entries',existing.ledgerEntryId),{...lData,createdAt:undefined,updatedAt:serverTimestamp()});}
-        else{await addDoc(collection(db,'finance_ledger_entries'),lData);}
+        if(ledgerEntryId){await updateDoc(doc(db,'finance_ledger_entries',ledgerEntryId),{...lData,createdAt:undefined,updatedAt:serverTimestamp()});}
+        else{const r=await addDoc(collection(db,'finance_ledger_entries'),lData);ledgerEntryId=r.id;}
+      } else if(ledgerEntryId){
+        await updateDoc(doc(db,'finance_ledger_entries',ledgerEntryId),{deleted:true,deletedAt:serverTimestamp(),deletedBy:user?.uid||null});
+        ledgerEntryId=null;
       }
       // BUG FIX: this used to addDoc a fresh "Interest Compounded" ledger row every
       // time you re-opened and re-saved the SAME period, leaving old duplicate rows
@@ -408,7 +450,7 @@ export default function DepositorSettlement(){
         await updateDoc(doc(db,'finance_ledger_entries',compoundLedgerEntryId),{deleted:true,deletedAt:serverTimestamp(),deletedBy:user?.uid||null});
         compoundLedgerEntryId=null;
       }
-      await updateDoc(doc(db,'deposit_payments',payDocId),{compoundLedgerEntryId});
+      await updateDoc(doc(db,'deposit_payments',payDocId),{ledgerEntryId,compoundLedgerEntryId});
       if(paid&&fine>0){
         await addDoc(collection(db,'finance_ledger_entries'),{
           type:'Credit',category:'Fine Income',

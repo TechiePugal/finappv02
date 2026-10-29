@@ -175,6 +175,50 @@ export default function InterestCollection(){
     });
   }
 
+  // Writes (or updates IN PLACE) the per-period 'Loan Interest' / 'Interest
+  // Added to Loan' ledger rows for ONE period of a bulk settlement. Reuses the
+  // SAME row a period already had — remembered as ledgerEntryId/addLedgerEntryId
+  // on that period's OWN payment record, exactly like single-period Collect
+  // Interest already does — instead of creating a brand-new row on top of it
+  // every time that period gets re-settled (which used to silently double-count
+  // the period's cash forever in the Ledger / Journal / every Dashboard, even
+  // though the payment record itself — and this card's own "Collected" total —
+  // stayed correct). Returns {ledgerEntryId,addLedgerEntryId} to persist back
+  // onto the payment doc.
+  async function settlePeriodLedgerRows(existingPayment,payId,monthLabel,cashAmt,addAmt,batchId,noteSuffix){
+    let ledgerEntryId=existingPayment?.ledgerEntryId||null;
+    if(cashAmt>0){
+      const lData={
+        type:'Credit',category:'Loan Interest',
+        description:`Interest collected from ${modal.borrowerName} — ${monthLabel} (${noteSuffix})`,
+        amount:cashAmt,paymentMode:pf.mode,date:pf.date,remarks:pf.remarks||'',
+        borrowerName:modal.borrowerName,borrowerId:modal.id,settlementBatchId:batchId,
+        linkedPaymentId:payId,createdAt:serverTimestamp(),createdBy:user?.uid||null
+      };
+      if(ledgerEntryId){await updateDoc(doc(db,'finance_ledger_entries',ledgerEntryId),{...lData,createdAt:undefined,updatedAt:serverTimestamp()});}
+      else{const r=await addDoc(collection(db,'finance_ledger_entries'),lData);ledgerEntryId=r.id;}
+    } else if(ledgerEntryId){
+      await updateDoc(doc(db,'finance_ledger_entries',ledgerEntryId),{deleted:true,deletedAt:serverTimestamp(),deletedBy:user?.uid||null});
+      ledgerEntryId=null;
+    }
+    let addLedgerEntryId=existingPayment?.addLedgerEntryId||null;
+    if(addAmt>0){
+      const aData={
+        type:'Credit',category:'Interest Added to Loan',
+        description:`Interest added to ${modal.borrowerName}'s loan principal — ${monthLabel} (${noteSuffix}, not collected in cash)`,
+        amount:addAmt,paymentMode:'Compound',date:pf.date,remarks:pf.remarks||'',
+        borrowerName:modal.borrowerName,borrowerId:modal.id,settlementBatchId:batchId,
+        linkedPaymentId:payId,createdAt:serverTimestamp(),createdBy:user?.uid||null
+      };
+      if(addLedgerEntryId){await updateDoc(doc(db,'finance_ledger_entries',addLedgerEntryId),{...aData,createdAt:undefined,updatedAt:serverTimestamp()});}
+      else{const r=await addDoc(collection(db,'finance_ledger_entries'),aData);addLedgerEntryId=r.id;}
+    } else if(addLedgerEntryId){
+      await updateDoc(doc(db,'finance_ledger_entries',addLedgerEntryId),{deleted:true,deletedAt:serverTimestamp(),deletedBy:user?.uid||null});
+      addLedgerEntryId=null;
+    }
+    return {ledgerEntryId,addLedgerEntryId};
+  }
+
   async function savePay(paid){
     if(!modal)return;
     setSaving(true);
@@ -215,6 +259,23 @@ export default function InterestCollection(){
         }
         const partialAmount=partialCash+partialAdd;
         let totalAddDelta=0,totalCashSettled=0,totalAddSettled=0;
+        // DEEP FIX — "Collected total doesn't match the Ledger" (~₹10K+ gaps):
+        // the OLD code here wrote payment records per period (correct, each
+        // overwrite replaces the last) but then logged the WHOLE action's cash
+        // as ONE NEW combined ledger row, regardless of whether some of these
+        // periods had ALREADY been settled before (e.g. finishing off a
+        // Partial, or re-doing a range that overlaps an earlier bulk action).
+        // The period's payment record correctly held only its latest amount,
+        // but its EARLIER ledger entry (from the first time it was settled)
+        // was never touched — so the Ledger, Journal and every Dashboard kept
+        // BOTH the old and the new credit for that same period forever,
+        // overstating real interest income by whatever was re-settled.
+        // Fix: give every period its OWN ledger row (like single-period
+        // settle already does), remembered on the payment record as
+        // `ledgerEntryId` — so re-settling a period UPDATES that same row in
+        // place instead of stacking a new one on top. Undo is unaffected: it
+        // already reverses every ledger entry sharing this batchId, whether
+        // that's one row or several.
         for(const period of settledPeriods){
           const bPays=payments[modal.id]||{};
           const existing=bPays[period.month];
@@ -235,6 +296,8 @@ export default function InterestCollection(){
           let payId=existing?.id;
           if(existing){await updateDoc(doc(db,'borrower_interest_payments',existing.id),data);}
           else{data.createdAt=serverTimestamp();data.createdBy=user?.uid||null;const r=await addDoc(collection(db,'borrower_interest_payments'),data);payId=r.id;}
+          const linked=await settlePeriodLedgerRows(existing,payId,period.month,period.cash,period.add,batchId,'bulk settlement');
+          await updateDoc(doc(db,'borrower_interest_payments',payId),linked);
         }
         if(partialPeriod){
           const bPays=payments[modal.id]||{};
@@ -257,20 +320,11 @@ export default function InterestCollection(){
           let partialPayId=existingPartial?.id;
           if(existingPartial){await updateDoc(doc(db,'borrower_interest_payments',existingPartial.id),partialData);}
           else{partialData.createdAt=serverTimestamp();partialData.createdBy=user?.uid||null;const r=await addDoc(collection(db,'borrower_interest_payments'),partialData);partialPayId=r.id;}
+          const linkedPartial=await settlePeriodLedgerRows(existingPartial,partialPayId,partialPeriod.month,partialCash,partialAdd,batchId,'partial from bulk settlement');
+          await updateDoc(doc(db,'borrower_interest_payments',partialPayId),linkedPartial);
         }
         const periodCount=settledPeriods.length+(partialPeriod?1:0);
         const rangeLabel=periodCount>0?(periodCount===1?(settledPeriods[0]||partialPeriod).month:`${bulkPending[0].month} – ${(partialPeriod||settledPeriods[settledPeriods.length-1]).month}`):'';
-        // ONE combined ledger row for the whole cash payout, whatever it covers —
-        // matches Depositor Settlement's single-row-per-action ledger model.
-        if(totalCashSettled>0){
-          await addDoc(collection(db,'finance_ledger_entries'),{
-            type:'Credit',category:'Loan Interest',
-            description:`Interest collected from ${modal.borrowerName} — ${periodCount} period${periodCount!==1?'s':''} (${rangeLabel}) settled today${totalAddSettled>0?` + ₹${totalAddSettled.toLocaleString('en-IN')} added to loan`:''}`,
-            amount:totalCashSettled,paymentMode:pf.mode,date:pf.date,remarks:pf.remarks||'',
-            borrowerName:modal.borrowerName,borrowerId:modal.id,settlementBatchId:batchId,
-            createdAt:serverTimestamp(),createdBy:user?.uid||null
-          });
-        }
         // Apply the actual principal change, AND record it as one dated addition
         // (like loan_additions elsewhere) so getOutstanding correctly excludes it
         // from THIS settlement month's own interest and only counts it starting
@@ -290,15 +344,9 @@ export default function InterestCollection(){
               settlementBatchId:batchId,createdAt:serverTimestamp(),createdBy:user?.uid||null
             });
           }
-          if(totalAddSettled>0){
-            await addDoc(collection(db,'finance_ledger_entries'),{
-              type:'Credit',category:'Interest Added to Loan',
-              description:`Interest added to ${modal.borrowerName}'s loan principal — ${periodCount} period${periodCount!==1?'s':''} (${rangeLabel}), not collected in cash`,
-              amount:totalAddSettled,paymentMode:'Compound',date:pf.date,remarks:pf.remarks||'',
-              borrowerName:modal.borrowerName,borrowerId:modal.id,settlementBatchId:batchId,
-              createdAt:serverTimestamp(),createdBy:user?.uid||null
-            });
-          }
+          // Interest-Added-to-Loan ledger rows are now written PER PERIOD inside
+          // settlePeriodLedgerRows() above (so a re-settled period updates its own
+          // row in place) — no combined row needed here anymore.
         }
         if(fine>0){
           await addDoc(collection(db,'finance_ledger_entries'),{
@@ -362,6 +410,21 @@ export default function InterestCollection(){
       if(existing){await updateDoc(doc(db,'borrower_interest_payments',existing.id),data);}
       else{data.createdAt=serverTimestamp();data.createdBy=user?.uid||null;const r=await addDoc(collection(db,'borrower_interest_payments'),data);payId=r.id;}
 
+      // DEEP FIX — THE root cause of "enter the amount, check the total paid
+      // amount — there's a ~10,000 difference": this block built `lData` and,
+      // on a RE-SAVE of an already-settled period (hitting "Update" to fix a
+      // remark, the fine, or anything else — an everyday action, not an edge
+      // case), correctly checked `existing?.ledgerEntryId` to decide whether to
+      // update the old row in place... but the new row's id was NEVER saved
+      // back onto the payment record below. So `existing.ledgerEntryId` was
+      // ALWAYS empty, that check ALWAYS failed, and EVERY re-save silently
+      // added ANOTHER fresh ledger row on top of the old one — permanently
+      // double- (triple-, quadruple-) counting that period's cash in the
+      // Ledger, Journal and every Dashboard, even though the payment record
+      // itself (and the "Collected" figure shown on this borrower's own card)
+      // only ever held the one correct, latest amount. Now `ledgerEntryId` is
+      // tracked and persisted exactly like `addLedgerEntryId` already was.
+      let ledgerEntryId=existing?.ledgerEntryId||null;
       if(collected&&cashVal>0){
         // Ledger entry for the cash interest itself — fine is recorded SEPARATELY
         // below, so it never gets mixed into loan/interest accounting.
@@ -373,8 +436,13 @@ export default function InterestCollection(){
           settlementBatchId:batchId,
           linkedPaymentId:payId,createdAt:serverTimestamp(),createdBy:user?.uid||null
         };
-        if(existing?.ledgerEntryId){await updateDoc(doc(db,'finance_ledger_entries',existing.ledgerEntryId),{...lData,createdAt:undefined,updatedAt:serverTimestamp()});}
-        else await addDoc(collection(db,'finance_ledger_entries'),lData);
+        if(ledgerEntryId){await updateDoc(doc(db,'finance_ledger_entries',ledgerEntryId),{...lData,createdAt:undefined,updatedAt:serverTimestamp()});}
+        else{const r=await addDoc(collection(db,'finance_ledger_entries'),lData);ledgerEntryId=r.id;}
+      } else if(ledgerEntryId){
+        // Cash amount edited back down to zero (e.g. switched fully to "Add to
+        // Loan") — retire the old cash row instead of leaving a stale credit.
+        await updateDoc(doc(db,'finance_ledger_entries',ledgerEntryId),{deleted:true,deletedAt:serverTimestamp(),deletedBy:user?.uid||null});
+        ledgerEntryId=null;
       }
       // Interest-added-to-loan ledger row — update in place on re-edit, remove if
       // the add amount is edited back down to zero. Same pattern as Depositor
@@ -395,7 +463,7 @@ export default function InterestCollection(){
         await updateDoc(doc(db,'finance_ledger_entries',addLedgerEntryId),{deleted:true,deletedAt:serverTimestamp(),deletedBy:user?.uid||null});
         addLedgerEntryId=null;
       }
-      await updateDoc(doc(db,'borrower_interest_payments',payId),{addLedgerEntryId});
+      await updateDoc(doc(db,'borrower_interest_payments',payId),{ledgerEntryId,addLedgerEntryId});
 
       if(collected&&fine>0){
         await addDoc(collection(db,'finance_ledger_entries'),{

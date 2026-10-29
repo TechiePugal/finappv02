@@ -25,7 +25,28 @@ export default function Dashboard(){
   const [data,setData]=useState(null);
   const [loading,setLoading]=useState(true);
 
-  useEffect(()=>{load();},[]);//eslint-disable-line
+  // DEEP FIX — "Overall main dashboard not updating properly": this page used
+  // to fetch everything exactly ONCE, the moment it first mounted (`[]` deps,
+  // a plain one-time getDocs — `onSnapshot` was even imported up top but
+  // never actually used). Collect an interest payment, settle EMI, add a
+  // repayment anywhere else in the app, then come back here without a hard
+  // browser refresh, and this page kept showing whatever it saw the first
+  // time — stale totals, sometimes stuck at ₹0 if it happened to load before
+  // the account's data was ready. Three independent triggers now keep it
+  // current without the person ever having to hit F5:
+  //   1. Reloads whenever the logged-in user actually becomes available
+  //      (fixes the "stuck at zero on first load" case).
+  //   2. Reloads whenever the browser tab regains focus/visibility — covers
+  //      "I changed something on another page/tab and came back".
+  //   3. A quiet 60s background refresh while the page stays open.
+  useEffect(()=>{load();},[user?.uid]);//eslint-disable-line
+  useEffect(()=>{
+    function onFocus(){ if(document.visibilityState!=='hidden') load(); }
+    window.addEventListener('focus',onFocus);
+    document.addEventListener('visibilitychange',onFocus);
+    const iv=setInterval(()=>{ if(document.visibilityState!=='hidden') load(); },60000);
+    return()=>{ window.removeEventListener('focus',onFocus); document.removeEventListener('visibilitychange',onFocus); clearInterval(iv); };
+  },[]);//eslint-disable-line
 
   async function load(){
     try{
@@ -289,7 +310,10 @@ export default function Dashboard(){
             {now.toLocaleDateString('en-IN',{weekday:'long',year:'numeric',month:'long',day:'numeric'})} · From the very beginning, up to date
           </p>
         </div>
-        <Button variant="secondary" onClick={()=>printOverallDashboardReport(d)}>Export PDF</Button>
+        <div style={{display:'flex',gap:8}}>
+          <Button variant="secondary" onClick={()=>load()} title="Reload the latest figures right now">🔄 Refresh</Button>
+          <Button variant="secondary" onClick={()=>printOverallDashboardReport(d)}>Export PDF</Button>
+        </div>
       </div>
 
       {/* OVERALL FINANCIAL SUMMARY — Total Cash Flow / Total Income / Total Expense / Net Profit */}
