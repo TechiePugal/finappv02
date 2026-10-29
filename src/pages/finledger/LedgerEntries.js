@@ -6,6 +6,7 @@ import {PageHeader,Card,StatCard,Button,SearchBar,FilterTabs,Modal,formatCurrenc
 import {useAuth} from '../../contexts/AuthContext';
 import { PageLoader } from '../../components/Skeleton';
 import {scopeToUser} from '../../utils/scopeHelper';
+import {ledgerDirection,flowColor,flowSign,summarizeLedger,FLOW_GREEN,FLOW_RED} from '../../utils/cashFlow';
 
 export default function LedgerEntries(){
   const {user}=useAuth();
@@ -476,14 +477,21 @@ export default function LedgerEntries(){
     const q=search.toLowerCase();
     return(
       (!q||e.description?.toLowerCase().includes(q)||e.category?.toLowerCase().includes(q)||e.borrowerName?.toLowerCase().includes(q)||(e.loanId||'').toLowerCase().includes(q))
-      &&(tf==='All'||e.type===tf)
+      &&(tf==='All'||(tf==='Money In'&&ledgerDirection(e)==='in')||(tf==='Money Out'&&ledgerDirection(e)==='out'))
       &&(catFilter==='All'||e.category===catFilter)
       &&matchAmt(e)
     );
   });
-  const totalC=scoped.filter(e=>e.type==='Credit').reduce((s,e)=>s+(e.amount||0),0);
-  const totalD=scoped.filter(e=>e.type==='Debit').reduce((s,e)=>s+(e.amount||0),0);
-  const net=totalC-totalD;
+  // Money In / Money Out follow what REALLY happened (utils/cashFlow.js), not the
+  // raw Credit/Debit label — a loan or EMI being given is money OUT, a deposit
+  // being received is money IN, and interest merely added to a loan/deposit
+  // principal (no cash moved) is neither. Same rule as the dashboards + Journal.
+  const flowAll=summarizeLedger(scoped);
+  const totalC=flowAll.totalIn;
+  const totalD=flowAll.totalOut;
+  const countIn=scoped.filter(e=>ledgerDirection(e)==='in').length;
+  const countOut=scoped.filter(e=>ledgerDirection(e)==='out').length;
+  const net=flowAll.net;
 
   // ── Net Profit — must match the Overall Dashboard's "Net Profit" StatCard
   // EXACTLY (Dashboard.js: overallNetProfit), not the unrelated "Net Balance"
@@ -521,8 +529,8 @@ export default function LedgerEntries(){
     {key:'expense',label:'💸 Expense',match:e=>e.category==='Finance Expense',color:'#ff453a'},
   ].map(g=>{
     const rows=scoped.filter(g.match);
-    const c=rows.filter(e=>e.type==='Credit').reduce((s,e)=>s+(e.amount||0),0);
-    const dd=rows.filter(e=>e.type==='Debit').reduce((s,e)=>s+(e.amount||0),0);
+    const c=rows.filter(e=>ledgerDirection(e)==='in').reduce((s,e)=>s+(e.amount||0),0);
+    const dd=rows.filter(e=>ledgerDirection(e)==='out').reduce((s,e)=>s+(e.amount||0),0);
     return {...g,count:rows.length,credit:c,debit:dd};
   });
 
@@ -563,11 +571,11 @@ export default function LedgerEntries(){
         </div>}/>
 
       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>
-        <StatCard label="Total Credits" value={formatCurrency(Math.round(totalC))} sub={`${scoped.filter(e=>e.type==='Credit').length} entries`} color="#34c759"
+        <StatCard label="Money In" value={`+${formatCurrency(Math.round(totalC))}`} sub={`${countIn} entries`} color={FLOW_GREEN}
           icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/></svg>}/>
-        <StatCard label="Total Debits" value={formatCurrency(Math.round(totalD))} sub={`${scoped.filter(e=>e.type==='Debit').length} entries`} color="#ff3b30"
+        <StatCard label="Money Out" value={`−${formatCurrency(Math.round(totalD))}`} sub={`${countOut} entries`} color={FLOW_RED}
           icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/></svg>}/>
-        <StatCard label="Net Balance" value={formatCurrency(Math.round(Math.abs(net)))} sub={net>=0?'↑ Surplus':'↓ Deficit'} color={net>=0?'#34c759':'#ff3b30'}
+        <StatCard label="Net Cash Flow" value={`${net>=0?'+':'−'}${formatCurrency(Math.round(Math.abs(net)))}`} sub={net>=0?'↑ More came in than went out':'↓ More went out than came in'} color={net>=0?FLOW_GREEN:FLOW_RED}
           icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>}/>
         <StatCard label="Net Profit" value={`${overallNetProfit>=0?'+':'-'}${formatCurrency(Math.round(Math.abs(overallNetProfit)))}`} sub="Same formula as Overall Dashboard" color={overallNetProfit>=0?'#30d158':'#ff453a'}
           icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>}/>
@@ -581,8 +589,8 @@ export default function LedgerEntries(){
             <div key={g.key} style={{padding:'12px 14px',borderRadius:10,background:'var(--bg-secondary)',borderLeft:`3px solid ${g.color}`}}>
               <div style={{fontSize:12,fontWeight:700,color:'var(--text-secondary)',marginBottom:6}}>{g.label} <span style={{color:'var(--text-tertiary)',fontWeight:400}}>({g.count})</span></div>
               <div style={{display:'flex',justifyContent:'space-between',fontSize:12.5}}>
-                <span style={{color:'#34c759',fontWeight:700}}>+{formatCurrency(Math.round(g.credit))}</span>
-                <span style={{color:'#ff3b30',fontWeight:700}}>-{formatCurrency(Math.round(g.debit))}</span>
+                <span style={{color:FLOW_GREEN,fontWeight:700}}>+{formatCurrency(Math.round(g.credit))}</span>
+                <span style={{color:FLOW_RED,fontWeight:700}}>−{formatCurrency(Math.round(g.debit))}</span>
               </div>
             </div>
           ))}
@@ -607,7 +615,7 @@ export default function LedgerEntries(){
             <div style={{display:'flex',flexDirection:'column',gap:10}}>
               {trashedEntries.map(e=>(
                 <div key={e.id} style={{display:'flex',alignItems:'center',gap:14,padding:'13px 16px',borderRadius:12,border:'1px solid rgba(0,0,0,0.07)',opacity:0.85}}>
-                  <div style={{width:36,height:36,borderRadius:9,flexShrink:0,background:e.type==='Credit'?'rgba(52,199,89,0.1)':'rgba(255,59,48,0.1)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:15}}>{e.type==='Credit'?'↑':'↓'}</div>
+                  <div style={{width:36,height:36,borderRadius:9,flexShrink:0,background:ledgerDirection(e)==='out'?'rgba(255,59,48,0.1)':ledgerDirection(e)==='in'?'rgba(52,199,89,0.1)':'rgba(88,86,214,0.1)',color:flowColor(ledgerDirection(e)),display:'flex',alignItems:'center',justifyContent:'center',fontSize:15}}>{ledgerDirection(e)==='in'?'+':ledgerDirection(e)==='out'?'−':'↻'}</div>
                   <div style={{flex:1,minWidth:200}}>
                     <div style={{fontWeight:600,fontSize:13.5}}>{e.description||e.category}</div>
                     <div style={{fontSize:11.5,color:'var(--text-secondary)',marginTop:2}}>{e.category} · {formatCurrency(e.amount)} · Deleted {e.deletedAt?.toDate?.()?.toLocaleDateString('en-IN')||'—'}</div>
@@ -627,7 +635,7 @@ export default function LedgerEntries(){
       <Card>
         <div style={{display:'flex',gap:10,marginBottom:14,flexWrap:'wrap',alignItems:'center'}}>
           <SearchBar value={search} onChange={setSearch} placeholder="Search description, category, name…"/>
-          <FilterTabs options={['All','Credit','Debit']} value={tf} onChange={setTf}/>
+          <FilterTabs options={['All','Money In','Money Out']} value={tf} onChange={setTf}/>
         </div>
         <div style={{display:'flex',gap:10,marginBottom:14,flexWrap:'wrap',alignItems:'center',padding:'10px 12px',background:'rgba(118,118,128,0.06)',borderRadius:10}}>
           <span style={{fontSize:12,fontWeight:600,color:'var(--text-secondary)'}}>📅 Date Range</span>
@@ -660,7 +668,7 @@ export default function LedgerEntries(){
         <div style={{overflowX:'auto'}}>
           <table style={{width:'100%',borderCollapse:'collapse'}}>
             <thead><tr style={{background:'rgba(118,118,128,0.06)'}}>
-              {['Date','Type','Category','Description','Remarks','Party','Mode','Amount','Running Balance','Actions'].map(h=>(
+              {['Date','Direction','Category','Description','Remarks','Party','Mode','Amount','Running Balance','Actions'].map(h=>(
                 <th key={h} style={{padding:'10px 14px',textAlign:'left',fontSize:11,fontWeight:600,color:'var(--text-secondary)',textTransform:'uppercase',letterSpacing:'0.05em',borderBottom:'1px solid var(--divider)',whiteSpace:'nowrap'}}>{h}</th>
               ))}
             </tr></thead>
@@ -668,20 +676,22 @@ export default function LedgerEntries(){
               {filtered.length===0?<tr><td colSpan={10} style={{padding:48,textAlign:'center',color:'var(--text-tertiary)'}}><div style={{fontSize:32,marginBottom:8}}>📒</div><p style={{fontSize:14}}>No ledger entries found</p></td></tr>
               :(() => {
                 let rb=0;
-                return [...filtered].reverse().map(e=>{rb+=e.type==='Credit'?(e.amount||0):-(e.amount||0);return {...e,rb};}).reverse().map(e=>{
+                return [...filtered].reverse().map(e=>{{const dr=ledgerDirection(e);rb+=dr==='in'?(e.amount||0):dr==='out'?-(e.amount||0):0;}return {...e,rb};}).reverse().map(e=>{
                   const cc=categoryColor(e);
+                  const dir=ledgerDirection(e);
+                  const dcol=dir==='none'?'#5856d6':flowColor(dir);
                   return (
                   <tr key={e.id} style={{borderBottom:'1px solid var(--divider)',borderLeft:`3px solid ${cc}`,opacity:deleting===e.id?0.4:1,transition:'opacity 0.2s'}}
                     onMouseEnter={ev=>ev.currentTarget.style.background='rgba(0,122,255,0.02)'}
                     onMouseLeave={ev=>ev.currentTarget.style.background='transparent'}>
                     <td style={{padding:'11px 14px',fontSize:13,color:'var(--text-secondary)',whiteSpace:'nowrap'}}>{e.date||formatDate(e.createdAt)}</td>
-                    <td style={{padding:'11px 14px'}}><span style={{padding:'3px 10px',borderRadius:20,fontSize:12,fontWeight:600,background:e.type==='Credit'?'rgba(52,199,89,0.1)':'rgba(255,59,48,0.1)',color:e.type==='Credit'?'#1a7a34':'#c0392b'}}>{e.type}</span></td>
+                    <td style={{padding:'11px 14px'}}><span style={{padding:'3px 10px',borderRadius:20,fontSize:11.5,fontWeight:800,background:dcol+'1f',color:dcol,whiteSpace:'nowrap'}}>{dir==='in'?'MONEY IN':dir==='out'?'MONEY OUT':'NON-CASH'}</span></td>
                     <td style={{padding:'11px 14px',fontSize:12,maxWidth:140}}><span style={{display:'inline-block',padding:'3px 9px',borderRadius:20,fontWeight:600,background:`${cc}1a`,color:cc,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:130}}>{e.category}</span></td>
                     <td style={{padding:'11px 14px',fontSize:13,color:'var(--text-primary)',maxWidth:180}}><p style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{e.description}</p></td>
                     <td style={{padding:'11px 14px',fontSize:12,color:'var(--text-secondary)',maxWidth:150}}><p style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={e.remarks||''}>{e.remarks||'—'}</p></td>
                     <td style={{padding:'11px 14px',fontSize:12,color:'var(--text-secondary)',whiteSpace:'nowrap'}}>{e.borrowerName||e.depositorName||e.partyName||'—'}</td>
                     <td style={{padding:'11px 14px',fontSize:12,color:'var(--text-secondary)'}}>{e.paymentMode||'—'}</td>
-                    <td style={{padding:'11px 14px',fontSize:14,fontWeight:700,color:e.type==='Credit'?'#34c759':'#ff3b30',whiteSpace:'nowrap'}} className="num">{e.type==='Credit'?'+':'-'}{formatCurrency(e.amount)}</td>
+                    <td style={{padding:'11px 14px',fontSize:14,fontWeight:800,color:dcol,whiteSpace:'nowrap'}} className="num">{flowSign(dir)}{formatCurrency(e.amount)}</td>
                     <td style={{padding:'11px 14px',fontSize:13,fontWeight:600,color:e.rb>=0?'#34c759':'#ff3b30',whiteSpace:'nowrap'}} className="num">{formatCurrency(Math.round(Math.abs(e.rb)))}</td>
                     <td style={{padding:'11px 14px'}}>
                       <div style={{display:'flex',gap:6}}>
@@ -722,7 +732,7 @@ export default function LedgerEntries(){
             <p style={{fontSize:12,color:'#a05a00'}}>⚠️ Editing this entry will also update linked payment records if applicable.</p>
           </div>}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-            <div><label style={lbl}>Type</label><select value={form.type} onChange={e=>setForm(p=>({...p,type:e.target.value}))} style={inp}><option>Credit</option><option>Debit</option></select></div>
+            <div><label style={lbl}>Type</label><select value={form.type} onChange={e=>setForm(p=>({...p,type:e.target.value}))} style={inp}><option value="Credit">Credit — money IN (+)</option><option value="Debit">Debit — money OUT (−)</option></select></div>
             <div><label style={lbl}>Category</label><select value={form.category} onChange={e=>setForm(p=>({...p,category:e.target.value}))} style={inp}>
               <option>Loan Interest</option><option>Deposit Interest</option><option>Loan Repayment</option><option>Deposit Received</option><option>Deposit Settlement</option><option>Expense</option><option>Other</option>
             </select></div>

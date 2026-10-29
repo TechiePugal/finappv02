@@ -9,6 +9,8 @@ import {useAuth} from '../../contexts/AuthContext';
 import {scopeToUser} from '../../utils/scopeHelper';
 import {calcLoanInterestForMonth, calcDepositInterestForMonth, isDepositDueMonth} from '../../utils/interestCalc';
 import {printOverallDashboardReport} from '../../utils/pdfReport';
+import {computeCashFlow} from '../../utils/cashFlow';
+import CashFlowCard from '../../components/finledger/CashFlowCard';
 
 const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -53,7 +55,7 @@ export default function Dashboard(){
       const now = new Date();
       const curMo = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
 
-      const [depSnap,borSnap,paySnap,repSnap,setAllSnap,emiSnap,emiColSnap,fineSnap,loanAddSnap,depAddSnap,expSnap] = await Promise.all([
+      const [depSnap,borSnap,paySnap,repSnap,setAllSnap,emiSnap,emiColSnap,fineSnap,loanAddSnap,depAddSnap,expSnap,refundSnap] = await Promise.all([
         getDocs(collection(db,'deposit_master')),
         getDocs(collection(db,'borrower_master')),
         getDocs(collection(db,'borrower_interest_payments')), // fetch all — needed for both overall and monthly figures
@@ -65,6 +67,7 @@ export default function Dashboard(){
         getDocs(collection(db,'loan_additions')), // for date-aware interest calc — see utils/interestCalc.js
         getDocs(collection(db,'deposit_additions')),
         getDocs(collection(db,'finance_expenses')), // real operational costs — net profit must subtract these
+        getDocs(collection(db,'deposit_refunds')), // deposit principal paid back out — a real cash-out, needed for Total Cash Flow
       ]);
 
       const deps = scopeToUser(depSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid);
@@ -77,7 +80,8 @@ export default function Dashboard(){
       const setDocs = scopeToUser(setAllSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid); // ALL deposit_payments
       const emiColDocs = scopeToUser(emiColSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid); // ALL emi_collections
       const fineDocs = scopeToUser(fineSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).filter(e=>e.category==='Fine Income');
-      const totalExpenses = scopeToUser(expSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid).reduce((s,e)=>s+(e.amount||0),0);
+      const expenseDocs = scopeToUser(expSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid);
+      const totalExpenses = expenseDocs.reduce((s,e)=>s+(e.amount||0),0);
 
       // Build repayment map
       const repsByBorrower = {};
@@ -269,7 +273,26 @@ export default function Dashboard(){
       const overallTotalIncome = loanInterestCash + emiTotalCollected + loanFineIncome + emiFineIncome;
       const overallTotalExpense = totalExpenses; // operational expenses only — interest paid to depositors is shown as its own line
       const overallNetProfit = overallTotalIncome - (overallTotalExpense + depInterestCashGiven);
-      const overallCashFlow = (overallTotalIncome + totalRepaid + totalDeposits) - (loanTotalPrincipal + emiTotalPrincipal + depInterestCashGiven + overallTotalExpense);
+      // ══ TOTAL CASH FLOW — rebuilt as a real money-in / money-out statement.
+      // The old single formula only counted ACTIVE loans/EMI/deposits (so closing
+      // an account silently erased its cash history), mixed profit with
+      // principal, and showed one opaque number. Now every rupee that actually
+      // moved, ever, is on one side or the other (see utils/cashFlow.js):
+      //   + deposits received, loan interest collected, loan principal
+      //     collected, EMI collected, fine income
+      //   − loan amount given, EMI loans given, deposit interest paid,
+      //     deposits refunded, expenses
+      // Interest merely compounded into a loan/deposit moved no money, so it's
+      // on neither side. ══
+      const cashFlow = computeCashFlow({
+        borrowers:bors, loanAdditions:scopeToUser(loanAddSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid),
+        repayments:scopeToUser(repSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid), payDocs,
+        emiLoans:scopeToUser(emiSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid), emiCols:emiColDocs,
+        deposits:deps, depAdditions:scopeToUser(depAddSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid),
+        refunds:scopeToUser(refundSnap.docs.map(d=>({id:d.id,...d.data()})),user?.uid), setDocs,
+        fineEntries:fineDocs, expenses:expenseDocs,
+      }, null);
+      const overallCashFlow = cashFlow.net;
 
       const recent=[...bors].sort((a,b)=>(b.createdAt?.toMillis?.()??0)-(a.createdAt?.toMillis?.()??0)).slice(0,5);
 
@@ -291,7 +314,7 @@ export default function Dashboard(){
         loanFineIncome, emiFineIncome, depositFineIncome, totalExpenses,
         nonActiveLoanAmount, nonActiveLoanInterest, nonActiveEmiAmount, nonActiveEmiInterest,
         nonActiveEmiCount: nonActiveEmi.length,
-        overallTotalIncome, overallTotalExpense, overallNetProfit, overallCashFlow,
+        overallTotalIncome, overallTotalExpense, overallNetProfit, overallCashFlow, cashFlow,
       });
     }catch(e){console.error(e);}finally{setLoading(false);}
   }
@@ -319,7 +342,7 @@ export default function Dashboard(){
       {/* OVERALL FINANCIAL SUMMARY — Total Cash Flow / Total Income / Total Expense / Net Profit */}
       <SectionHeader title="💰 Overall Financial Summary"/>
       <div className="grid-4" style={{marginBottom:20}}>
-        <StatCard label="Total Cash Flow" value={`${(d.overallCashFlow||0)>=0?'+':'-'}${formatCurrency(Math.round(Math.abs(d.overallCashFlow||0)))}`} sub="Income+Repaid+Deposits − Loans/EMI Issued − Interest Paid − Expense" color={(d.overallCashFlow||0)>=0?'#30d158':'#ff453a'}
+        <StatCard label="Total Cash Flow" value={`${(d.overallCashFlow||0)>=0?'+':'-'}${formatCurrency(Math.round(Math.abs(d.overallCashFlow||0)))}`} sub={`+${formatCurrency(Math.round(d.cashFlow?.totalIn||0))} in − ${formatCurrency(Math.round(d.cashFlow?.totalOut||0))} out`} color={(d.overallCashFlow||0)>=0?'#30d158':'#ff453a'}
           icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>}/>
         <StatCard label="Total Income" value={formatCurrency(Math.round(d.overallTotalIncome||0))} sub="Interest collected (loan+EMI) + fine" color="#0a84ff"
           icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="20 6 9 17 4 12"/></svg>}/>
@@ -328,6 +351,9 @@ export default function Dashboard(){
         <StatCard label="Net Profit" value={`${(d.overallNetProfit||0)>=0?'+':'-'}${formatCurrency(Math.round(Math.abs(d.overallNetProfit||0)))}`} sub="Income − (Expense + Interest Given to Depositors)" color={(d.overallNetProfit||0)>=0?'#30d158':'#ff453a'}
           icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>}/>
       </div>
+
+      {/* TOTAL CASH FLOW — itemised: every rupee in (+ green) and out (− red) */}
+      <CashFlowCard title="Total Cash Flow — Money In vs Money Out" subtitle="Everything that actually moved, from the very beginning to today. Interest added to a loan/deposit (compounded) moved no money, so it is not counted until it is really paid." flow={d.cashFlow} style={{marginBottom:20}}/>
 
       {/* LOANS — Total to Collect / Collected / Balance / Net Profit (fine excluded) */}
       <SectionHeader title="📋 Loans — Overview"/>

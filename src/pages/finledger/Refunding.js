@@ -119,7 +119,7 @@ export default function Refunding() {
         createdAt: serverTimestamp(), createdBy: user?.uid || null,
       });
       await addDoc(collection(db, 'finance_ledger_entries'), {
-        type: 'Debit', category: 'Deposit Amount Increased',
+        type: 'Credit', category: 'Deposit Amount Increased',
         description: `Additional ${formatCurrency(extra)} deposited by ${addModal.name} — ${formatCurrency(prevAmount)} → ${formatCurrency(newAmount)}${af.remarks ? ' · ' + af.remarks : ''}`,
         amount: extra, date: af.date,
         borrowerName: addModal.name, depositorId: addModal.id, depositId: addModal.depositId || addModal.id,

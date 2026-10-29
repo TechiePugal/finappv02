@@ -10,6 +10,8 @@ import {scopeToUser} from '../../utils/scopeHelper';
 import {calcLoanInterestForMonth, calcDepositInterestForMonth, getPrincipalAsOfMonth} from '../../utils/interestCalc';
 import {printMonthDashboardReport} from '../../utils/pdfReport';
 import {getAllStatusHistory, getEffectiveStatus} from '../../utils/statusHistory';
+import {computeCashFlow} from '../../utils/cashFlow';
+import CashFlowCard from '../../components/finledger/CashFlowCard';
 
 // ─── BUG FIX: recalculate interest on outstanding balance, not stale monthlyInterest field ───
 function calcInterestOnOutstanding(borrower, repaymentsByBorrower, loanAdditionsMap, targetMonth) {
@@ -64,7 +66,7 @@ export default function MonthlyReceivable() {
     setLoading(true);
     try {
       // Fetch all needed data in parallel
-      const [bSnap, dSnap, bpSnap, dpSnap, repSnap, emiSnap, emiColSnap, fineSnap, depAddSnap, loanAddSnap, expSnap, loanHistoryMap, depHistoryMap, emiHistoryMap] = await Promise.all([
+      const [bSnap, dSnap, bpSnap, dpSnap, repSnap, emiSnap, emiColSnap, fineSnap, depAddSnap, loanAddSnap, expSnap, allBpSnap, allDpSnap, refundSnap, loanHistoryMap, depHistoryMap, emiHistoryMap] = await Promise.all([
         getDocs(collection(db, 'borrower_master')),
         getDocs(collection(db, 'deposit_master')),
         getDocs(query(collection(db, 'borrower_interest_payments'), where('month','==',month))),
@@ -76,6 +78,9 @@ export default function MonthlyReceivable() {
         getDocs(collection(db, 'deposit_additions')), // for date-aware interest calc — see utils/interestCalc.js
         getDocs(collection(db, 'loan_additions')),
         getDocs(query(collection(db, 'finance_expenses'), where('month','==',month))), // real costs — net profit must subtract these
+        getDocs(collection(db, 'borrower_interest_payments')), // ALL periods — Total Cash Flow is by the date money actually moved, not the period it was for
+        getDocs(collection(db, 'deposit_payments')),
+        getDocs(collection(db, 'deposit_refunds')),
         getAllStatusHistory('loan'), // point-in-time status — see effectiveStatusAsOf above
         getAllStatusHistory('deposit'),
         getAllStatusHistory('emi_loan'),
@@ -246,7 +251,29 @@ export default function MonthlyReceivable() {
       const monthTotalIncome = totalCollected + totalEmiInterestCollected + loanFineIncomeMonth + emiFineIncomeMonth;
       const monthTotalExpense = totalExpensesMonth;
       const monthNetProfit = monthTotalIncome - (monthTotalExpense + totalPaidOutCash);
-      const monthCashFlow = monthTotalIncome - monthTotalExpense - totalPaidOutCash;
+      // TOTAL CASH FLOW for the month — rebuilt as a real money-in / money-out
+      // statement (see utils/cashFlow.js) by the date each rupee ACTUALLY moved:
+      //   + deposits received, loan interest collected, loan principal
+      //     collected, EMI collected, fine income
+      //   − loan amount given, EMI loans given, deposit interest paid,
+      //     deposits refunded, expenses
+      // Previously this netted only revenue/expense/interest-paid and left every
+      // principal movement out, so a month with a ₹5L loan given still showed a
+      // healthy positive. Interest compounded into a loan/deposit moved no money
+      // and is on neither side.
+      const monthRange = { from: month + '-01', to: month + '-31' };
+      const cashFlow = computeCashFlow({
+        borrowers, loanAdditions: scopeToUser(loanAddSnap.docs.map(d=>({id:d.id,...d.data()})), user?.uid),
+        repayments: repSnap.docs.map(d=>({id:d.id,...d.data()})),
+        payDocs: scopeToUser(allBpSnap.docs.map(d=>({id:d.id,...d.data()})), user?.uid),
+        emiLoans, emiCols,
+        deposits, depAdditions: scopeToUser(depAddSnap.docs.map(d=>({id:d.id,...d.data()})), user?.uid),
+        refunds: scopeToUser(refundSnap.docs.map(d=>({id:d.id,...d.data()})), user?.uid),
+        setDocs: scopeToUser(allDpSnap.docs.map(d=>({id:d.id,...d.data()})), user?.uid),
+        fineEntries: curMonthFineDocs.filter(e=>(e.borrowerId&&validLoanIds.has(e.borrowerId))||(e.loanId&&validEmiIds.has(e.loanId))||e.depositId),
+        expenses: scopeToUser(expSnap.docs.map(d=>({id:d.id,...d.data()})), user?.uid),
+      }, monthRange);
+      const monthCashFlow = cashFlow.net;
 
       // Per-borrower rows with correct interest
       // BUG FIX (round 2): `outstanding` is a BALANCE figure, not an interest
@@ -306,7 +333,7 @@ export default function MonthlyReceivable() {
         monthlyDepositPrincipal, depositBalanceMonth,
         monthlyEmiPrincipal, emiBalanceMonth, emiNetProfitMonth,
         totalExpensesMonth,
-        monthTotalIncome, monthTotalExpense, monthNetProfit, monthCashFlow,
+        monthTotalIncome, monthTotalExpense, monthNetProfit, monthCashFlow, cashFlow,
       });
     } catch(e) { toast.error('Failed to load'); console.error(e); }
     finally { setLoading(false); }
@@ -345,11 +372,14 @@ export default function MonthlyReceivable() {
       {/* MONTH FINANCIAL SUMMARY — Total Cash Flow / Total Income / Total Expense / Net Profit, for THIS month only */}
       <SectionHeader title={`💰 Financial Summary — ${label}`}/>
       <div className="grid-4" style={{marginBottom:20}}>
-        <StatCard label="Total Cash Flow" value={`${(d.monthCashFlow||0)>=0?'+':'-'}${formatCurrency(Math.round(Math.abs(d.monthCashFlow||0)))}`} sub="Income − Expense − Interest Paid, this month" color={(d.monthCashFlow||0)>=0?'#30d158':'#ff453a'}/>
+        <StatCard label="Total Cash Flow" value={`${(d.monthCashFlow||0)>=0?'+':'-'}${formatCurrency(Math.round(Math.abs(d.monthCashFlow||0)))}`} sub={`+${formatCurrency(Math.round(d.cashFlow?.totalIn||0))} in − ${formatCurrency(Math.round(d.cashFlow?.totalOut||0))} out, this month`} color={(d.monthCashFlow||0)>=0?'#30d158':'#ff453a'}/>
         <StatCard label="Total Income" value={formatCurrency(Math.round(d.monthTotalIncome||0))} sub="Interest collected (loan+EMI) + fine, this month" color="#0a84ff"/>
         <StatCard label="Total Expense" value={formatCurrency(Math.round(d.monthTotalExpense||0))} sub="Operational expenses, this month" color="#ff453a"/>
         <StatCard label="Net Profit" value={`${(d.monthNetProfit||0)>=0?'+':'-'}${formatCurrency(Math.round(Math.abs(d.monthNetProfit||0)))}`} sub="Income − (Expense + Interest Given), this month" color={(d.monthNetProfit||0)>=0?'#30d158':'#ff453a'}/>
       </div>
+
+      {/* TOTAL CASH FLOW — itemised for this month: money in (+ green) / money out (− red) */}
+      <CashFlowCard title={`Total Cash Flow — ${label}`} subtitle="Counted by the date money actually moved in this month (a payment made today for an older month counts today)." flow={d.cashFlow} style={{marginBottom:20}}/>
 
       {/* Loans — Overview (this month) — same structure as the Overall Dashboard.
           "Total Interest Receivable" added alongside the rest — the interest

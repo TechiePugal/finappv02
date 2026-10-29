@@ -4,6 +4,7 @@
  * No external libraries needed — uses browser's native print.
  */
 import { calcDepositInterestForMonth, calcLoanInterestForMonth } from './interestCalc';
+import { ledgerDirection, summarizeLedger } from './cashFlow';
 
 // ── Date-aware "up to date" totals ───────────────────────────────────────────
 // Every report below that shows a "Total Interest Due" figure needs it to
@@ -1298,12 +1299,22 @@ export function printEMILoansSummary(loans){
 // ── JOURNAL PRINT (full history, all transaction types) ────────────────────
 export function printJournalReport(entries, fromDate, toDate){
   const list = (entries||[]).slice().sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+  // Money direction is decided by what actually happened (utils/cashFlow.js), not
+  // the raw Credit/Debit label: loan/EMI "Created" rows are money OUT, deposit
+  // "Created"/top-ups are money IN, "added to principal" rows moved no money.
   const milestones = list.filter(e=>e.type==='Milestone');
   const txns = list.filter(e=>e.type!=='Milestone');
-  const credit = txns.filter(e=>e.type==='Credit').reduce((s,e)=>s+(e.amount||0),0);
-  const debit = txns.filter(e=>e.type==='Debit').reduce((s,e)=>s+(e.amount||0),0);
+  const flow = summarizeLedger(list);
   const byCat = {};
-  txns.forEach(e=>{const k=e.category||'Other';if(!byCat[k])byCat[k]={credit:0,debit:0};if(e.type==='Credit')byCat[k].credit+=(e.amount||0);else byCat[k].debit+=(e.amount||0);});
+  list.forEach(e=>{
+    const dir = ledgerDirection(e);
+    if(dir==='none') return;
+    const k=e.category||'Other';
+    if(!byCat[k])byCat[k]={credit:0,debit:0};
+    if(dir==='in')byCat[k].credit+=(e.amount||0); else byCat[k].debit+=(e.amount||0);
+  });
+  const sgn = e => { const d=ledgerDirection(e); return d==='in'?'+':d==='out'?'−':''; };
+  const cls = e => { const d=ledgerDirection(e); return d==='in'?'text-green':d==='out'?'text-red':''; };
 
   const body = `
     <div class="header">
@@ -1311,24 +1322,26 @@ export function printJournalReport(entries, fromDate, toDate){
       <div class="meta">Generated: ${now()}</div>
     </div>
     <div class="kpi-grid">
-      <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">${INR(credit)}</div><div class="kpi-lbl">Total Income</div></div>
-      <div class="kpi" style="border-left-color:#ef4444;"><div class="kpi-val" style="color:#b91c1c;">${INR(debit)}</div><div class="kpi-lbl">Total Expense</div></div>
-      <div class="kpi" style="border-left-color:${(credit-debit)>=0?'#22c55e':'#ef4444'};"><div class="kpi-val" style="color:${(credit-debit)>=0?'#15803d':'#b91c1c'};">${INR(credit-debit)}</div><div class="kpi-lbl">Net P&amp;L</div></div>
+      <div class="kpi" style="border-left-color:#22c55e;"><div class="kpi-val" style="color:#15803d;">+${INR(flow.totalIn)}</div><div class="kpi-lbl">Money In</div></div>
+      <div class="kpi" style="border-left-color:#ef4444;"><div class="kpi-val" style="color:#b91c1c;">−${INR(flow.totalOut)}</div><div class="kpi-lbl">Money Out</div></div>
+      <div class="kpi" style="border-left-color:${flow.net>=0?'#22c55e':'#ef4444'};"><div class="kpi-val" style="color:${flow.net>=0?'#15803d':'#b91c1c'};">${flow.net>=0?'+':'−'}${INR(Math.abs(flow.net))}</div><div class="kpi-lbl">Net Cash Flow</div></div>
       <div class="kpi"><div class="kpi-val">${list.length}</div><div class="kpi-lbl">Total Entries</div></div>
     </div>
+    ${cashFlowHtml(flow,'Summary — Money In vs Money Out')}
+    ${flow.nonCash>0?`<p style="font-size:11px;color:#6b7280;margin:6px 0 0;">Interest of ${INR(flow.nonCash)} was added to loan/deposit principal in this period — no money moved, so it is not counted above.</p>`:''}
     ${milestones.length>0?`
     <h2>Lifecycle Events — Created &amp; Closed Accounts</h2>
     <p style="font-size:11px;color:#6b7280;margin:-6px 0 10px;">Loans, deposits and EMI accounts opened or closed in this period. Shown separately — not counted in Income/Expense totals below.</p>
     <table>
       <thead><tr><th>#</th><th>Date</th><th>Time</th><th>Event</th><th>Description</th><th class="text-right">Amount</th></tr></thead>
       <tbody>
-        ${milestones.map((m,i)=>`<tr><td>${i+1}</td><td>${fmtDate(m.date)}</td><td>${m.time||'—'}</td><td><span class="badge ${m.category?.includes('Closed')?'badge-amber':'badge-blue'}">${m.category}</span></td><td>${m.description||'—'}</td><td class="text-right">${INR(m.amount)}</td></tr>`).join('')}
+        ${milestones.map((m,i)=>`<tr><td>${i+1}</td><td>${fmtDate(m.date)}</td><td>${m.time||'—'}</td><td><span class="badge ${m.category?.includes('Closed')?'badge-amber':'badge-blue'}">${m.category}</span></td><td>${m.description||'—'}</td><td class="text-right ${cls(m)}">${sgn(m)}${INR(m.amount)}</td></tr>`).join('')}
       </tbody>
     </table>`:''}
-    <h2>Profit &amp; Loss by Category</h2>
-    <p style="font-size:11px;color:#6b7280;margin:-6px 0 10px;">Interest, EMI, repayments and expenses only — lifecycle events above are excluded to avoid double-counting.</p>
+    <h2>Money In / Out by Category</h2>
+    <p style="font-size:11px;color:#6b7280;margin:-6px 0 10px;">Real money movement only — interest added to principal and closure events are excluded.</p>
     <table>
-      <thead><tr><th>Category</th><th class="text-right">Income</th><th class="text-right">Expense</th><th class="text-right">Net</th></tr></thead>
+      <thead><tr><th>Category</th><th class="text-right">Money In</th><th class="text-right">Money Out</th><th class="text-right">Net</th></tr></thead>
       <tbody>
         ${Object.entries(byCat).map(([k,v])=>`<tr><td>${k}</td><td class="text-right text-green">${INR(v.credit)}</td><td class="text-right text-red">${INR(v.debit)}</td><td class="text-right ${(v.credit-v.debit)>=0?'text-green':'text-red'}">${INR(v.credit-v.debit)}</td></tr>`).join('')}
       </tbody>
@@ -1337,7 +1350,7 @@ export function printJournalReport(entries, fromDate, toDate){
     <table>
       <thead><tr><th>#</th><th>Date</th><th>Time</th><th>Type</th><th>Category</th><th>Description</th><th class="text-right">Amount</th></tr></thead>
       <tbody>
-        ${txns.map((e,i)=>`<tr><td>${i+1}</td><td>${fmtDate(e.date)}</td><td>${e.time||'—'}</td><td><span class="badge ${e.type==='Credit'?'badge-green':'badge-red'}">${e.type}</span></td><td>${e.category||'—'}</td><td>${e.description||'—'}</td><td class="text-right ${e.type==='Credit'?'text-green':'text-red'}">${e.type==='Credit'?'+':'-'}${INR(e.amount)}</td></tr>`).join('')}
+        ${txns.map((e,i)=>`<tr><td>${i+1}</td><td>${fmtDate(e.date)}</td><td>${e.time||'—'}</td><td><span class="badge ${ledgerDirection(e)==='in'?'badge-green':ledgerDirection(e)==='out'?'badge-red':'badge-blue'}">${ledgerDirection(e)==='in'?'Money In':ledgerDirection(e)==='out'?'Money Out':'Non-cash'}</span></td><td>${e.category||'—'}</td><td>${e.description||'—'}</td><td class="text-right ${cls(e)}">${sgn(e)}${INR(e.amount)}</td></tr>`).join('')}
       </tbody>
     </table>
     <div class="footer"><span>EC Fin 360 Finance Ledger</span><span>Journal — Full Transaction History</span></div>
@@ -1601,6 +1614,27 @@ export function printUserFullHistory(customer, linkedData, txns){
   openPrint(`${customer.name} — Full Financial History`, body, '#0a84ff');
 }
 
+
+// Itemised Total Cash Flow block — Money In (+ green) / Money Out (− red).
+// `flow` comes straight from utils/cashFlow.js, the same object the pages show.
+function cashFlowHtml(flow, title){
+  const f = flow || {inLines:[],outLines:[],totalIn:0,totalOut:0,net:0};
+  const row = (l,sign,cls) => `<div class="info-row"><span class="info-lbl">${l.label}</span><span class="info-val ${cls}">${l.amount?sign+INR(l.amount):INR(0)}</span></div>`;
+  return `
+    <h2>${title}</h2>
+    <div class="info-grid">
+      <div>
+        ${f.inLines.map(l=>row(l,'+','text-green')).join('')}
+        <div class="info-row" style="border-top:2px solid #22c55e;"><span class="info-lbl"><b>Total Money In</b></span><span class="info-val text-green"><b>+${INR(f.totalIn)}</b></span></div>
+      </div>
+      <div>
+        ${f.outLines.map(l=>row(l,'−','text-red')).join('')}
+        <div class="info-row" style="border-top:2px solid #ef4444;"><span class="info-lbl"><b>Total Money Out</b></span><span class="info-val text-red"><b>−${INR(f.totalOut)}</b></span></div>
+      </div>
+    </div>
+    <div class="info-row" style="margin-top:6px;"><span class="info-lbl"><b>Net Cash Flow (In − Out)</b></span><span class="info-val ${(f.net||0)>=0?'text-green':'text-red'}"><b>${(f.net||0)>=0?'+':'−'}${INR(Math.abs(f.net||0))}</b></span></div>`;
+}
+
 // ── OVERALL DASHBOARD REPORT — exports exactly what the Overall Dashboard page
 // shows: the Financial Summary tiles, then the Loans/Deposits/EMI overview
 // sections, then the Combined Net Profit breakdown. `d` is the same data object
@@ -1629,6 +1663,8 @@ export function printOverallDashboardReport(d){
       <div class="kpi" style="border-left-color:#ef4444;"><div class="kpi-val" style="color:#b91c1c;">${INR(d.overallTotalExpense)}</div><div class="kpi-lbl">Total Expense</div></div>
       <div class="kpi" style="border-left-color:${(d.overallNetProfit||0)>=0?'#22c55e':'#ef4444'};"><div class="kpi-val" style="color:${(d.overallNetProfit||0)>=0?'#15803d':'#b91c1c'};">${(d.overallNetProfit||0)>=0?'+':'-'}${INR(Math.abs(d.overallNetProfit||0))}</div><div class="kpi-lbl">Net Profit</div></div>
     </div>
+
+    ${cashFlowHtml(d.cashFlow,'Total Cash Flow — Money In vs Money Out')}
 
     <h2>📋 Loans — Overview</h2>
     <div class="kpi-grid">
@@ -1713,6 +1749,8 @@ export function printMonthDashboardReport(d, label){
       <div class="kpi" style="border-left-color:#ef4444;"><div class="kpi-val" style="color:#b91c1c;">${INR(d.monthTotalExpense)}</div><div class="kpi-lbl">Total Expense</div></div>
       <div class="kpi" style="border-left-color:${(d.monthNetProfit||0)>=0?'#22c55e':'#ef4444'};"><div class="kpi-val" style="color:${(d.monthNetProfit||0)>=0?'#15803d':'#b91c1c'};">${(d.monthNetProfit||0)>=0?'+':'-'}${INR(Math.abs(d.monthNetProfit||0))}</div><div class="kpi-lbl">Net Profit</div></div>
     </div>
+
+    ${cashFlowHtml(d.cashFlow,'Total Cash Flow — Money In vs Money Out (this month)')}
 
     <h2>📋 Loans — This Month</h2>
     <div class="kpi-grid" style="grid-template-columns:repeat(5,1fr);">
